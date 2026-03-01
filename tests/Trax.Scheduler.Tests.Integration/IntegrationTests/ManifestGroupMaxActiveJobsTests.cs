@@ -63,7 +63,7 @@ public class ManifestGroupMaxActiveJobsTests
             .AddSingleton<ILoggerProvider>(arrayLoggingProvider)
             .AddSingleton<IArrayLoggingProvider>(arrayLoggingProvider)
             .AddLogging(x => x.AddConsole().SetMinimumLevel(LogLevel.Debug))
-            .AddTrax.CoreEffects(
+            .AddTraxEffects(
                 options =>
                     options
                         .AddServiceTrainBus(
@@ -588,7 +588,7 @@ public class ManifestGroupMaxActiveJobsTests
     {
         var serializedInput = JsonSerializer.Serialize(
             new SchedulerTestInput { Value = inputValue },
-            Trax.CoreJsonSerializationOptions.ManifestProperties
+            TraxJsonSerializationOptions.ManifestProperties
         );
 
         var entry = WorkQueue.Create(

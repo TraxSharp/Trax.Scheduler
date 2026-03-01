@@ -147,7 +147,7 @@ internal class PostgresWorkerService(
                 deserializedInput = JsonSerializer.Deserialize(
                     inputJson,
                     type,
-                    Trax.CoreJsonSerializationOptions.ManifestProperties
+                    TraxJsonSerializationOptions.ManifestProperties
                 );
             }
 

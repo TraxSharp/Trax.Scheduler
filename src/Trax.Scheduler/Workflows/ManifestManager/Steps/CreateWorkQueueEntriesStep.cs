@@ -43,7 +43,7 @@ internal class CreateWorkQueueEntriesStep(
                         ? basePriority + schedulerConfiguration.DependentPriorityBoost
                         : basePriority;
 
-                var entry = Models.WorkQueue.WorkQueue.Create(
+                var entry = Trax.Effect.Models.WorkQueue.WorkQueue.Create(
                     new CreateWorkQueue
                     {
                         WorkflowName = view.Manifest.Name,

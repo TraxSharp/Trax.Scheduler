@@ -105,7 +105,7 @@ public class PostgresWorkerServiceTests : TestSetup
         var inputJson = JsonSerializer.Serialize(
             input,
             input.GetType(),
-            Trax.CoreJsonSerializationOptions.ManifestProperties
+            TraxJsonSerializationOptions.ManifestProperties
         );
 
         var job = BackgroundJob.Create(
@@ -453,7 +453,7 @@ public class PostgresWorkerServiceTests : TestSetup
         var inputJson = JsonSerializer.Serialize(
             input,
             input.GetType(),
-            Trax.CoreJsonSerializationOptions.ManifestProperties
+            TraxJsonSerializationOptions.ManifestProperties
         );
 
         var job = BackgroundJob.Create(

@@ -167,7 +167,7 @@ public class PostgresTaskServerTests : TestSetup
 
         var deserialized = JsonSerializer.Deserialize<SchedulerTestInput>(
             job.Input!,
-            Trax.CoreJsonSerializationOptions.ManifestProperties
+            TraxJsonSerializationOptions.ManifestProperties
         );
 
         deserialized.Should().NotBeNull();
@@ -195,7 +195,7 @@ public class PostgresTaskServerTests : TestSetup
 
         var deserialized = JsonSerializer.Deserialize<SchedulerTestInput>(
             job.Input!,
-            Trax.CoreJsonSerializationOptions.ManifestProperties
+            TraxJsonSerializationOptions.ManifestProperties
         );
 
         deserialized.Should().NotBeNull();

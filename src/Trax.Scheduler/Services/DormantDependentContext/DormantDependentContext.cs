@@ -179,10 +179,10 @@ internal class DormantDependentContext(
         var inputJson = JsonSerializer.Serialize(
             input,
             input.GetType(),
-            Trax.CoreJsonSerializationOptions.ManifestProperties
+            TraxJsonSerializationOptions.ManifestProperties
         );
 
-        var entry = Models.WorkQueue.WorkQueue.Create(
+        var entry = Trax.Effect.Models.WorkQueue.WorkQueue.Create(
             new CreateWorkQueue
             {
                 WorkflowName = manifest.Name,

@@ -67,7 +67,7 @@ public class MaxActiveJobsTests
             .AddSingleton<ILoggerProvider>(arrayLoggingProvider)
             .AddSingleton<IArrayLoggingProvider>(arrayLoggingProvider)
             .AddLogging(x => x.AddConsole().SetMinimumLevel(LogLevel.Debug))
-            .AddTrax.CoreEffects(
+            .AddTraxEffects(
                 options =>
                     options
                         .AddServiceTrainBus(
@@ -732,7 +732,7 @@ public class MaxActiveJobsTests
             .AddSingleton<ILoggerProvider>(arrayLoggingProvider)
             .AddSingleton<IArrayLoggingProvider>(arrayLoggingProvider)
             .AddLogging(x => x.AddConsole().SetMinimumLevel(LogLevel.Debug))
-            .AddTrax.CoreEffects(
+            .AddTraxEffects(
                 options =>
                     options
                         .AddServiceTrainBus(

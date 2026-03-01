@@ -109,12 +109,12 @@ internal class DispatchJobsStep(IServiceProvider serviceProvider, ILogger<Dispat
             deserializedInput = JsonSerializer.Deserialize(
                 claimed.Input,
                 inputType,
-                Trax.CoreJsonSerializationOptions.ManifestProperties
+                TraxJsonSerializationOptions.ManifestProperties
             );
         }
 
         // Create a new Metadata record for this execution
-        var metadata = Models.Metadata.Metadata.Create(
+        var metadata = Trax.Effect.Models.Metadata.Metadata.Create(
             new CreateMetadata
             {
                 Name = claimed.WorkflowName,

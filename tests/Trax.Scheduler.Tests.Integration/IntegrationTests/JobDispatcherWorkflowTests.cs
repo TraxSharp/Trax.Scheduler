@@ -472,7 +472,7 @@ public class JobDispatcherWorkflowTests : TestSetup
     {
         var serializedInput = JsonSerializer.Serialize(
             new SchedulerTestInput { Value = inputValue },
-            Trax.CoreJsonSerializationOptions.ManifestProperties
+            TraxJsonSerializationOptions.ManifestProperties
         );
 
         var entry = WorkQueue.Create(

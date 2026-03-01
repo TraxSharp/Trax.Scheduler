@@ -183,7 +183,7 @@ public class ManifestManagerConcurrencyTests : TestSetup
 
             var acquired = await dbContext
                 .Database.SqlQuery<bool>(
-                    $"""SELECT pg_try_advisory_xact_lock(hashtext('chainsharp_manifest_manager')) AS "Value" """
+                    $"""SELECT pg_try_advisory_xact_lock(hashtext('trax_manifest_manager')) AS "Value" """
                 )
                 .FirstAsync();
 

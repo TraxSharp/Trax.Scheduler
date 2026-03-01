@@ -46,7 +46,7 @@ public class PostgresTaskServer(IDataContext dataContext) : IBackgroundTaskServe
         var inputJson = JsonSerializer.Serialize(
             input,
             input.GetType(),
-            Trax.CoreJsonSerializationOptions.ManifestProperties
+            TraxJsonSerializationOptions.ManifestProperties
         );
 
         var job = BackgroundJob.Create(
