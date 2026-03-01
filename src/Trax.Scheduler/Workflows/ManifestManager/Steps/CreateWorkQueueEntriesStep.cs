@@ -1,11 +1,11 @@
+using LanguageExt;
+using Microsoft.Extensions.Logging;
 using Trax.Effect.Data.Services.DataContext;
 using Trax.Effect.Enums;
 using Trax.Effect.Models.WorkQueue.DTOs;
+using Trax.Effect.Services.EffectStep;
 using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Workflows.ManifestManager;
-using Trax.Effect.Services.EffectStep;
-using LanguageExt;
-using Microsoft.Extensions.Logging;
 
 namespace Trax.Scheduler.Workflows.ManifestManager.Steps;
 

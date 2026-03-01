@@ -1,15 +1,15 @@
 using System.Text.Json;
 using System.Text.Json;
-using Trax.Effect.Data.Services.DataContext;
-using Trax.Effect.Models.BackgroundJob;
-using Trax.Scheduler.Configuration;
-using Trax.Scheduler.Services.CancellationRegistry;
-using Trax.Scheduler.Workflows.TaskServerExecutor;
-using Trax.Effect.Utils;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Trax.Effect.Data.Services.DataContext;
+using Trax.Effect.Models.BackgroundJob;
+using Trax.Effect.Utils;
+using Trax.Scheduler.Configuration;
+using Trax.Scheduler.Services.CancellationRegistry;
+using Trax.Scheduler.Workflows.TaskServerExecutor;
 
 namespace Trax.Scheduler.Services.PostgresWorkerService;
 
@@ -167,8 +167,8 @@ internal class PostgresWorkerService(
             cancellationRegistry.Register(metadataId, shutdownCts);
             try
             {
-                await using var shutdownRegistration = stoppingToken.Register(
-                    () => shutdownCts.CancelAfter(options.ShutdownTimeout)
+                await using var shutdownRegistration = stoppingToken.Register(() =>
+                    shutdownCts.CancelAfter(options.ShutdownTimeout)
                 );
 
                 await workflow.Run(request, shutdownCts.Token);

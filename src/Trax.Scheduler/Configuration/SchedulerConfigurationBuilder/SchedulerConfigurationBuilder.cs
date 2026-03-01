@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Trax.Effect.Configuration.TraxEffectBuilder;
 using Trax.Effect.Extensions;
 using Trax.Scheduler.Services.CancellationRegistry;
@@ -9,7 +10,6 @@ using Trax.Scheduler.Services.MetadataCleanupPollingService;
 using Trax.Scheduler.Services.SchedulerStartupService;
 using Trax.Scheduler.Utilities;
 using Trax.Scheduler.Workflows.JobDispatcher;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Trax.Scheduler.Configuration;
 
@@ -84,8 +84,8 @@ public partial class SchedulerConfigurationBuilder
         // (for ExecuteScheduledWorkflowStep.Initialize) and interface (for user steps)
         // resolve to the same scoped instance
         _parentBuilder.ServiceCollection.AddScoped<DormantDependentContext>();
-        _parentBuilder.ServiceCollection.AddScoped<IDormantDependentContext>(
-            sp => sp.GetRequiredService<DormantDependentContext>()
+        _parentBuilder.ServiceCollection.AddScoped<IDormantDependentContext>(sp =>
+            sp.GetRequiredService<DormantDependentContext>()
         );
 
         // Register JobDispatcher workflow (must use AddScopedTraxRoute for property injection)

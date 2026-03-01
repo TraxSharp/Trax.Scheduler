@@ -1,6 +1,6 @@
+using LanguageExt;
 using Trax.Effect.Models.Manifest;
 using Trax.Effect.Services.ServiceTrain;
-using LanguageExt;
 using Schedule = Trax.Scheduler.Services.Scheduling.Schedule;
 
 namespace Trax.Scheduler.Configuration;

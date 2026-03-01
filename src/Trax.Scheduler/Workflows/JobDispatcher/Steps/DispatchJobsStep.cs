@@ -1,15 +1,15 @@
 using System.Text.Json;
-using Trax.Effect.Data.Services.DataContext;
-using Trax.Effect.Enums;
-using Trax.Effect.Models.Metadata.DTOs;
-using Trax.Effect.Models.WorkQueue;
-using Trax.Scheduler.Services.BackgroundTaskServer;
-using Trax.Effect.Services.EffectStep;
-using Trax.Effect.Utils;
 using LanguageExt;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Trax.Effect.Data.Services.DataContext;
+using Trax.Effect.Enums;
+using Trax.Effect.Models.Metadata.DTOs;
+using Trax.Effect.Models.WorkQueue;
+using Trax.Effect.Services.EffectStep;
+using Trax.Effect.Utils;
+using Trax.Scheduler.Services.BackgroundTaskServer;
 
 namespace Trax.Scheduler.Workflows.JobDispatcher.Steps;
 
@@ -120,7 +120,7 @@ internal class DispatchJobsStep(IServiceProvider serviceProvider, ILogger<Dispat
                 Name = claimed.WorkflowName,
                 ExternalId = Guid.NewGuid().ToString("N"),
                 Input = null,
-                ManifestId = claimed.ManifestId
+                ManifestId = claimed.ManifestId,
             }
         );
 
