@@ -35,7 +35,7 @@ namespace Trax.Scheduler.Tests.Stress;
 
 [TestFixture]
 [Category("Stress")]
-[Explicit("Stress tests — run manually with: dotnet test --filter TestCategory=Stress")]
+[Ignore("Stress tests — run manually with: dotnet test --filter TestCategory=Stress")]
 public abstract class StressTestSetup
 {
     private ServiceProvider ServiceProvider { get; set; } = null!;
