@@ -54,8 +54,10 @@ public class UseSqsWorkersBuilderTests
         // Arrange & Act
         using var provider = BuildProvider(s =>
             s.UseSqsWorkers(o =>
-                o.QueueUrl = "https://sqs.us-east-1.amazonaws.com/123456789/trax-jobs"
-            )
+            {
+                o.QueueUrl = "https://sqs.us-east-1.amazonaws.com/123456789/trax-jobs";
+                o.ConfigureSqsClient = cfg => cfg.ServiceURL = "http://localhost:4566";
+            })
         );
 
         // Assert
@@ -69,8 +71,10 @@ public class UseSqsWorkersBuilderTests
         // Arrange & Act
         using var provider = BuildProvider(s =>
             s.UseSqsWorkers(o =>
-                o.QueueUrl = "https://sqs.us-east-1.amazonaws.com/123456789/trax-jobs"
-            )
+            {
+                o.QueueUrl = "https://sqs.us-east-1.amazonaws.com/123456789/trax-jobs";
+                o.ConfigureSqsClient = cfg => cfg.ServiceURL = "http://localhost:4566";
+            })
         );
 
         // Assert
@@ -133,8 +137,10 @@ public class UseSqsWorkersBuilderTests
         {
             s.UseInMemoryWorkers();
             s.UseSqsWorkers(o =>
-                o.QueueUrl = "https://sqs.us-east-1.amazonaws.com/123456789/trax-jobs"
-            );
+            {
+                o.QueueUrl = "https://sqs.us-east-1.amazonaws.com/123456789/trax-jobs";
+                o.ConfigureSqsClient = cfg => cfg.ServiceURL = "http://localhost:4566";
+            });
         });
 
         // Assert
