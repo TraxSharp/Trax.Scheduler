@@ -71,6 +71,8 @@ public partial class SchedulerConfigurationBuilder
         ValidateNoCyclicGroupDependencies();
         ValidateSubmitterRequirements();
 
+        _configuration.HasDatabaseProvider = _parentBuilder.HasDatabaseProvider;
+
         // Exclude internal scheduler trains from MaxActiveJobs count
         foreach (var name in AdminTrains.FullNames)
             _configuration.ExcludedTrainTypeNames.Add(name);
