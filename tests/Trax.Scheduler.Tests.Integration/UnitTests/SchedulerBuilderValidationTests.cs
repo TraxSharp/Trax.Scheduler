@@ -17,7 +17,7 @@ namespace Trax.Scheduler.Tests.Integration.UnitTests;
 public class SchedulerBuilderValidationTests
 {
     private static readonly string ConnectionString =
-        "Host=localhost;Port=5432;Database=trax;Username=trax;Password=trax123";
+        "Host=localhost;Port=5432;Database=trax_scheduler_tests;Username=trax;Password=trax123";
 
     #region UseLocalWorkers requires UsePostgres
 
