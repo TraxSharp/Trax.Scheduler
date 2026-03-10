@@ -8,7 +8,7 @@ using Trax.Mediator.Extensions;
 using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Extensions;
 using Trax.Scheduler.Services.Scheduling;
-using Trax.Scheduler.Tests.Integration.Examples.Trains;
+using Trax.Scheduler.Tests.Integration.Fakes.Trains;
 
 namespace Trax.Scheduler.Tests.Integration.UnitTests;
 
@@ -33,6 +33,7 @@ public class SchedulerTypedOutputTests
                 {
                     scheduler.UseInMemoryWorkers();
                     configure(scheduler);
+                    return scheduler;
                 })
         );
         using var provider = services.BuildServiceProvider();

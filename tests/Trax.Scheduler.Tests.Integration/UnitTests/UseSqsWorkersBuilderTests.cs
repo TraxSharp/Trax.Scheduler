@@ -25,6 +25,7 @@ public class UseSqsWorkersBuilderTests
                 .AddScheduler(scheduler =>
                 {
                     configure(scheduler);
+                    return scheduler;
                 })
         );
         return services.BuildServiceProvider();

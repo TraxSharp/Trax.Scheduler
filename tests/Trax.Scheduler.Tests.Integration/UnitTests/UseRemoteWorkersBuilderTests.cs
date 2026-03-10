@@ -22,6 +22,7 @@ public class UseRemoteWorkersBuilderTests
                 .AddScheduler(scheduler =>
                 {
                     configure(scheduler);
+                    return scheduler;
                 })
         );
         return services.BuildServiceProvider();

@@ -28,9 +28,8 @@ namespace Trax.Scheduler.Configuration;
 ///     .AddEffects(effects => effects.UsePostgres(connectionString))
 ///     .AddMediator(assemblies)
 ///     .AddScheduler(scheduler => scheduler
-///         .PollingInterval(TimeSpan.FromSeconds(30))
-///         .MaxActiveJobs(100)
 ///         .UseLocalWorkers()
+///         .Schedule&lt;IMyTrain&gt;("my-job", new MyInput(), Every.Minutes(5))
 ///     )
 /// );
 /// </code>
@@ -67,8 +66,7 @@ public partial class SchedulerConfigurationBuilder
     /// <summary>
     /// Builds the scheduler configuration and registers all services.
     /// </summary>
-    /// <returns>The parent builder for continued chaining</returns>
-    internal TraxBuilderWithMediator Build()
+    internal void Build()
     {
         ValidateNoCyclicGroupDependencies();
         ValidateSubmitterRequirements();
@@ -140,8 +138,6 @@ public partial class SchedulerConfigurationBuilder
         // Register the metadata cleanup service if configured
         if (_configuration.MetadataCleanup is not null)
             _parentBuilder.ServiceCollection.AddHostedService<MetadataCleanupPollingService>();
-
-        return _parentBuilder;
     }
 
     /// <summary>

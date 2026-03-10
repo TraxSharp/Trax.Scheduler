@@ -12,7 +12,9 @@ public static class SchedulerExtensions
     /// Adds the Trax scheduler to the configuration.
     /// </summary>
     /// <param name="builder">The builder after mediator has been configured</param>
-    /// <param name="configure">Action to configure the scheduler</param>
+    /// <param name="configure">
+    /// A function that configures the scheduler builder. Chain calls fluently and return the builder.
+    /// </param>
     /// <returns>A <see cref="TraxBuilderWithMediator"/> for continued chaining</returns>
     /// <remarks>
     /// <see cref="Services.JobSubmitter.PostgresJobSubmitter"/> is registered automatically
@@ -27,17 +29,16 @@ public static class SchedulerExtensions
     ///         .UsePostgres(connectionString)
     ///     )
     ///     .AddMediator(typeof(Program).Assembly)
-    ///     .AddScheduler(scheduler =>
-    ///     {
-    ///         scheduler.UseLocalWorkers();
-    ///         scheduler.Schedule&lt;IMyTrain&gt;("my-job", new MyInput(), Every.Minutes(5));
-    ///     })
+    ///     .AddScheduler(scheduler => scheduler
+    ///         .UseLocalWorkers()
+    ///         .Schedule&lt;IMyTrain&gt;("my-job", new MyInput(), Every.Minutes(5))
+    ///     )
     /// );
     /// </code>
     /// </remarks>
     public static TraxBuilderWithMediator AddScheduler(
         this TraxBuilderWithMediator builder,
-        Action<SchedulerConfigurationBuilder> configure
+        Func<SchedulerConfigurationBuilder, SchedulerConfigurationBuilder> configure
     )
     {
         var schedulerBuilder = new SchedulerConfigurationBuilder(builder);
@@ -62,6 +63,6 @@ public static class SchedulerExtensions
     /// </remarks>
     public static TraxBuilderWithMediator AddScheduler(this TraxBuilderWithMediator builder)
     {
-        return builder.AddScheduler(_ => { });
+        return builder.AddScheduler(scheduler => scheduler);
     }
 }

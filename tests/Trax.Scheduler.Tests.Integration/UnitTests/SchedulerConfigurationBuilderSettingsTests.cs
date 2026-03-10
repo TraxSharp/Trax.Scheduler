@@ -24,6 +24,7 @@ public class SchedulerConfigurationBuilderSettingsTests
                 {
                     scheduler.UseInMemoryWorkers();
                     configure(scheduler);
+                    return scheduler;
                 })
         );
         using var provider = services.BuildServiceProvider();
