@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using Trax.Effect.Data.InMemory.Extensions;
 using Trax.Effect.Data.Postgres.Extensions;
 using Trax.Effect.Extensions;
 using Trax.Mediator.Extensions;
@@ -30,13 +31,15 @@ public class DefaultJobSubmitterTests
     #region InMemory Default (no database provider)
 
     [Test]
-    public void AddScheduler_WithoutDatabaseProvider_RegistersInMemoryJobSubmitter()
+    public void AddScheduler_WithInMemory_RegistersInMemoryJobSubmitter()
     {
-        // Arrange & Act — AddEffects() with no data provider configured
+        // Arrange & Act — UseInMemory() provides a data provider but not a database provider
         using var provider = new ServiceCollection()
             .AddLogging()
             .AddTrax(trax =>
-                trax.AddEffects().AddMediator(typeof(AssemblyMarker).Assembly).AddScheduler()
+                trax.AddEffects(effects => effects.UseInMemory())
+                    .AddMediator(typeof(AssemblyMarker).Assembly)
+                    .AddScheduler()
             )
             .BuildServiceProvider();
 
@@ -48,13 +51,15 @@ public class DefaultJobSubmitterTests
     }
 
     [Test]
-    public void AddScheduler_WithoutDatabaseProvider_RegistersJobRunnerTrain()
+    public void AddScheduler_WithInMemory_RegistersJobRunnerTrain()
     {
         // InMemoryJobSubmitter depends on IJobRunnerTrain — verify it's registered automatically
         using var provider = new ServiceCollection()
             .AddLogging()
             .AddTrax(trax =>
-                trax.AddEffects().AddMediator(typeof(AssemblyMarker).Assembly).AddScheduler()
+                trax.AddEffects(effects => effects.UseInMemory())
+                    .AddMediator(typeof(AssemblyMarker).Assembly)
+                    .AddScheduler()
             )
             .BuildServiceProvider();
 
