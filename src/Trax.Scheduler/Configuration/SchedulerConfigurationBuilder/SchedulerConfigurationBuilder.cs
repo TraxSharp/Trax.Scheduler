@@ -97,11 +97,23 @@ public partial class SchedulerConfigurationBuilder
             sp.GetRequiredService<DormantDependentContext>()
         );
 
-        // Register internal scheduler trains (AddScopedTraxRoute for property injection)
-        _parentBuilder.ServiceCollection.AddScopedTraxRoute<
-            IManifestManagerTrain,
-            ManifestManagerTrain
-        >();
+        // Register internal scheduler trains (AddScopedTraxRoute for property injection).
+        // InMemory uses a simplified train that skips PostgreSQL-specific steps
+        // (CancelTimedOutJobs, ReapStalePending) and dispatches jobs inline.
+        if (_parentBuilder.HasDatabaseProvider)
+        {
+            _parentBuilder.ServiceCollection.AddScopedTraxRoute<
+                IManifestManagerTrain,
+                ManifestManagerTrain
+            >();
+        }
+        else
+        {
+            _parentBuilder.ServiceCollection.AddScopedTraxRoute<
+                IManifestManagerTrain,
+                InMemoryManifestManagerTrain
+            >();
+        }
         _parentBuilder.ServiceCollection.AddScopedTraxRoute<
             IJobDispatcherTrain,
             JobDispatcherTrain
@@ -134,12 +146,22 @@ public partial class SchedulerConfigurationBuilder
         // Registration order matters: .NET starts IHostedService instances sequentially in registration order.
         // SchedulerStartupService must complete before the polling services begin.
         _parentBuilder.ServiceCollection.AddHostedService<SchedulerStartupService>();
-        _parentBuilder.ServiceCollection.AddHostedService<ManifestManagerPollingService>();
-        _parentBuilder.ServiceCollection.AddHostedService<JobDispatcherPollingService>();
 
-        // Register the metadata cleanup service if configured
-        if (_configuration.MetadataCleanup is not null)
-            _parentBuilder.ServiceCollection.AddHostedService<MetadataCleanupPollingService>();
+        // ManifestManagerPollingService runs for both providers. With Postgres, the resolved
+        // IManifestManagerTrain uses advisory locks and creates WorkQueue entries. With InMemory,
+        // the resolved InMemoryManifestManagerTrain dispatches jobs inline — no JobDispatcher needed.
+        _parentBuilder.ServiceCollection.AddHostedService<ManifestManagerPollingService>();
+
+        // JobDispatcher and MetadataCleanup use PostgreSQL-specific operations
+        // (FOR UPDATE SKIP LOCKED, ExecuteUpdateAsync, ExecuteDeleteAsync) that are not
+        // supported by the InMemory EF Core provider.
+        if (_parentBuilder.HasDatabaseProvider)
+        {
+            _parentBuilder.ServiceCollection.AddHostedService<JobDispatcherPollingService>();
+
+            if (_configuration.MetadataCleanup is not null)
+                _parentBuilder.ServiceCollection.AddHostedService<MetadataCleanupPollingService>();
+        }
     }
 
     /// <summary>
