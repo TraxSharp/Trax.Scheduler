@@ -30,6 +30,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+          include-prerelease: true
       - run: dotnet tool restore
       - run: dotnet csharpier check .
       - run: dotnet build --configuration Release
