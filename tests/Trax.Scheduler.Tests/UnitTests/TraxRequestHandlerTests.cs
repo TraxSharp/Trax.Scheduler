@@ -96,7 +96,11 @@ public class TraxRequestHandlerTests
         var output = new TestOutput { Result = "success", Count = 7 };
         var executionService = new FakeTrainExecutionService
         {
-            ResultToReturn = new RunTrainResult(MetadataId: 500, Output: output),
+            ResultToReturn = new RunTrainResult(
+                MetadataId: 500,
+                ExternalId: "ext-500",
+                Output: output
+            ),
         };
         var request = new RemoteRunRequest(
             TrainName: "My.Namespace.IMyTrain",
@@ -110,6 +114,7 @@ public class TraxRequestHandlerTests
 
         // Assert
         response.MetadataId.Should().Be(500);
+        response.ExternalId.Should().Be("ext-500");
         response.IsError.Should().BeFalse();
         response.OutputType.Should().Be(typeof(TestOutput).FullName);
         response.OutputJson.Should().NotBeNull();
@@ -129,7 +134,7 @@ public class TraxRequestHandlerTests
         // Arrange
         var executionService = new FakeTrainExecutionService
         {
-            ResultToReturn = new RunTrainResult(MetadataId: 600),
+            ResultToReturn = new RunTrainResult(MetadataId: 600, ExternalId: "ext-600"),
         };
         var request = new RemoteRunRequest(
             TrainName: "My.UnitTrain",
@@ -255,7 +260,9 @@ public class TraxRequestHandlerTests
             if (ExceptionToThrow is not null)
                 throw ExceptionToThrow;
 
-            return Task.FromResult(ResultToReturn ?? new RunTrainResult(MetadataId: 0));
+            return Task.FromResult(
+                ResultToReturn ?? new RunTrainResult(MetadataId: 0, ExternalId: "")
+            );
         }
     }
 

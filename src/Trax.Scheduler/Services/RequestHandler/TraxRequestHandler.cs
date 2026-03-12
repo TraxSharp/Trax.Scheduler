@@ -65,7 +65,12 @@ internal class TraxRequestHandler(
                 );
             }
 
-            return new RemoteRunResponse(result.MetadataId, outputJson, outputType);
+            return new RemoteRunResponse(
+                result.MetadataId,
+                result.ExternalId,
+                outputJson,
+                outputType
+            );
         }
         catch (Exception ex)
         {
