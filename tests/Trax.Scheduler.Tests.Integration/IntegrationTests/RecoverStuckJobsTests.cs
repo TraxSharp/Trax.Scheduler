@@ -46,9 +46,7 @@ public class RecoverStuckJobsTests : TestSetup
 
         updated.TrainState.Should().Be(TrainState.Failed);
         updated.EndTime.Should().NotBeNull();
-        updated
-            .FailureReason.Should()
-            .Contain("Server restarted while job was in progress");
+        updated.FailureReason.Should().Contain("Server restarted while job was in progress");
     }
 
     [Test]

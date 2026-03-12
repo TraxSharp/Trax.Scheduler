@@ -215,9 +215,7 @@ public class SchedulerConfigurationBuilderSettingsTests
     public void DefaultMisfireThreshold_SetsValue()
     {
         // Act
-        var config = ResolveConfiguration(b =>
-            b.DefaultMisfireThreshold(TimeSpan.FromMinutes(5))
-        );
+        var config = ResolveConfiguration(b => b.DefaultMisfireThreshold(TimeSpan.FromMinutes(5)));
 
         // Assert
         config.DefaultMisfireThreshold.Should().Be(TimeSpan.FromMinutes(5));
@@ -231,9 +229,7 @@ public class SchedulerConfigurationBuilderSettingsTests
     public void ExcludeFromMaxActiveJobs_AddsTrainTypeFullName()
     {
         // Act
-        var config = ResolveConfiguration(b =>
-            b.ExcludeFromMaxActiveJobs<ISettingsTestTrain>()
-        );
+        var config = ResolveConfiguration(b => b.ExcludeFromMaxActiveJobs<ISettingsTestTrain>());
 
         // Assert
         config.ExcludedTrainTypeNames.Should().Contain(typeof(ISettingsTestTrain).FullName);

@@ -1105,7 +1105,9 @@ public class ManifestManagerTrainTests : TestSetup
 
         entries
             .Should()
-            .NotBeEmpty("FireOnceNow policy should queue the job even when overdue beyond threshold");
+            .NotBeEmpty(
+                "FireOnceNow policy should queue the job even when overdue beyond threshold"
+            );
     }
 
     [Test]
