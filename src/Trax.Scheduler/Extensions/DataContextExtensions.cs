@@ -416,11 +416,7 @@ public static class DataContextExtensions
             );
         }
 
-        if (
-            manifest.ScheduleType
-                is not ScheduleType.Interval
-                    and not ScheduleType.Cron
-        )
+        if (manifest.ScheduleType is not ScheduleType.Interval and not ScheduleType.Cron)
         {
             throw new InvalidOperationException(
                 "Schedule variance is only supported for Interval and Cron schedule types. "

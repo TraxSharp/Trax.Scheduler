@@ -25,9 +25,7 @@ internal class UpdateManifestSuccessJunction(ILogger<UpdateManifestSuccessJuncti
         }
 
         input.Manifest.LastSuccessfulRun = DateTime.UtcNow;
-        input.Manifest.NextScheduledRun = SchedulingHelpers.ComputeNextScheduledRun(
-            input.Manifest
-        );
+        input.Manifest.NextScheduledRun = SchedulingHelpers.ComputeNextScheduledRun(input.Manifest);
 
         if (input.Manifest.ScheduleType == ScheduleType.Once)
         {

@@ -429,10 +429,7 @@ internal static class SchedulingHelpers
         var lastRun = manifest.LastSuccessfulRun.Value;
         DateTime baseNextRun;
 
-        if (
-            manifest.ScheduleType == ScheduleType.Interval
-            && manifest.IntervalSeconds is > 0
-        )
+        if (manifest.ScheduleType == ScheduleType.Interval && manifest.IntervalSeconds is > 0)
         {
             baseNextRun = lastRun.AddSeconds(manifest.IntervalSeconds.Value);
         }
