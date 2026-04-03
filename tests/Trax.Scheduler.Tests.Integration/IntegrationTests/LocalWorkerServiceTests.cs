@@ -72,8 +72,8 @@ public class LocalWorkerServiceTests : TestSetup
             Scope.ServiceProvider,
             options,
             new CancellationRegistry(),
-            Scope.ServiceProvider.GetRequiredService<ISqlDialect>(),
-            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>()
+            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>(),
+            Scope.ServiceProvider.GetRequiredService<ISqlDialect>()
         );
 
         // Start the worker and give it time to process
@@ -135,8 +135,8 @@ public class LocalWorkerServiceTests : TestSetup
             Scope.ServiceProvider,
             options,
             new CancellationRegistry(),
-            Scope.ServiceProvider.GetRequiredService<ISqlDialect>(),
-            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>()
+            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>(),
+            Scope.ServiceProvider.GetRequiredService<ISqlDialect>()
         );
 
         var workerTask = workerService.StartAsync(cts.Token);
@@ -187,8 +187,8 @@ public class LocalWorkerServiceTests : TestSetup
             Scope.ServiceProvider,
             options,
             new CancellationRegistry(),
-            Scope.ServiceProvider.GetRequiredService<ISqlDialect>(),
-            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>()
+            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>(),
+            Scope.ServiceProvider.GetRequiredService<ISqlDialect>()
         );
 
         var workerTask = workerService.StartAsync(cts.Token);
@@ -233,8 +233,8 @@ public class LocalWorkerServiceTests : TestSetup
             Scope.ServiceProvider,
             options,
             new CancellationRegistry(),
-            Scope.ServiceProvider.GetRequiredService<ISqlDialect>(),
-            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>()
+            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>(),
+            Scope.ServiceProvider.GetRequiredService<ISqlDialect>()
         );
 
         var workerTask = workerService.StartAsync(cts.Token);
@@ -274,8 +274,8 @@ public class LocalWorkerServiceTests : TestSetup
             Scope.ServiceProvider,
             options,
             new CancellationRegistry(),
-            Scope.ServiceProvider.GetRequiredService<ISqlDialect>(),
-            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>()
+            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>(),
+            Scope.ServiceProvider.GetRequiredService<ISqlDialect>()
         );
 
         var workerTask = workerService.StartAsync(cts.Token);
@@ -326,8 +326,8 @@ public class LocalWorkerServiceTests : TestSetup
             Scope.ServiceProvider,
             options,
             new CancellationRegistry(),
-            Scope.ServiceProvider.GetRequiredService<ISqlDialect>(),
-            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>()
+            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>(),
+            Scope.ServiceProvider.GetRequiredService<ISqlDialect>()
         );
 
         var workerTask = workerService.StartAsync(cts.Token);
@@ -373,8 +373,8 @@ public class LocalWorkerServiceTests : TestSetup
             Scope.ServiceProvider,
             options,
             new CancellationRegistry(),
-            Scope.ServiceProvider.GetRequiredService<ISqlDialect>(),
-            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>()
+            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>(),
+            Scope.ServiceProvider.GetRequiredService<ISqlDialect>()
         );
 
         var workerTask = workerService.StartAsync(cts.Token);
@@ -427,8 +427,8 @@ public class LocalWorkerServiceTests : TestSetup
             Scope.ServiceProvider,
             options,
             new CancellationRegistry(),
-            Scope.ServiceProvider.GetRequiredService<ISqlDialect>(),
-            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>()
+            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>(),
+            Scope.ServiceProvider.GetRequiredService<ISqlDialect>()
         );
 
         var workerTask = workerService.StartAsync(cts.Token);
@@ -477,8 +477,8 @@ public class LocalWorkerServiceTests : TestSetup
             Scope.ServiceProvider,
             options,
             new CancellationRegistry(),
-            Scope.ServiceProvider.GetRequiredService<ISqlDialect>(),
-            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>()
+            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>(),
+            Scope.ServiceProvider.GetRequiredService<ISqlDialect>()
         );
 
         var workerTask = workerService.StartAsync(cts.Token);
@@ -523,8 +523,8 @@ public class LocalWorkerServiceTests : TestSetup
             Scope.ServiceProvider,
             options,
             new CancellationRegistry(),
-            Scope.ServiceProvider.GetRequiredService<ISqlDialect>(),
-            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>()
+            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>(),
+            Scope.ServiceProvider.GetRequiredService<ISqlDialect>()
         );
 
         var workerTask = workerService.StartAsync(cts.Token);
@@ -569,8 +569,8 @@ public class LocalWorkerServiceTests : TestSetup
             Scope.ServiceProvider,
             options,
             new CancellationRegistry(),
-            Scope.ServiceProvider.GetRequiredService<ISqlDialect>(),
-            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>()
+            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>(),
+            Scope.ServiceProvider.GetRequiredService<ISqlDialect>()
         );
 
         var workerTask = workerService.StartAsync(cts.Token);
@@ -635,8 +635,8 @@ public class LocalWorkerServiceTests : TestSetup
             Scope.ServiceProvider,
             options,
             new CancellationRegistry(),
-            Scope.ServiceProvider.GetRequiredService<ISqlDialect>(),
-            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>()
+            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>(),
+            Scope.ServiceProvider.GetRequiredService<ISqlDialect>()
         );
 
         var workerTask = workerService.StartAsync(cts.Token);
@@ -733,8 +733,8 @@ public class LocalWorkerServiceTests : TestSetup
             Scope.ServiceProvider,
             options,
             new CancellationRegistry(),
-            Scope.ServiceProvider.GetRequiredService<ISqlDialect>(),
-            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>()
+            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>(),
+            Scope.ServiceProvider.GetRequiredService<ISqlDialect>()
         );
 
         var workerTask = workerService.StartAsync(cts.Token);
@@ -847,8 +847,8 @@ public class LocalWorkerServiceTests : TestSetup
             Scope.ServiceProvider,
             options,
             new CancellationRegistry(),
-            Scope.ServiceProvider.GetRequiredService<ISqlDialect>(),
-            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>()
+            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>(),
+            Scope.ServiceProvider.GetRequiredService<ISqlDialect>()
         );
 
         var workerTask = workerService.StartAsync(cts.Token);
@@ -952,8 +952,8 @@ public class LocalWorkerServiceTests : TestSetup
             Scope.ServiceProvider,
             options,
             new CancellationRegistry(),
-            Scope.ServiceProvider.GetRequiredService<ISqlDialect>(),
-            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>()
+            Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>(),
+            Scope.ServiceProvider.GetRequiredService<ISqlDialect>()
         );
 
         var workerTask = workerService.StartAsync(cts.Token);

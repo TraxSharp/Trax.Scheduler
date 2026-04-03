@@ -32,8 +32,8 @@ internal class LocalWorkerService(
     IServiceProvider serviceProvider,
     LocalWorkerOptions options,
     ICancellationRegistry cancellationRegistry,
-    ISqlDialect sqlDialect,
-    ILogger<LocalWorkerService> logger
+    ILogger<LocalWorkerService> logger,
+    ISqlDialect? sqlDialect = null
 ) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -100,7 +100,7 @@ internal class LocalWorkerService(
 
             var jobs = await dataContext
                 .BackgroundJobs.FromSqlRaw(
-                    sqlDialect.DequeueBackgroundJobs(),
+                    sqlDialect!.DequeueBackgroundJobs(),
                     visibilitySeconds,
                     batchSize
                 )
