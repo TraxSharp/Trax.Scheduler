@@ -39,7 +39,7 @@ jobs:
           PGPASSWORD: trax123
         run: |
           for db in trax_scheduler_default_submitter trax_scheduler_builder_validation trax_scheduler_builder_settings; do
-            psql -h localhost -U trax -d trax -c "CREATE DATABASE $db;"
+            psql -h localhost -U trax -d trax_scheduler_tests -c "CREATE DATABASE $db;"
           done
       - run: dotnet test --configuration Release --no-build --collect:"XPlat Code Coverage" --results-directory ./TestResults
       - name: Upload coverage to Codecov
