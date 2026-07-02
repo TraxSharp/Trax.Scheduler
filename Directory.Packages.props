@@ -1,6 +1,9 @@
 <Project>
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- Let a central PackageVersion pin a transitively-referenced package
+         (used to force a patched SQLite native lib below). -->
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
 
   <!-- Local dev override: when present, trax-local.props sets TraxLocalVersion (e.g. 1.99.99)
@@ -85,5 +88,7 @@
     <PackageVersion Include="NUnit.Analyzers" Version="4.11.2" />
     <PackageVersion Include="NUnit3TestAdapter" Version="6.1.0" />
     <PackageVersion Include="PublicApiGenerator" Version="11.4.5" />
+    <!-- Transitive (via EF Core Sqlite): pull the patched native SQLite lib (CVE-2025-6965). -->
+    <PackageVersion Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
   </ItemGroup>
 </Project>
