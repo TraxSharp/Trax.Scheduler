@@ -2,4 +2,8 @@
   <PropertyGroup>
     <Version>1.99.99</Version>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DotNet.ReproducibleBuilds" PrivateAssets="All" />
+  </ItemGroup>
 </Project>
