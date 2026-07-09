@@ -188,8 +188,8 @@
       },
       "AWSSDK.Core": {
         "type": "Transitive",
-        "resolved": "4.0.100.1",
-        "contentHash": "kOSGVgWvxz3V8CYX9BDQ46DLsHumW0YjOMJHpns5iNCt1kzEISpTluL/+HMmXMoqIS+KSeoEvjtJWclaoGVlKw=="
+        "resolved": "4.0.100.3",
+        "contentHash": "KU+8IlwHqh68J82FXvsNgehAuG0Z++Ul62oD5sg5Iyj4RgSdUKer3nbLBJbW31DAM7mgEuckhsEcJW+2wYpSVA=="
       },
       "Castle.Core": {
         "type": "Transitive",
@@ -638,14 +638,14 @@
       "trax.scheduler.lambda": {
         "type": "Project",
         "dependencies": {
-          "AWSSDK.Lambda": "[4.0.100.1, )",
+          "AWSSDK.Lambda": "[4.0.101.1, )",
           "Trax.Scheduler": "[1.99.99, )"
         }
       },
       "trax.scheduler.sqs": {
         "type": "Project",
         "dependencies": {
-          "AWSSDK.SQS": "[4.0.100.1, )",
+          "AWSSDK.SQS": "[4.0.100.3, )",
           "Amazon.Lambda.SQSEvents": "[3.0.0, )",
           "Trax.Scheduler": "[1.99.99, )"
         }
@@ -665,20 +665,20 @@
       },
       "AWSSDK.Lambda": {
         "type": "CentralTransitive",
-        "requested": "[4.0.100.1, )",
-        "resolved": "4.0.100.1",
-        "contentHash": "IASnQ+TVYEJ2XC7tkn4WAfnhCc2nsq6qMs0DBB+MdwDSmoU9AZM6qX+ZM9DDccNTB34AsWU/ZToWTV5dpXC37A==",
+        "requested": "[4.0.101.1, )",
+        "resolved": "4.0.101.1",
+        "contentHash": "21Pf8Zo92A5s5nsNxzeVXiyeVs9jSQdBeaBbcyrMlgG1J5dKKl+SNQUvqPzhjGUsFNGIJ2LUvCI6ONllf09FDw==",
         "dependencies": {
-          "AWSSDK.Core": "[4.0.100.1, 5.0.0)"
+          "AWSSDK.Core": "[4.0.100.3, 5.0.0)"
         }
       },
       "AWSSDK.SQS": {
         "type": "CentralTransitive",
-        "requested": "[4.0.100.1, )",
-        "resolved": "4.0.100.1",
-        "contentHash": "ueJmm5QzsV1SYqZFWrcUwaMhujpKu0GaYNTfT245wkHJ4/ZH3lMW/bWvW3OXzBsQ+z3ITqSnEyiEP2usxgHSNg==",
+        "requested": "[4.0.100.3, )",
+        "resolved": "4.0.100.3",
+        "contentHash": "f5hBosANSLDbdqJX1crKp87z8ZhypULdx4u8jWbjLb63m/dvTv3Vkc/dnGo6goTEIJEIYaQpMmhgndo0iU88kg==",
         "dependencies": {
-          "AWSSDK.Core": "[4.0.100.1, 5.0.0)"
+          "AWSSDK.Core": "[4.0.100.3, 5.0.0)"
         }
       },
       "Cronos": {
