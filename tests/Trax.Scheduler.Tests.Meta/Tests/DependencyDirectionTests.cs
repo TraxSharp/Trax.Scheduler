@@ -67,7 +67,9 @@ public class DependencyDirectionTests
     {
         var repo = DetectRepo();
         repo.Should()
-            .NotBeNull("the current repo family should be detectable from the .slnx at the repo root");
+            .NotBeNull(
+                "the current repo family should be detectable from the .slnx at the repo root"
+            );
 
         var allowed = new HashSet<string>(AllowedUpstream[repo!], StringComparer.Ordinal) { repo! };
         var offenders = new List<string>();
