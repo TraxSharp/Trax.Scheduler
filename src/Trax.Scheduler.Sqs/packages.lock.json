@@ -10,11 +10,11 @@
       },
       "AWSSDK.SQS": {
         "type": "Direct",
-        "requested": "[4.0.100.4, )",
-        "resolved": "4.0.100.4",
-        "contentHash": "FkJak/+PGb5dOQOSQxFl60qCFvoNfM+y7H/omTpYardZ9+49q73iIRoUpftwl8IB7vQdjA5Du2FpX1iHtbhQhA==",
+        "requested": "[4.0.100.9, )",
+        "resolved": "4.0.100.9",
+        "contentHash": "g9XTpFtmRTkGw8nxRibgFxedaKE7nS4nP48XkWXkfJ7CTdNs+86FnjPe8QQ0qWtxteEOonug7EPBLF8D2iWrQg==",
         "dependencies": {
-          "AWSSDK.Core": "[4.0.100.5, 5.0.0)"
+          "AWSSDK.Core": "[4.0.101.1, 5.0.0)"
         }
       },
       "DotNet.ReproducibleBuilds": {
@@ -25,8 +25,8 @@
       },
       "AWSSDK.Core": {
         "type": "Transitive",
-        "resolved": "4.0.100.5",
-        "contentHash": "OYkCEqfNDh6uDlsCF+pBCOi9LvaEg9m2iU5xtbMci3yW8SpCIPOijiqB5OINIhdDvrQAltFd0x4BeYfF7GJVSw=="
+        "resolved": "4.0.101.1",
+        "contentHash": "NtMRfAGDrdb5PVnTL4vIrnPuPSXbBw0j9+voVMYmgsH5Ep5H4tuNMkPJZCOO9q99mh0L9ClOwVkQHCliR5uOLA=="
       },
       "LanguageExt.Core": {
         "type": "Transitive",

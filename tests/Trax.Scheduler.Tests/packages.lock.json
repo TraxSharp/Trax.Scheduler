@@ -4,17 +4,17 @@
     "net10.0": {
       "Amazon.Lambda.Core": {
         "type": "Direct",
-        "requested": "[3.1.1, )",
-        "resolved": "3.1.1",
-        "contentHash": "SDmbFgGft2QRxUjZQwFVAzq15F2hPNzI2xG4ZGFKY4DwoErwfJfp1/h7V/vIahwSjZ0oEoAoTX4QP/nJXeZF8Q=="
+        "requested": "[3.3.0, )",
+        "resolved": "3.3.0",
+        "contentHash": "CZKlX8ZDMi6aKPo5lPAjmsJFDXNJHX00aiiYeRQOEszP8cjx6qklBvTPj4qpr4dlp3YYQjmB87CqAiWV7vk2fA=="
       },
       "Amazon.Lambda.TestUtilities": {
         "type": "Direct",
-        "requested": "[4.1.0, )",
-        "resolved": "4.1.0",
-        "contentHash": "Rl+pB4V8iomFk3o/0FhRo1KJ0b55TaKsMXjQ1Rf8rrhLKLw5GRZlWR2Da/VPa1alJSGNqR7s8zN6M/YNbCQWzQ==",
+        "requested": "[4.2.0, )",
+        "resolved": "4.2.0",
+        "contentHash": "/MeNDYxi9BZQ1oJCXNbK1RwvICbryo1D0SNU0D7GSCp7H52jisFAlt3XjoiM7v6NlZUw8kXq2DpkrOpkGifbEA==",
         "dependencies": {
-          "Amazon.Lambda.Core": "3.1.0"
+          "Amazon.Lambda.Core": "3.2.0"
         }
       },
       "coverlet.collector": {
@@ -117,8 +117,8 @@
       },
       "AWSSDK.Core": {
         "type": "Transitive",
-        "resolved": "4.0.100.5",
-        "contentHash": "OYkCEqfNDh6uDlsCF+pBCOi9LvaEg9m2iU5xtbMci3yW8SpCIPOijiqB5OINIhdDvrQAltFd0x4BeYfF7GJVSw=="
+        "resolved": "4.0.101.1",
+        "contentHash": "NtMRfAGDrdb5PVnTL4vIrnPuPSXbBw0j9+voVMYmgsH5Ep5H4tuNMkPJZCOO9q99mh0L9ClOwVkQHCliR5uOLA=="
       },
       "LanguageExt.Core": {
         "type": "Transitive",
@@ -366,7 +366,7 @@
       "trax.runner.lambda": {
         "type": "Project",
         "dependencies": {
-          "Amazon.Lambda.Core": "[3.1.1, )",
+          "Amazon.Lambda.Core": "[3.3.0, )",
           "Amazon.Lambda.Serialization.SystemTextJson": "[3.0.0, )",
           "Trax.Scheduler": "[1.99.99, )"
         }
@@ -383,7 +383,7 @@
       "trax.scheduler.lambda": {
         "type": "Project",
         "dependencies": {
-          "AWSSDK.Lambda": "[4.0.104, )",
+          "AWSSDK.Lambda": "[4.0.105.2, )",
           "Trax.Scheduler": "[1.99.99, )"
         }
       },
@@ -398,11 +398,11 @@
       },
       "AWSSDK.Lambda": {
         "type": "CentralTransitive",
-        "requested": "[4.0.104, )",
-        "resolved": "4.0.104",
-        "contentHash": "HszAn0XYpsFSoISGw+LWXRwjvIgRvI4ZyPNBxZ/fqZW+DnfUvf8wIAxB5v6DZNQJ8o6hf5JUEaSyg/Of1csPJg==",
+        "requested": "[4.0.105.2, )",
+        "resolved": "4.0.105.2",
+        "contentHash": "AGT2HbKTUPL5GtMYjUA39lhZXQL6po/fB+FNa0rDbHk1i398euukbwHbraR0oyeRNO7rlWjokJYqXVTeeF8j0Q==",
         "dependencies": {
-          "AWSSDK.Core": "[4.0.100.5, 5.0.0)"
+          "AWSSDK.Core": "[4.0.101.1, 5.0.0)"
         }
       },
       "Cronos": {
