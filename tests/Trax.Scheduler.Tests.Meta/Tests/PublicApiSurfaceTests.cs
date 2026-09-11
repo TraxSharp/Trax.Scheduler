@@ -3,6 +3,11 @@ using PublicApiGenerator;
 
 namespace Trax.Scheduler.Tests.Meta.Tests;
 
+/// <summary>
+/// The published surface is a committed file, so a change to it lands in the diff.
+///
+/// <para>Enforces <c>Trax.Docs/adr/0010-the-public-api-surface-is-a-committed-baseline.md</c>.</para>
+/// </summary>
 [TestFixture]
 public class PublicApiSurfaceTests
 {

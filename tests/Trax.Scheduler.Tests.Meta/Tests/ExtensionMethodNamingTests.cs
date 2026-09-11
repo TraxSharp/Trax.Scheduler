@@ -4,6 +4,11 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Trax.Scheduler.Tests.Meta.Tests;
 
+/// <summary>
+/// Public extension methods in Extensions/ folders carry Trax in the name.
+///
+/// <para>Not ADR-enforcing: it pins a naming convention that was adopted rather than chosen, and nothing about it was a trade-off between real options.</para>
+/// </summary>
 [TestFixture]
 public class ExtensionMethodNamingTests
 {

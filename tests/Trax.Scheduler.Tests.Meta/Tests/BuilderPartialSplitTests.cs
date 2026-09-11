@@ -1,5 +1,10 @@
 namespace Trax.Scheduler.Tests.Meta.Tests;
 
+/// <summary>
+/// Each builder has a state file, and its Build() lives in the .Build partial.
+///
+/// <para>Not ADR-enforcing: the partial-class split is a pattern documented at reference/builder-pattern, not a decision taken against alternatives.</para>
+/// </summary>
 [TestFixture]
 public class BuilderPartialSplitTests
 {

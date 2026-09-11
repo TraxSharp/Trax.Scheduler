@@ -1,5 +1,10 @@
 namespace Trax.Scheduler.Tests.Meta.Tests;
 
+/// <summary>
+/// FluentAssertions only, because the because argument is where a failure explains itself.
+///
+/// <para>Enforces <c>Trax.Docs/adr/0004-tests-assert-with-fluentassertions.md</c>.</para>
+/// </summary>
 [TestFixture]
 public class NoLegacyAssertTests
 {

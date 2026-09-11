@@ -99,3 +99,4 @@ jobs:
         uses: TraxSharp/Trax.Docs/.github/actions/adr-guard@616566d990aa4cfabd3ebd3eac59809acc300609
         with:
           known-areas: scheduling,providers,platform,testing
+          census-root: tests/Trax.Scheduler.Tests.Meta

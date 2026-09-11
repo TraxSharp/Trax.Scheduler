@@ -1,5 +1,10 @@
 namespace Trax.Scheduler.Tests.Meta.Tests;
 
+/// <summary>
+/// Tests wait on the condition that means the work finished, not on a duration.
+///
+/// <para>Enforces <c>Trax.Docs/adr/0006-tests-synchronise-on-a-signal.md</c>.</para>
+/// </summary>
 [TestFixture]
 public class NoFixedTaskDelayTests
 {

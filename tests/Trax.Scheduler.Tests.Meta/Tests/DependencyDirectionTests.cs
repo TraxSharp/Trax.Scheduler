@@ -11,6 +11,8 @@ namespace Trax.Scheduler.Tests.Meta.Tests;
 /// Trax.Api.GraphQL from inside Trax.Effect. That only compiles against the locally-packed feed and hides a
 /// real layering inversion. Sibling <see cref="CrossRepoPackageReferenceTests"/> checks that a legitimate
 /// cross-repo reference is centrally managed; this one checks it points the right way in the first place.</para>
+///
+/// <para>Enforces <c>Trax.Docs/adr/0003-a-repo-depends-only-on-what-is-upstream.md</c>.</para>
 /// </summary>
 [TestFixture]
 public class DependencyDirectionTests

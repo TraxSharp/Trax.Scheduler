@@ -1,5 +1,10 @@
 namespace Trax.Scheduler.Tests.Meta.Tests;
 
+/// <summary>
+/// A skip is a runtime decision with a reason in the output, not an attribute that hides.
+///
+/// <para>Enforces <c>Trax.Docs/adr/0005-a-skipped-test-is-a-runtime-decision.md</c>.</para>
+/// </summary>
 [TestFixture]
 public class NoIgnoreAttributeTests
 {

@@ -1,5 +1,10 @@
 namespace Trax.Scheduler.Tests.Meta.Tests;
 
+/// <summary>
+/// The local-dev sentinel version stays put, so pack-local always produces the same build.
+///
+/// <para>Enforces <c>Trax.Docs/adr/0002-cross-repo-dependencies-are-exact-pinned.md</c>.</para>
+/// </summary>
 [TestFixture]
 public class DirectoryBuildPropsVersionTests
 {
