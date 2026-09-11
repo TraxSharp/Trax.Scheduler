@@ -19,7 +19,7 @@ if your work contradicts one, say so rather than silently overriding it.
 | SQL, or anything provider-shaped | [0002](./docs/adr/0002-a-database-provider-is-interchangeable.md), the difference belongs behind `ISqlDialect` |
 
 Decisions binding more than one repo live in the central corpus at `Trax.Docs/adr/`, whose
-index lists them by repo. Eight name `scheduler`, and `0007` (the canonical train name is the
+index lists them by repo. Nine name `scheduler`, and `0007` (the canonical train name is the
 interface FullName) is the one this repo touches most, since it is the string stored in
 `work_queue.train_name` and sent over the wire. In a workspace checkout the index is at
 `../Trax.Docs/adr/README.md`; that path does not resolve on GitHub, because it crosses a

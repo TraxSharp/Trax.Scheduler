@@ -6,9 +6,13 @@ status: accepted
 
 # Swapping the database provider changes no scheduler registration
 
-`AddScheduler()` registers the same services whatever provider sits underneath it. A host
-that moves from Postgres to Sqlite changes one call in `AddEffects(...)` and nothing else:
-the manifest manager, the SQL dialect and the provider flag all resolve the same way.
+`AddScheduler()` registers the same services for either **relational** provider. A host that
+moves from Postgres to Sqlite changes one call in `AddEffects(...)` and nothing else: the
+manifest manager, the SQL dialect and the provider flag all resolve the same way.
+
+The InMemory provider is deliberately not in that set. With no database there is nothing for
+the work queue to poll, so `AddScheduler()` branches on `HasDatabaseProvider` and registers a
+reduced surface: a different manifest manager and job submitter, and no polling services.
 
 ## Status
 
@@ -42,11 +46,16 @@ the dialect or not at all.
   stack against a throwaway database file and resolves the registrations that would break
   first if a provider branch crept in.
 
-Not covered, and this is narrower than it looks: the guard asserts three registrations
-resolve under Sqlite (`HasDatabaseProvider`, `ManifestManagerTrain`, `ISqlDialect`). It does
-**not** diff the Sqlite service set against the Postgres one, so a service registered for
-Postgres only, and not among those three, is invisible to it.
+Not covered:
+
+- The guard asserts three registrations resolve under Sqlite (`HasDatabaseProvider`,
+  `ManifestManagerTrain`, `ISqlDialect`). It does **not** diff the Sqlite service set against
+  the Postgres one, so a service registered for Postgres only, and not among those three, is
+  invisible to it.
+- One provider check escapes the dialect: `SchedulerStartupService` sniffs the connection for
+  `"Npgsql."` by string rather than asking `ISqlDialect`.
 
 ## Changelog
 
+- **2026-09-11**: Corrected the scope: the claim holds for the two relational providers, and InMemory deliberately registers a reduced surface.
 - **2026-09-11**: Recorded.
