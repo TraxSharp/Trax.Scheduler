@@ -28,7 +28,7 @@ repository boundary.
 ## When your change makes a decision
 
 Most changes do not. When one does (reversing it would cost something real, a future reader
-would ask why it is like this, and there were genuine alternatives), it takes five steps and
+would ask why it is like this, and there were real alternatives), it takes five steps and
 the build enforces four. The `adr-guard` job runs on every pull request.
 
 | | Step | Enforced |

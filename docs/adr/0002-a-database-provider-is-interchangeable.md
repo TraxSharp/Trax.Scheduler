@@ -21,7 +21,7 @@ reduced surface: a different manifest manager and job submitter, and no polling 
 ## Why this is written down
 
 Because the scheduler is the layer most tempted to break it. It writes SQL for the work
-queue and the dead-letter table, and the two providers genuinely differ (`jsonb` and
+queue and the dead-letter table, and the two providers differ (`jsonb` and
 `timestamptz` against `TEXT` and `INTEGER`, a `trax` schema against no schemas at all). The
 easy path is a provider branch in the scheduler. Instead the difference is confined behind
 `ISqlDialect`, and the scheduler asks for the dialect rather than asking which provider it
@@ -57,5 +57,4 @@ Not covered:
 
 ## Changelog
 
-- **2026-09-11**: Corrected the scope: the claim holds for the two relational providers, and InMemory deliberately registers a reduced surface.
 - **2026-09-11**: Recorded.

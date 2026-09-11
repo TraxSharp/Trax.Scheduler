@@ -61,6 +61,4 @@ Not covered:
 
 ## Changelog
 
-- **2026-09-11**: Narrowed the claim that the wire name is the stored name. The contract
-  documents it, nothing in this repo enforces it, and there is no call site here to check.
 - **2026-09-11**: Recorded.
