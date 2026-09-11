@@ -5,6 +5,14 @@ using Trax.Scheduler.Services.RunExecutor;
 
 namespace Trax.Scheduler.Tests.UnitTests;
 
+/// <summary>
+/// The HTTP wire contract for a remote run, pinned by round-trip and by record equality.
+///
+/// <para>A property rename or a reordering that breaks the shape fails here rather than in a
+/// deployed worker that deserializes whatever happens to match.</para>
+///
+/// <para>Enforces <c>docs/adr/0001-remote-execution-is-a-json-wire-contract.md</c>.</para>
+/// </summary>
 [TestFixture]
 public class RemoteRunContractTests
 {
@@ -23,7 +31,14 @@ public class RemoteRunContractTests
         var deserialized = JsonSerializer.Deserialize<RemoteRunRequest>(json);
 
         deserialized.Should().NotBeNull();
-        deserialized!.TrainName.Should().Be("My.Namespace.MyTrain");
+        deserialized!
+            .TrainName.Should()
+            .Be(
+                "My.Namespace.MyTrain",
+                "the wire carries the canonical train name, not a compiled type, so the two ends "
+                    + "need not ship the same assemblies. See "
+                    + "docs/adr/0001-remote-execution-is-a-json-wire-contract.md."
+            );
         deserialized.InputJson.Should().Be("""{"name":"test"}""");
         deserialized.InputType.Should().Be("My.Namespace.MyInput");
     }

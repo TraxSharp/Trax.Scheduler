@@ -72,3 +72,30 @@ jobs:
           directory: ./TestResults
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ADRs for this repo live in docs/adr/ and are checked against this checkout alone. The
+  # guard is published by Trax.Docs; nothing else needs to be cloned.
+  #
+  # REPIN REQUIRED: 616566d990aa is a commit on Trax.Docs' feat/adr-system branch. Once that
+  # merges, repoint this at the resulting commit on Trax.Docs main. A stale SHA fails loudly
+  # with "action not found" rather than silently skipping the check.
+  adr-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40  # v2.20.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check ADRs
+        uses: TraxSharp/Trax.Docs/.github/actions/adr-guard@616566d990aa4cfabd3ebd3eac59809acc300609
+        with:
+          known-areas: scheduling,providers,platform,testing
