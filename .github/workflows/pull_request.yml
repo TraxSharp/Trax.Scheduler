@@ -76,7 +76,7 @@ jobs:
   # ADRs for this repo live in docs/adr/ and are checked against this checkout alone. The
   # guard is published by Trax.Docs; nothing else needs to be cloned.
   #
-  # REPIN REQUIRED: cddcd0af62db is a commit on Trax.Docs' feat/adr-system branch. Once that
+  # REPIN REQUIRED: 3a6554a9cfd3 is a commit on Trax.Docs' feat/adr-system branch. Once that
   # merges, repoint this at the resulting commit on Trax.Docs main. A stale SHA fails loudly
   # with "action not found" rather than silently skipping the check.
   adr-guard:
@@ -96,7 +96,7 @@ jobs:
           persist-credentials: false
 
       - name: Check ADRs
-        uses: TraxSharp/Trax.Docs/.github/actions/adr-guard@cddcd0af62db6b31d182b44d436ad55a17c18431
+        uses: TraxSharp/Trax.Docs/.github/actions/adr-guard@3a6554a9cfd3885859ad0371f7eac80075d39aba
         with:
           known-areas: scheduling,providers,platform,testing
           census-root: tests/Trax.Scheduler.Tests.Meta
