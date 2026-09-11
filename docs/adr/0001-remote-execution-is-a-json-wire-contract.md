@@ -37,9 +37,12 @@ is not, and neither end validates a version.
 type loaded fails at deserialization, with an error naming a type rather than naming the
 train. That is the cost of decoupling the assemblies.
 
-**The train name in the request is the same string stored in `work_queue.train_name` and
-`manifest.Name`,** so a remote run and a local one are the same job as far as every query
-and every dashboard view is concerned.
+**The contract documents `TrainName` as the fully qualified service type name**, which is
+the same identifier `work_queue.train_name` and `manifest.Name` store, so a remote run and a
+local one describe the same job. Nothing in this repo enforces it: no code here calls
+`IRunExecutor`, so the caller supplies the string and the canonical-name rule
+(`Trax.Docs/adr/0007-the-canonical-train-name-is-the-interface-fullname.md`) is the only
+thing telling it which string to supply.
 
 ## Exemplars
 
@@ -47,10 +50,17 @@ and every dashboard view is concerned.
   pins record equality, so a property rename or a reordering that breaks the wire shape
   fails here rather than in a deployed worker.
 
-Not covered: nothing checks that the two ends agree on a version, because there is no
-version field. A worker built against an older contract and a scheduler sending a newer one
-will deserialize whatever matches and silently drop the rest.
+Not covered:
+
+- Nothing checks that the two ends agree on a version, because there is no version field. A
+  worker built against an older contract and a scheduler sending a newer one will
+  deserialize whatever matches and silently drop the rest.
+- Nothing checks that the `TrainName` sent is canonical. The executors take it as a
+  parameter and this repo has no call site, so a caller passing a short name produces a
+  request that round-trips perfectly and matches no job.
 
 ## Changelog
 
+- **2026-09-11**: Narrowed the claim that the wire name is the stored name. The contract
+  documents it, nothing in this repo enforces it, and there is no call site here to check.
 - **2026-09-11**: Recorded.
