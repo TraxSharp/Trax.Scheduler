@@ -14,6 +14,7 @@ namespace Trax.Scheduler.Tests.Meta.Tests;
 ///
 /// <para>Enforces <c>Trax.Docs/adr/0003-a-repo-depends-only-on-what-is-upstream.md</c>.</para>
 /// </summary>
+[Property("adr", "Trax.Docs/adr/0003-a-repo-depends-only-on-what-is-upstream.md")]
 [TestFixture]
 public class DependencyDirectionTests
 {

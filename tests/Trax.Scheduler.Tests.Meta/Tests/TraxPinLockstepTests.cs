@@ -10,6 +10,7 @@ namespace Trax.Scheduler.Tests.Meta.Tests;
 ///
 /// <para>Enforces <c>Trax.Docs/adr/0002-cross-repo-dependencies-are-exact-pinned.md</c>.</para>
 /// </summary>
+[Property("adr", "Trax.Docs/adr/0002-cross-repo-dependencies-are-exact-pinned.md")]
 [TestFixture]
 public class TraxPinLockstepTests
 {

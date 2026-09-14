@@ -16,6 +16,7 @@ namespace Trax.Scheduler.Tests.UnitTests;
 ///
 /// <para>Enforces <c>docs/adr/0001-remote-execution-is-a-json-wire-contract.md</c>.</para>
 /// </summary>
+[Property("adr", "docs/adr/0001-remote-execution-is-a-json-wire-contract.md")]
 [TestFixture]
 public class RemoteRunContractTests
 {

@@ -19,6 +19,7 @@ namespace Trax.Scheduler.Tests.Sqlite.Integration.UnitTests;
 ///
 /// <para>Enforces <c>docs/adr/0002-a-database-provider-is-interchangeable.md</c>.</para>
 /// </summary>
+[Property("adr", "docs/adr/0002-a-database-provider-is-interchangeable.md")]
 [TestFixture]
 public class ProviderConsistencyTests
 {

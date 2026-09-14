@@ -5,6 +5,7 @@ namespace Trax.Scheduler.Tests.Meta.Tests;
 ///
 /// <para>Enforces <c>Trax.Docs/adr/0006-tests-synchronise-on-a-signal.md</c>.</para>
 /// </summary>
+[Property("adr", "Trax.Docs/adr/0006-tests-synchronise-on-a-signal.md")]
 [TestFixture]
 public class NoFixedTaskDelayTests
 {

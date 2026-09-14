@@ -5,6 +5,7 @@ namespace Trax.Scheduler.Tests.Meta.Tests;
 ///
 /// <para>Enforces <c>Trax.Docs/adr/0005-a-skipped-test-is-a-runtime-decision.md</c>.</para>
 /// </summary>
+[Property("adr", "Trax.Docs/adr/0005-a-skipped-test-is-a-runtime-decision.md")]
 [TestFixture]
 public class NoIgnoreAttributeTests
 {

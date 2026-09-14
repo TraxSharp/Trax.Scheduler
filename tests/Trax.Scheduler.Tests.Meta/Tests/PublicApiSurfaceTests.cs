@@ -8,6 +8,7 @@ namespace Trax.Scheduler.Tests.Meta.Tests;
 ///
 /// <para>Enforces <c>Trax.Docs/adr/0010-the-public-api-surface-is-a-committed-baseline.md</c>.</para>
 /// </summary>
+[Property("adr", "Trax.Docs/adr/0010-the-public-api-surface-is-a-committed-baseline.md")]
 [TestFixture]
 public class PublicApiSurfaceTests
 {
