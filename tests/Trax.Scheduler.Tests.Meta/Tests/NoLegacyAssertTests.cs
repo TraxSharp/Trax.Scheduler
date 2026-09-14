@@ -48,7 +48,7 @@ public class NoLegacyAssertTests
         offenders
             .Should()
             .BeEmpty(
-                "CLAUDE.md > Naming Conventions requires FluentAssertions exclusively. "
+                "Trax.Docs/reference/test-conventions.md > Assertions requires FluentAssertions exclusively. "
                     + "Replace classic NUnit asserts with .Should().Be(...), .Should().BeTrue(), etc. "
                     + "Assert.Pass / Assert.Fail / Assert.Ignore remain acceptable. Offenders:\n  "
                     + string.Join("\n  ", offenders)

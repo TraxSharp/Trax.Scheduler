@@ -71,7 +71,7 @@ public class PublicApiSurfaceTests
                 Normalize(baseline),
                 $"public API of '{name}' must match the checked-in baseline at "
                     + $"PublicApi/{name}.received.txt. If this change is intentional, update the baseline. "
-                    + "CLAUDE.md > Versioning Strategy: a major version bump on NuGet is permanent."
+                    + "Trax.Docs/reference/semantic-release.md > Commit Messages: a major version bump on NuGet is permanent."
             );
     }
 }

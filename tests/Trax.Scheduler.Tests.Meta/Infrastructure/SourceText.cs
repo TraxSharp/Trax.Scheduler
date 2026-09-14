@@ -1,20 +1,29 @@
 namespace Trax.Scheduler.Tests.Meta.Infrastructure;
 
+/// <summary>
+/// Helpers for inspecting C# source text without triggering false positives from comments / strings.
+/// </summary>
 internal static class SourceText
 {
     /// <summary>
     /// Blanks out comment and string-literal content so a keyword scan cannot match inside one.
     /// </summary>
     /// <remarks>
-    /// A single left-to-right pass, not a sequence of regex replacements. Comments and string
-    /// literals are mutually exclusive contexts and cannot be resolved independently: stripping
-    /// <c>//</c> first ate the rest of any line holding a URL, the dangling quote then swallowed
-    /// everything to the next quote in the file, and whole test files went invisible to the guards.
+    /// Comments and string literals are mutually exclusive contexts and cannot be resolved
+    /// independently, which rules out a sequence of regex replacements.
     ///
     /// <para>
-    /// Output is the same length as the input, character for character, with newlines preserved.
-    /// Delimiters are kept and only the content between them is blanked, so every offset and line
-    /// number in the result still points at the same place in the original.
+    /// The previous implementation stripped `//` before string literals, so a line holding a URL
+    /// lost the rest of itself and the dangling quote then swallowed everything to the next quote
+    /// in the file. It also had no raw-string handling, so a raw block containing quotes
+    /// corrupted the scan from there on. The single left-to-right pass below closes both.
+    /// </para>
+    ///
+    /// <para>
+    /// String-literal delimiters are kept and only the content between them is blanked. Comment
+    /// delimiters are blanked along with their content. Either way the output is the same length
+    /// as the input and newlines are preserved, so every offset and line number in the result
+    /// still points at the same place in the original.
     /// </para>
     /// </remarks>
     public static string StripCommentsAndStrings(string source)
@@ -55,14 +64,26 @@ internal static class SourceText
                 continue;
             }
 
-            // Raw string literal: three or more quotes, closed by the same count.
-            if (c == '"' && i + 2 < source.Length && source[i + 1] == '"' && source[i + 2] == '"')
+            // Raw string literal, optionally interpolated: three or more quotes closed by the same
+            // count, behind any number of leading '$'. The '$$"""' form has to be recognised here,
+            // before the verbatim branch below mistakes its '$$"' prefix for '$@"'.
+            var dollars = 0;
+            while (i + dollars < source.Length && source[i + dollars] == '$')
+                dollars++;
+
+            if (
+                i + dollars + 2 < source.Length
+                && source[i + dollars] == '"'
+                && source[i + dollars + 1] == '"'
+                && source[i + dollars + 2] == '"'
+            )
             {
+                var quoteStart = i + dollars;
                 var open = 0;
-                while (i + open < source.Length && source[i + open] == '"')
+                while (quoteStart + open < source.Length && source[quoteStart + open] == '"')
                     open++;
 
-                var scan = i + open;
+                var scan = quoteStart + open;
                 while (scan < source.Length)
                 {
                     if (source[scan] != '"')
@@ -80,7 +101,7 @@ internal static class SourceText
                 }
 
                 var end = scan >= source.Length ? source.Length : scan + open;
-                Blank(i + open, Math.Min(scan, end));
+                Blank(quoteStart + open, Math.Min(scan, end));
                 i = end;
                 continue;
             }

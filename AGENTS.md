@@ -21,9 +21,10 @@ if your work contradicts one, say so rather than silently overriding it.
 Decisions binding more than one repo live in the central corpus at `Trax.Docs/adr/`, whose
 index lists them by repo. Nine name `scheduler`, and `0007` (the canonical train name is the
 interface FullName) is the one this repo touches most, since it is the string stored in
-`work_queue.train_name` and sent over the wire. In a workspace checkout the index is at
-`../Trax.Docs/adr/README.md`; that path does not resolve on GitHub, because it crosses a
-repository boundary.
+`work_queue.train_name` and the one a remote run puts on the wire. The wire is lenient about
+it: the executing side falls back to the short type name when the FullName does not match. In
+a workspace checkout the index is at `../Trax.Docs/adr/README.md`; that path does not resolve
+on GitHub, because it crosses a repository boundary.
 
 ## When your change makes a decision
 
@@ -46,8 +47,10 @@ not to record. The format is
 ## Guards
 
 `tests/Trax.Scheduler.Tests.Meta/` holds eleven convention guards, and **all eleven are
-shared** with the other repos. The two guards specific to this repo live with the suites they
-belong to rather than in `Tests.Meta`: `RemoteRunContractTests` and `ProviderConsistencyTests`.
+shared** with the other repos. The guards this repo's own ADRs name live with the suites they
+belong to rather than in `Tests.Meta`: `RemoteRunContractTests`, `HttpRunExecutorTests` and
+`LambdaRunExecutorTests` for the wire contract, `ProviderConsistencyTests` and
+`SqliteSchedulerBuilderTests` for the provider swap.
 
 The census is on: every guard class under that folder is either credited to an ADR or
 carries `Not ADR-enforcing:` with a reason, and the `adr-guard` job checks it. A new guard is
