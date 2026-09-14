@@ -72,8 +72,9 @@ Not covered:
 
 - Neither guard diffs the Sqlite service set against the Postgres one. Between them they
   name four things (`HasDatabaseProvider`, `ManifestManagerTrain`, `ISqlDialect`,
-  `JobDispatcherPollingService`), so a Postgres-only registration outside those four is
-  invisible to both.
+  `JobDispatcherPollingService`). `DefaultJobSubmitterTests.cs` covers the adjacent case,
+  asserting both polarities of the InMemory branch across four hosted services, so the
+  genuinely uncovered space is a relational-only registration that none of those names.
 
 ## Changelog
 
