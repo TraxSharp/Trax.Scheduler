@@ -76,13 +76,9 @@ jobs:
   # ADRs for this repo live in docs/adr/ and are checked against this checkout alone. The
   # guard is published by Trax.Docs; nothing else needs to be cloned.
   #
-  # REPIN REQUIRED: 6d5e3c4bffe4 is a commit on Trax.Docs' feat/adr-system branch. It is pushed,
-  # so this job resolves, but it runs the pre-merge guard. Merge Trax.Docs first, then repoint
-  # this at the resulting commit on Trax.Docs main.
-  #
-  # Repinning is not optional, and forgetting it does not fail loudly. An ordinary merge
-  # leaves this SHA reachable, so the job goes on passing while running the pre-merge guard
-  # for ever. Only a SHA that has become unreachable gives "action not found".
+  # Pinned at 2333e97c32b8 on Trax.Docs main, which is where the guard now lives. Bump this only
+  # to adopt a guard change, and read what changed first: a newer guard can fail this repo
+  # on an ADR that was green before.
   adr-guard:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -100,7 +96,7 @@ jobs:
           persist-credentials: false
 
       - name: Check ADRs
-        uses: TraxSharp/Trax.Docs/.github/actions/adr-guard@6d5e3c4bffe45315f908fa44e5c065b96866b241
+        uses: TraxSharp/Trax.Docs/.github/actions/adr-guard@2333e97c32b8528d9a31d8d09af4da81ee92f3c8
         with:
           known-areas: scheduling,providers,platform,testing
           census-root: tests/Trax.Scheduler.Tests.Meta
