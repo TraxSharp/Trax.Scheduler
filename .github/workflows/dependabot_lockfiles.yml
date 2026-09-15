@@ -1,0 +1,82 @@
+name: Dependabot Lockfiles
+
+# Dependabot edits Directory.Packages.props but does not always regenerate every
+# packages.lock.json alongside it. The pull-request build restores with
+# --locked-mode, so a lockfile that disagrees with the manifest fails the PR with
+# NU1004 and the bump stalls until somebody regenerates by hand. This job does
+# that regeneration on the PR branch, so a Dependabot PR heals itself.
+#
+# Workflows triggered by Dependabot get a read-only GITHUB_TOKEN by default, but
+# since October 2021 they respect the permissions key, so contents: write here is
+# enough to push. No PAT, and deliberately not pull_request_target, which would
+# run PR code against the base repository's token.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Directory.Packages.props'
+      - '**/packages.lock.json'
+
+permissions: {}
+
+concurrency:
+  # One regeneration per branch; a superseded push has nothing to add.
+  group: dependabot-lockfiles-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  regenerate:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Pushing the regenerated lockfiles back onto the Dependabot branch.
+      contents: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout the pull request branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.head_ref }}
+          # Credentials are kept on purpose: this job pushes. Every other
+          # workflow in this repo sets persist-credentials: false.
+          persist-credentials: true
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68  # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Regenerate lockfiles
+        # trax-local.props is gitignored and absent here, so this resolves the
+        # committed pins rather than the locally packed 1.99.99.
+        run: dotnet restore --use-lock-file --force-evaluate
+
+      - name: Guard against local-dev lockfile versions
+        # A resolved 1.99.99 would mean the local feed leaked into the runner.
+        # Fail rather than push it: the PR build would reject it anyway.
+        run: |
+          if grep -rln '"resolved": "1.99.99"' --include=packages.lock.json . ; then
+            echo "::error::Regenerated lockfiles contain the local-dev version 1.99.99."
+            exit 1
+          fi
+
+      - name: Push the regenerated lockfiles
+        run: |
+          if [ -z "$(git status --porcelain -- '*packages.lock.json')" ]; then
+            echo "Lockfiles already agree with the manifest; nothing to push."
+            exit 0
+          fi
+
+          git config user.name 'dependabot[bot]'
+          git config user.email '49699333+dependabot[bot]@users.noreply.github.com'
+          git add -- '*packages.lock.json'
+          git commit -m 'chore(deps): regenerate lockfiles for the dependency bump'
+          git push origin HEAD:"$HEAD_REF"
+        env:
+          HEAD_REF: ${{ github.head_ref }}
