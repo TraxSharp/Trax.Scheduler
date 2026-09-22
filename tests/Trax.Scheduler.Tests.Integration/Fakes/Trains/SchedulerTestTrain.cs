@@ -9,8 +9,7 @@ namespace Trax.Scheduler.Tests.Integration.Fakes.Trains;
 /// </summary>
 public class SchedulerTestTrain : ServiceTrain<SchedulerTestInput, Unit>, ISchedulerTestTrain
 {
-    protected override async Task<Either<Exception, Unit>> RunInternal(SchedulerTestInput input) =>
-        Activate(input, Unit.Default).Resolve();
+    protected override async Task<Either<Exception, Unit>> Junctions() => Resolve();
 }
 
 /// <summary>

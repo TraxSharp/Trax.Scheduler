@@ -6,8 +6,7 @@ namespace Trax.Scheduler.Tests.Sqlite.Integration.Fakes.Trains;
 
 public class SchedulerTestTrain : ServiceTrain<SchedulerTestInput, Unit>, ISchedulerTestTrain
 {
-    protected override async Task<Either<Exception, Unit>> RunInternal(SchedulerTestInput input) =>
-        Activate(input, Unit.Default).Resolve();
+    protected override async Task<Either<Exception, Unit>> Junctions() => Resolve();
 }
 
 public record SchedulerTestInput : IManifestProperties
