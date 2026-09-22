@@ -1,4 +1,5 @@
 using LanguageExt;
+using Trax.Core.Junction;
 using Trax.Effect.Models.Manifest;
 using Trax.Effect.Services.ServiceTrain;
 
@@ -20,9 +21,8 @@ public class FailingSchedulerTestTrain
     : ServiceTrain<FailingSchedulerTestInput, Unit>,
         IFailingSchedulerTestTrain
 {
-    protected override async Task<Either<Exception, Unit>> RunInternal(
-        FailingSchedulerTestInput input
-    ) => new InvalidOperationException($"Intentional failure: {input.FailureMessage}");
+    protected override Task<Either<Exception, Unit>> Junctions() =>
+        Chain<FailWithMessage>().Resolve();
 }
 
 public record FailingSchedulerTestInput : IManifestProperties
@@ -31,3 +31,10 @@ public record FailingSchedulerTestInput : IManifestProperties
 }
 
 public interface IFailingSchedulerTestTrain : IServiceTrain<FailingSchedulerTestInput, Unit> { }
+
+/// <summary>Fails with the message the input carries, so the failure path is exercised.</summary>
+internal sealed class FailWithMessage : Junction<FailingSchedulerTestInput, Unit>
+{
+    public override Task<Unit> Run(FailingSchedulerTestInput input) =>
+        throw new InvalidOperationException($"Intentional failure: {input.FailureMessage}");
+}

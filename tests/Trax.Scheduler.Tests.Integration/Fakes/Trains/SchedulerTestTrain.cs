@@ -1,4 +1,5 @@
 using LanguageExt;
+using Trax.Core.Junction;
 using Trax.Effect.Models.Manifest;
 using Trax.Effect.Services.ServiceTrain;
 
@@ -32,9 +33,8 @@ public class FailingSchedulerTestTrain
     : ServiceTrain<FailingSchedulerTestInput, Unit>,
         IFailingSchedulerTestTrain
 {
-    protected override async Task<Either<Exception, Unit>> RunInternal(
-        FailingSchedulerTestInput input
-    ) => new InvalidOperationException($"Intentional failure: {input.FailureMessage}");
+    protected override Task<Either<Exception, Unit>> Junctions() =>
+        Chain<FailWithMessage>().Resolve();
 }
 
 /// <summary>
@@ -58,9 +58,8 @@ public class TypedOutputSchedulerTestTrain
     : ServiceTrain<TypedOutputSchedulerTestInput, string>,
         ITypedOutputSchedulerTestTrain
 {
-    protected override async Task<Either<Exception, string>> RunInternal(
-        TypedOutputSchedulerTestInput input
-    ) => Activate(input, $"processed-{input.Value}").Resolve();
+    protected override Task<Either<Exception, string>> Junctions() =>
+        Chain<ProcessTypedOutput>().Resolve();
 }
 
 /// <summary>
@@ -76,3 +75,17 @@ public record TypedOutputSchedulerTestInput : IManifestProperties
 /// </summary>
 public interface ITypedOutputSchedulerTestTrain
     : IServiceTrain<TypedOutputSchedulerTestInput, string> { }
+
+/// <summary>Fails with the message the input carries, so the failure path is exercised.</summary>
+internal sealed class FailWithMessage : Junction<FailingSchedulerTestInput, Unit>
+{
+    public override Task<Unit> Run(FailingSchedulerTestInput input) =>
+        throw new InvalidOperationException($"Intentional failure: {input.FailureMessage}");
+}
+
+/// <summary>Produces the typed output these scheduler tests assert on.</summary>
+internal sealed class ProcessTypedOutput : Junction<TypedOutputSchedulerTestInput, string>
+{
+    public override Task<string> Run(TypedOutputSchedulerTestInput input) =>
+        Task.FromResult($"processed-{input.Value}");
+}
