@@ -2,6 +2,7 @@ using FluentAssertions;
 using LanguageExt;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Trax.Core.Junction;
 using Trax.Effect.Models.Manifest;
 using Trax.Effect.Services.ServiceTrain;
 using Trax.Mediator.Services.TrainExecution;
@@ -91,18 +92,24 @@ public class DormantDependentReachabilityTests
     }
 
     /// <summary>A train that activates a dormant dependent from inside its own run.</summary>
-    public class ActivatingTrain(IDormantDependentContext dormants)
-        : ServiceTrain<ActivatingInput, Unit>,
-            IActivatingTrain
+    public class ActivatingTrain : ServiceTrain<ActivatingInput, Unit>, IActivatingTrain
     {
-        protected override async Task<Either<Exception, Unit>> RunInternal(ActivatingInput input)
+        protected override Task<Either<Exception, Unit>> Junctions() =>
+            Chain<ActivateTheDormantDependent>().Resolve();
+    }
+
+    /// <summary>Activates the dormant dependent, which is the call under test.</summary>
+    public class ActivateTheDormantDependent(IDormantDependentContext dormants)
+        : Junction<ActivatingInput, Unit>
+    {
+        public override async Task<Unit> Run(ActivatingInput input)
         {
             await dormants.ActivateAsync<ISchedulerTestTrain, SchedulerTestInput, Unit>(
                 Dormant,
                 new SchedulerTestInput { Value = input.Value }
             );
 
-            return Activate(input, Unit.Default).Resolve();
+            return Unit.Default;
         }
     }
 
