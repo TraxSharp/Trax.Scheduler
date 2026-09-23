@@ -9,14 +9,20 @@ namespace Trax.Scheduler.Services.Operations;
 public interface IOperationsService
 {
     /// <summary>
-    /// Validates the input against the registered train's input type and inserts a new
-    /// <see cref="Effect.Models.WorkQueue.WorkQueue"/> row in the <c>Queued</c> state.
+    /// Queues a train through the mediator's <c>ITrainExecutionService.QueueAsync</c>, so the
+    /// train's authorization, its <c>OnQueue</c> hook and its subject key apply.
     /// </summary>
     /// <returns>
     /// <c>OperationResult(true, Id: newEntryId, Count: 1, ...)</c> on success;
-    /// <c>OperationResult(false, ...)</c> with a populated <c>Message</c> for unknown
-    /// trains, missing <c>TrainName</c>, or invalid <c>InputJson</c>.
+    /// <c>OperationResult(false, ...)</c> with a populated <c>Message</c> for a missing
+    /// <c>TrainName</c>, an unknown train, invalid or oversized <c>InputJson</c>, or an enqueue
+    /// the mediator refused (the hook threw, the subject key was unusable, or a deferred entry
+    /// was cancelled before it was confirmed).
     /// </returns>
+    /// <exception cref="UnauthorizedAccessException">
+    /// The caller may not run the train (a <c>TrainAuthorizationException</c> when the API's
+    /// authorization is registered). It propagates rather than becoming a failed result.
+    /// </exception>
     Task<OperationResult> QueueTrainAsync(QueueTrainInput input, CancellationToken ct);
 
     /// <summary>

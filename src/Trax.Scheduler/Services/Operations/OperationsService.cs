@@ -94,6 +94,15 @@ public class OperationsService : IOperationsService
         {
             return new OperationResult(false, Message: ex.Message);
         }
+        catch (Exception ex)
+            when (ex is not UnauthorizedAccessException and not OperationCanceledException)
+        {
+            // The enqueue itself refused: the train's OnQueue hook threw, its subject key could
+            // not be used, or a deferred entry was cancelled before it was confirmed. A refusal
+            // is a result this service reports, not an unexpected error; only authorization
+            // stays an exception, because not being allowed is not a validation outcome.
+            return new OperationResult(false, Message: $"The enqueue was refused: {ex.Message}");
+        }
 
         _changeSignal?.Notify(ChangeDomain.WorkQueue);
 

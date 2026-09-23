@@ -25,8 +25,11 @@ namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 /// The operations surface enqueues through the real mediator, so a train's authorization
 /// requirements apply to it. The unit tests substitute the mediator; these do not, so they pin
 /// what a caller of the queueTrain mutation or the dashboard's queue dialog actually meets.
+///
+/// <para>Enforces Trax.Docs/adr/0017-a-callers-enqueue-goes-through-the-mediator.md.</para>
 /// </summary>
 [TestFixture]
+[Property("adr", "Trax.Docs/adr/0017-a-callers-enqueue-goes-through-the-mediator.md")]
 public class OperationsServiceAuthorizationTests
 {
     private ServiceProvider _serviceProvider = null!;
@@ -116,6 +119,21 @@ public class OperationsServiceAuthorizationTests
         result.Message.Should().StartWith("Invalid InputJson");
     }
 
+    [Test]
+    public async Task An_enqueue_the_train_refuses_is_a_failed_result_not_an_error()
+    {
+        var result = await Operations.QueueTrainAsync(
+            new QueueTrainInput(typeof(IRefusingHookTrain).FullName!, "{}"),
+            CancellationToken.None
+        );
+
+        result.Success.Should().BeFalse("the train's own OnQueue refused the mutation");
+        result.Message.Should().Contain("hook refused");
+
+        var context = _scope.ServiceProvider.GetRequiredService<IDataContext>();
+        (await context.WorkQueues.CountAsync()).Should().Be(0);
+    }
+
     public class DenyingAuthorization : ITrainAuthorizationService
     {
         public Task AuthorizeAsync(
@@ -149,6 +167,23 @@ public class OperationsServiceAuthorizationTests
 
     public class OpenTrain : ServiceTrain<OpenInput, Unit>, IOpenTrain
     {
+        protected override Task<Either<Exception, Unit>> Junctions() => Task.FromResult(Resolve());
+    }
+
+    public record RefusingInput
+    {
+        public string Value { get; init; } = string.Empty;
+    }
+
+    public interface IRefusingHookTrain : IServiceTrain<RefusingInput, Unit>;
+
+    public class RefusingHookTrain : ServiceTrain<RefusingInput, Unit>, IRefusingHookTrain
+    {
+        protected override Task OnQueue(
+            Trax.Effect.Models.Metadata.Metadata metadata,
+            CancellationToken ct
+        ) => throw new InvalidOperationException("the hook refused this mutation");
+
         protected override Task<Either<Exception, Unit>> Junctions() => Task.FromResult(Resolve());
     }
 }
