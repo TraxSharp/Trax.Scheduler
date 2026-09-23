@@ -134,4 +134,41 @@ public class RemoteFailureClassificationTests
             .FailureClass.Should()
             .Be(FailureClass.Unclassified, "an older worker sends nothing and must not break");
     }
+
+    [Test]
+    public void A_response_from_a_worker_that_predates_classification_still_reads()
+    {
+        // Written by hand rather than by the current record, which is what an older worker
+        // sends: the same shape with no failureClass property at all.
+        const string olderWorkerJson = """
+            {
+              "metadataId": 7,
+              "externalId": "abc",
+              "isError": true,
+              "errorMessage": "boom",
+              "exceptionType": "InvalidOperationException",
+              "failureJunction": "DoThing"
+            }
+            """;
+
+        var response = System.Text.Json.JsonSerializer.Deserialize<RemoteRunResponse>(
+            olderWorkerJson,
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)
+        )!;
+        var rebuilt = HttpRunExecutor.BuildExceptionFromErrorResponse(response);
+
+        var metadata = Metadata.Create(
+            new CreateMetadata
+            {
+                Name = "SomeTrain",
+                ExternalId = "abc",
+                Input = null,
+            }
+        );
+        metadata.AddException(rebuilt);
+
+        response.IsError.Should().BeTrue();
+        metadata.FailureClass.Should().Be(FailureClass.Unclassified);
+        metadata.FailureJunction.Should().Be("DoThing");
+    }
 }

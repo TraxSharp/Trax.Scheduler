@@ -203,6 +203,40 @@ public class LambdaRunExecutorTests
     }
 
     [Test]
+    public async Task ExecuteAsync_ErrorResponse_CarriesTheWorkersFailureClass()
+    {
+        // The worker classified the failure where it held the real exception. The response
+        // crosses the wire as JSON here, as it does from a real function, so this also pins that
+        // the class survives serialization.
+        var response = new RemoteRunResponse(
+            MetadataId: 0,
+            IsError: true,
+            ErrorMessage: "Row changed underneath the write",
+            ExceptionType: "DbUpdateConcurrencyException",
+            FailureJunction: "SaveOrderJunction",
+            FailureClass: FailureClass.Conflict
+        );
+        var client = CreateMockClient(response);
+        var executor = CreateExecutor(client);
+
+        var act = async () =>
+            await executor.ExecuteAsync(
+                "My.FailingTrain",
+                new TestRunInput { Name = "fail" },
+                typeof(TestRunOutput)
+            );
+
+        var ex = (await act.Should().ThrowAsync<TrainException>()).Which;
+        JsonSerializer
+            .Deserialize<TrainExceptionData>(ex.Message)!
+            .FailureClass.Should()
+            .Be(
+                FailureClass.Conflict,
+                "the Lambda transport has to carry the class home just as the HTTP one does"
+            );
+    }
+
+    [Test]
     public async Task ExecuteAsync_ErrorResponse_WithPlainMessage_FallsBackToFlatString()
     {
         // Arrange
