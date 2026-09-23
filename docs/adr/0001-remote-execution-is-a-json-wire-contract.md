@@ -32,8 +32,11 @@ interface FullName is the identifier every other layer already stores.
 ## Consequences
 
 **The contract is a public record, and changing it is a breaking change for anyone running
-a worker built against the old shape.** Adding a property is safe; renaming or removing one
-is not, and neither end validates a version.
+a worker built against the old shape.** Adding a nullable property is safe, because an older
+peer omits or ignores it; renaming or removing one is not, and neither end validates a version.
+An enum crosses as its integer, so its values are pinned explicitly (`FailureClass` does this),
+and a worker host whose JSON options write enums as strings breaks every error response that
+carries one.
 
 **`InputType` is read only on the job path.** `TraxRequestHandler.ExecuteJobAsync` resolves
 it to a `Type` to deserialize a `RemoteJobRequest`'s input, because at that point the handler
@@ -91,6 +94,10 @@ Not covered:
 
 ## Changelog
 
+- **2026-09-23**: `RemoteRunResponse` gained `FailureClass`, the first enum on the run path.
+  Narrowed "adding a property is safe" to nullable properties, recorded that an enum travels as
+  its integer and breaks under a string-enum converter, and pinned its encoding in
+  `RemoteRunContractTests`.
 - **2026-09-12**: Corrected the `TrainNotFoundException` claim (its message never names
   the train, by design) and the exemplar description of what the positional tests pin.
 - **2026-09-11**: Corrected `InputType` (read only on the job path, dead on the run path) and

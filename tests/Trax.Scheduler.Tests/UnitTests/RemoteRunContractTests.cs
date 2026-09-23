@@ -156,6 +156,33 @@ public class RemoteRunContractTests
     }
 
     [Test]
+    public void RemoteRunResponse_FailureClass_TravelsAsItsPinnedInteger()
+    {
+        // The worker writes with the host's web JSON options and the executors read with web
+        // defaults, so the class crosses as the enum's integer. FailureClass pins those integers
+        // explicitly; this pins that they are what goes on the wire.
+        var response = new RemoteRunResponse(
+            MetadataId: 1,
+            IsError: true,
+            ErrorMessage: "row changed",
+            FailureClass: Trax.Core.Exceptions.FailureClass.Conflict
+        );
+
+        var json = JsonSerializer.Serialize(response, JsonSerializerOptions.Web);
+
+        json.Should()
+            .Contain(
+                "\"failureClass\":2",
+                "reordering FailureClass's members must not change what an older worker's value "
+                    + "means. See docs/adr/0001-remote-execution-is-a-json-wire-contract.md"
+            );
+        JsonSerializer
+            .Deserialize<RemoteRunResponse>(json, JsonSerializerOptions.Web)!
+            .FailureClass.Should()
+            .Be(Trax.Core.Exceptions.FailureClass.Conflict);
+    }
+
+    [Test]
     public void RemoteRunResponse_ErrorWithNullOptionalFields_RoundTripsCleanly()
     {
         var response = new RemoteRunResponse(
