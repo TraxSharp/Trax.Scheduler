@@ -97,10 +97,12 @@ public class OperationsService : IOperationsService
         catch (Exception ex)
             when (ex is not UnauthorizedAccessException and not OperationCanceledException)
         {
-            // The enqueue itself refused: the train's OnQueue hook threw, its subject key could
-            // not be used, or a deferred entry was cancelled before it was confirmed. A refusal
-            // is a result this service reports, not an unexpected error; only authorization
-            // stays an exception, because not being allowed is not a validation outcome.
+            // Meant for the enqueue refusing: the train's OnQueue hook threw, its subject key
+            // could not be used, or a deferred entry was cancelled before it was confirmed. The
+            // filter does not tell those apart from anything else, though, so an infrastructure
+            // failure (the database unreachable) or the mediator's missing-enforcer
+            // InvalidOperationException is reported the same way. Only authorization and
+            // cancellation stay exceptions.
             return new OperationResult(false, Message: $"The enqueue was refused: {ex.Message}");
         }
 
