@@ -40,7 +40,14 @@ namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 /// fake that records calls without running anything, so a dispatched entry's metadata stays
 /// <c>Pending</c> and the subject stays busy until a test says otherwise.
 /// </para>
+///
+/// <para>Enforces Trax.Docs/adr/0019-queued-work-for-one-subject-runs-one-at-a-time.md and Trax.Docs/adr/0018-a-deferred-enqueue-is-staged-and-a-stranded-one-is-cancelled.md.</para>
 /// </summary>
+[Property("adr", "Trax.Docs/adr/0019-queued-work-for-one-subject-runs-one-at-a-time.md")]
+[Property(
+    "adr",
+    "Trax.Docs/adr/0018-a-deferred-enqueue-is-staged-and-a-stranded-one-is-cancelled.md"
+)]
 [TestFixture]
 public class SubjectKeySerializationTests
 {

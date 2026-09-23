@@ -13,7 +13,10 @@ namespace Trax.Scheduler.Tests.UnitTests;
 /// classifies while it still holds the real exception; by the time the calling side sees the
 /// failure it has been rebuilt from JSON and the original type is gone, so re-classifying there
 /// would mean matching on a type name — exactly what classification exists to avoid.
+///
+/// <para>Enforces Trax.Docs/adr/0020-a-failure-is-classified-where-it-happens-and-carried.md.</para>
 /// </summary>
+[Property("adr", "Trax.Docs/adr/0020-a-failure-is-classified-where-it-happens-and-carried.md")]
 [TestFixture]
 public class RemoteFailureClassificationTests
 {

@@ -15,7 +15,13 @@ namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 /// <summary>
 /// The ManifestManager resolves work queue entries a crash left unconfirmed in the middle of a
 /// two-phase enqueue. Without it such an entry is never dispatched and never cleaned up.
+///
+/// <para>Enforces Trax.Docs/adr/0018-a-deferred-enqueue-is-staged-and-a-stranded-one-is-cancelled.md.</para>
 /// </summary>
+[Property(
+    "adr",
+    "Trax.Docs/adr/0018-a-deferred-enqueue-is-staged-and-a-stranded-one-is-cancelled.md"
+)]
 [TestFixture]
 public class ResolveStaleStagedEntriesJunctionTests : TestSetup
 {
