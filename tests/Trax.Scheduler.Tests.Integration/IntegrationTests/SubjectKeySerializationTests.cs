@@ -123,6 +123,9 @@ public class SubjectKeySerializationTests
     {
         // Reset to default after each test
         _schedulerConfiguration.MaxConcurrentDispatch = 1;
+        _schedulerConfiguration.MaxActiveJobs = new SchedulerConfiguration().MaxActiveJobs;
+        _schedulerConfiguration.MaxQueuedJobsPerCycle =
+            new SchedulerConfiguration().MaxQueuedJobsPerCycle;
 
         if (_dataContext is IDisposable disposable)
             disposable.Dispose();
@@ -240,6 +243,76 @@ public class SubjectKeySerializationTests
                 "a subject is blocked for at most the stale-reap window, not forever"
             );
     }
+
+    // ── capacity: entries the claim will refuse must not use it up ─────
+
+    [TestCase(
+        true,
+        TestName = "A_backlog_for_one_subject_does_not_starve_another (group-fair load)"
+    )]
+    [TestCase(false, TestName = "A_backlog_for_one_subject_does_not_starve_another (load all)")]
+    public async Task A_backlog_for_one_subject_does_not_starve_another(bool groupFair)
+    {
+        UseLoadPath(groupFair);
+        _schedulerConfiguration.MaxActiveJobs = 2;
+
+        for (var i = 0; i < 4; i++)
+            await CreateEntry(
+                "customer-1",
+                $"c1-{i}",
+                createdAt: DateTime.UtcNow.AddMinutes(-10 + i)
+            );
+        var other = await CreateEntry("customer-2", "c2");
+
+        await RunCycle();
+        await RunCycle();
+
+        (await EntryAsync(other.Id))!
+            .Status.Should()
+            .Be(
+                WorkQueueStatus.Dispatched,
+                "customer-1's queued siblings can never be claimed while its first run is in "
+                    + "flight, so they must not be the candidates that fill the free slot"
+            );
+        (await DispatchedCount())
+            .Should()
+            .Be(2, "one run per subject, and capacity for both subjects");
+    }
+
+    [TestCase(true, TestName = "Stranded_staged_entries_do_not_take_capacity (group-fair load)")]
+    [TestCase(false, TestName = "Stranded_staged_entries_do_not_take_capacity (load all)")]
+    public async Task Stranded_staged_entries_do_not_take_capacity(bool groupFair)
+    {
+        UseLoadPath(groupFair);
+        _schedulerConfiguration.MaxActiveJobs = 2;
+
+        // Older than the ready entry, so without the filter they sort first and take both slots.
+        await CreateEntry(
+            null,
+            "staged-1",
+            createdAt: DateTime.UtcNow.AddMinutes(-10),
+            staged: true
+        );
+        await CreateEntry(
+            null,
+            "staged-2",
+            createdAt: DateTime.UtcNow.AddMinutes(-9),
+            staged: true
+        );
+        var ready = await CreateEntry(null, "ready");
+
+        await RunCycle();
+
+        (await EntryAsync(ready.Id))!
+            .Status.Should()
+            .Be(
+                WorkQueueStatus.Dispatched,
+                "an unconfirmed entry can never be claimed, so it must not be a candidate"
+            );
+    }
+
+    private void UseLoadPath(bool groupFair) =>
+        _schedulerConfiguration.MaxQueuedJobsPerCycle = groupFair ? 100 : null;
 
     [Test]
     public async Task Two_dispatchers_claiming_sibling_entries_at_once_are_serialized()
@@ -366,7 +439,8 @@ public class SubjectKeySerializationTests
     private async Task<WorkQueue> CreateEntry(
         string? subjectKey,
         string value,
-        DateTime? createdAt = null
+        DateTime? createdAt = null,
+        bool staged = false
     )
     {
         var entry = WorkQueue.Create(
@@ -378,6 +452,7 @@ public class SubjectKeySerializationTests
                 ),
                 InputTypeName = typeof(SchedulerTestInput).FullName,
                 SubjectKey = subjectKey,
+                DeferPromotion = staged,
             }
         );
 

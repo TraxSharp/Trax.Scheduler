@@ -32,10 +32,27 @@ internal class LoadQueuedJobsJunction(
 {
     public override async Task<List<WorkQueue>> Run(Unit input)
     {
-        if (!config.MaxQueuedJobsPerCycle.HasValue)
-            return await LoadAllQueued();
+        var entries = config.MaxQueuedJobsPerCycle.HasValue
+            ? await LoadGroupFair(config.MaxQueuedJobsPerCycle.Value)
+            : await LoadAllQueued();
 
-        return await LoadGroupFair(config.MaxQueuedJobsPerCycle.Value);
+        return FirstPerSubject(entries);
+    }
+
+    /// <summary>
+    /// Keeps only the first entry for each subject, in dispatch order.
+    /// </summary>
+    /// <remarks>
+    /// Loading drops subjects that already have a run in flight, but not queued siblings of a
+    /// subject that is free. Only one of those can be claimed in a cycle, and each of the rest
+    /// would still take a capacity slot before the claim refused it, so a burst for one subject
+    /// could fill the cycle. The ones left out are loaded again on a later cycle.
+    /// </remarks>
+    private static List<WorkQueue> FirstPerSubject(List<WorkQueue> entries)
+    {
+        var subjects = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+
+        return entries.Where(e => e.SubjectKey is null || subjects.Add(e.SubjectKey)).ToList();
     }
 
     /// <summary>
