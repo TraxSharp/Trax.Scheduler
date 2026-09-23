@@ -9,6 +9,7 @@ using Trax.Effect.Models.WorkQueue;
 using Trax.Effect.Models.WorkQueue.DTOs;
 using Trax.Effect.Services.ChangeSignal;
 using Trax.Effect.Utils;
+using Trax.Mediator.Exceptions;
 using Trax.Mediator.Services.TrainDiscovery;
 using Trax.Mediator.Services.TrainExecution;
 using Trax.Scheduler.Configuration;
@@ -66,48 +67,33 @@ public class OperationsService : IOperationsService
                 Message: $"Unknown train: {input.TrainName}. Use operations.getTrains to list registered trains."
             );
 
-        string? serializedInput = null;
-
-        if (!string.IsNullOrWhiteSpace(input.InputJson))
-        {
-            try
-            {
-                var parsed = JsonSerializer.Deserialize(
-                    input.InputJson,
-                    registration.InputType,
-                    TraxEffectConfiguration.StaticSystemJsonSerializerOptions
-                );
-
-                if (parsed is null)
-                    return new OperationResult(
-                        false,
-                        Message: $"InputJson deserialized to null. Expected an instance of {registration.InputTypeName}."
-                    );
-
-                serializedInput = JsonSerializer.Serialize(
-                    parsed,
-                    registration.InputType,
-                    TraxJsonSerializationOptions.ManifestProperties
-                );
-            }
-            catch (JsonException ex)
-            {
-                return new OperationResult(false, Message: $"Invalid InputJson: {ex.Message}");
-            }
-        }
-
         // Enqueue through the mediator rather than writing the row here. That is what applies
-        // the train's [TraxAuthorize] requirements, fires OnQueue, and stamps the subject key —
-        // none of which a hand-built entry got. A TrainAuthorizationException propagates rather
-        // than being flattened into a failed OperationResult: not being allowed to run something
-        // is not a validation outcome.
-        var queued = await _trainExecution.QueueAsync(
-            registration.ServiceType.FullName!,
-            serializedInput,
-            input.Priority,
-            input.ScheduledAt,
-            ct
-        );
+        // the train's [TraxAuthorize] requirements, fires OnQueue, and stamps the subject key,
+        // none of which a hand-built entry got. The input is handed over unparsed: the mediator
+        // authorizes before it reads it, so a caller who may not run the train learns nothing
+        // about the input it expects. A TrainAuthorizationException propagates rather than being
+        // flattened into a failed OperationResult: not being allowed to run something is not a
+        // validation outcome.
+        QueueTrainResult queued;
+
+        try
+        {
+            queued = await _trainExecution.QueueAsync(
+                registration.ServiceType.FullName!,
+                input.InputJson,
+                input.Priority,
+                input.ScheduledAt,
+                ct
+            );
+        }
+        catch (JsonException ex)
+        {
+            return new OperationResult(false, Message: $"Invalid InputJson: {ex.Message}");
+        }
+        catch (TrainInputValidationException ex)
+        {
+            return new OperationResult(false, Message: ex.Message);
+        }
 
         _changeSignal?.Notify(ChangeDomain.WorkQueue);
 
