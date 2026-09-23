@@ -1,0 +1,75 @@
+using System.Text.RegularExpressions;
+using FluentAssertions;
+
+namespace Trax.Scheduler.Tests.Meta.Tests;
+
+/// <summary>
+/// A work queue row is written directly only where the scheduler enqueues work a manifest
+/// defines. Everything a caller enqueues goes through <c>ITrainExecutionService.QueueAsync</c>,
+/// which applies the train's authorization, its <c>OnQueue</c> hook and its subject key.
+/// Guards Trax.Docs/adr/0017-a-callers-enqueue-goes-through-the-mediator.md.
+/// </summary>
+[TestFixture]
+[Property("adr", "Trax.Docs/adr/0017-a-callers-enqueue-goes-through-the-mediator.md")]
+public class WorkQueueCreationSitesTests
+{
+    private static readonly Regex DirectCreate = new(
+        @"\bWorkQueue\.Create\s*\(",
+        RegexOptions.Compiled
+    );
+
+    /// <summary>
+    /// The sites allowed to build a row themselves, each enqueueing work whose train and input a
+    /// manifest fixed at startup rather than a caller at request time.
+    /// </summary>
+    private static readonly HashSet<string> ManifestSites = new(StringComparer.Ordinal)
+    {
+        // The ManifestManager's scheduled enqueue: no caller at all.
+        "src/Trax.Scheduler/Trains/ManifestManager/Junctions/CreateWorkQueueEntriesJunction.cs",
+        // Dormant dependents activated by their parent's run: no caller at all.
+        "src/Trax.Scheduler/Services/DormantDependentContext/DormantDependentContext.cs",
+        // Triggering a manifest early and re-queueing a dead letter: the caller picks which
+        // manifest, never the train or the input, and only through the admin surface.
+        "src/Trax.Scheduler/Services/TraxScheduler/TraxScheduler.cs",
+    };
+
+    [Test]
+    public void Only_manifest_enqueues_build_a_work_queue_row_directly()
+    {
+        var src = RepoRoot.Combine("src");
+
+        var offenders = Directory
+            .EnumerateFiles(src, "*.cs", SearchOption.AllDirectories)
+            .Where(f =>
+                !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
+            )
+            .Where(f =>
+                !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")
+            )
+            .Select(f => RepoRoot.Relative(f).Replace('\\', '/'))
+            .Where(rel => !ManifestSites.Contains(rel))
+            .Where(rel => DirectCreate.IsMatch(File.ReadAllText(RepoRoot.Combine(rel))))
+            .ToList();
+
+        offenders
+            .Should()
+            .BeEmpty(
+                "a caller's enqueue must go through ITrainExecutionService.QueueAsync so the "
+                    + "train's authorization, OnQueue hook and subject key apply; a hand-built "
+                    + "row skips all three. See "
+                    + "Trax.Docs/adr/0017-a-callers-enqueue-goes-through-the-mediator.md"
+            );
+    }
+
+    [Test]
+    public void Every_listed_manifest_site_still_exists()
+    {
+        ManifestSites
+            .Where(rel => !File.Exists(RepoRoot.Combine(rel)))
+            .Should()
+            .BeEmpty(
+                "a stale allow-list entry would let a new file at that path skip the check. See "
+                    + "Trax.Docs/adr/0017-a-callers-enqueue-goes-through-the-mediator.md"
+            );
+    }
+}
