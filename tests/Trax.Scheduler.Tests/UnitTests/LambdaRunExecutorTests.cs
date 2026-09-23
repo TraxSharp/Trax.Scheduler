@@ -23,9 +23,11 @@ namespace Trax.Scheduler.Tests.UnitTests;
 /// <c>LambdaEnvelope</c>. <c>ExecuteAsync_SendsCorrectEnvelope</c> decodes both layers, so a
 /// change to either shape fails here rather than at invoke time.</para>
 ///
-/// <para>Enforces <c>docs/adr/0001-remote-execution-is-a-json-wire-contract.md</c>.</para>
+/// <para>Enforces <c>docs/adr/0001-remote-execution-is-a-json-wire-contract.md</c> and, for the
+/// failure class it carries, <c>Trax.Docs/adr/0020-a-failure-is-classified-where-it-happens-and-carried.md</c>.</para>
 /// </summary>
 [Property("adr", "docs/adr/0001-remote-execution-is-a-json-wire-contract.md")]
+[Property("adr", "Trax.Docs/adr/0020-a-failure-is-classified-where-it-happens-and-carried.md")]
 [TestFixture]
 public class LambdaRunExecutorTests
 {
