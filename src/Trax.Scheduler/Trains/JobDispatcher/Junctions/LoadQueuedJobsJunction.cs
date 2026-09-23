@@ -54,6 +54,20 @@ internal class LoadQueuedJobsJunction(
             .Where(q => q.ConfirmedAt != null)
             .Where(q => q.ManifestId == null || q.Manifest!.ManifestGroup!.IsEnabled)
             .Where(q => q.ScheduledAt == null || q.ScheduledAt <= DateTime.UtcNow)
+            // Subjects with a run still in flight are not candidates. The claim refuses them
+            // anyway; dropping them here keeps a blocked subject from crowding the batch.
+            .Where(q =>
+                q.SubjectKey == null
+                || !dataContext.WorkQueues.Any(b =>
+                    b.SubjectKey == q.SubjectKey
+                    && b.Status == WorkQueueStatus.Dispatched
+                    && b.Metadata != null
+                    && (
+                        b.Metadata.TrainState == TrainState.Pending
+                        || b.Metadata.TrainState == TrainState.InProgress
+                    )
+                )
+            )
             .OrderByDescending(q => q.Manifest != null ? q.Manifest.ManifestGroup!.Priority : 0)
             .ThenByDescending(q => q.Priority)
             .ThenBy(q => q.CreatedAt)
