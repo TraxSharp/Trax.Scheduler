@@ -28,6 +28,7 @@ using Trax.Scheduler.Tests.ArrayLogger.Services.ArrayLoggingProvider;
 using Trax.Scheduler.Tests.Integration.Fakes.Trains;
 using Trax.Scheduler.Tests.Integration.Fixtures;
 using Trax.Scheduler.Trains.JobDispatcher;
+using Trax.Scheduler.Trains.JobDispatcher.Junctions;
 
 namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 
@@ -367,6 +368,103 @@ public class SubjectKeySerializationTests
                     + "without the lock both entries are still queued when B looks and both claim"
             );
         runA.Should().BeGreaterThan(0);
+    }
+
+    [Test]
+    public async Task Two_dispatch_junctions_given_sibling_entries_at_once_dispatch_only_one()
+    {
+        // The test above proves the dialect's lock serialises two hand-written transactions. This
+        // one proves the dispatcher actually takes it. Pausing the submitter would not reach the
+        // race: submission happens after the claim commits, and by then the sibling can already
+        // see the first run in flight. The window is inside the claim transaction, so the pause is
+        // put there: the test holds a SHARE lock on the metadata table, which stops a dispatcher
+        // at the metadata insert that follows its claim, before anything is committed.
+        var first = await CreateEntry("customer-1", "first");
+        var second = await CreateEntry("customer-1", "second");
+
+        using var gateScope = _serviceProvider.CreateScope();
+        var gate = gateScope.ServiceProvider.GetRequiredService<IDataContext>();
+        // The pid is read inside the transaction: outside one, a pooled context may run each
+        // command on a different connection.
+        using var gateTransaction = await gate.BeginTransaction(CancellationToken.None);
+        var gatePid = await ((DbContext)gate)
+            .Database.SqlQueryRaw<int>("SELECT pg_backend_pid() AS \"Value\"")
+            .FirstAsync();
+        await ((DbContext)gate).Database.ExecuteSqlRawAsync(
+            "LOCK TABLE trax.metadata IN SHARE MODE"
+        );
+
+        // A claims the first entry and stops at its metadata insert, holding its claim open.
+        var dispatcherA = Task.Run(() => DispatchAlone(first));
+        await WaitUntilBlockedBehindGate(gatePid, backends: 1);
+
+        // B goes for the sibling while A's claim is uncommitted. With the subject lock it waits
+        // behind A; without it, it claims the sibling too and stops at the same insert.
+        var dispatcherB = Task.Run(() => DispatchAlone(second));
+        await WaitUntilBlockedBehindGate(gatePid, backends: 2);
+
+        await gate.CommitTransaction();
+        await Task.WhenAll(dispatcherA, dispatcherB);
+
+        (await EntryAsync(first.Id))!.Status.Should().Be(WorkQueueStatus.Dispatched);
+        (await EntryAsync(second.Id))!
+            .Status.Should()
+            .Be(
+                WorkQueueStatus.Queued,
+                "the dispatcher locks the subject before claiming, so B only looks once A has "
+                    + "committed and sees A's run in flight — without the lock both claims succeed"
+            );
+        (await DispatchedCount()).Should().Be(1);
+    }
+
+    /// <summary>Runs one dispatch junction over a single entry, as one dispatcher would.</summary>
+    private async Task DispatchAlone(WorkQueue entry)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var junction = ActivatorUtilities.CreateInstance<DispatchJobsJunction>(
+            scope.ServiceProvider
+        );
+        await junction.Run([entry]);
+    }
+
+    /// <summary>
+    /// Polls until the given number of backends are stuck behind the gate transaction, either
+    /// directly or behind a backend that is. Synchronises on the lock state rather than a delay.
+    /// </summary>
+    private async Task WaitUntilBlockedBehindGate(int gatePid, int backends)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            using var probe = _serviceProvider.CreateScope();
+            var context = (DbContext)probe.ServiceProvider.GetRequiredService<IDataContext>();
+
+            var blocked = await context
+                .Database.SqlQueryRaw<int>(
+                    """
+                    WITH direct AS (
+                        SELECT pid FROM pg_stat_activity
+                        WHERE datname = current_database() AND {0} = ANY(pg_blocking_pids(pid))
+                    ),
+                    indirect AS (
+                        SELECT pid FROM pg_stat_activity
+                        WHERE datname = current_database()
+                          AND pg_blocking_pids(pid) && ARRAY(SELECT pid FROM direct)
+                    )
+                    SELECT ((SELECT count(*) FROM direct) + (SELECT count(*) FROM indirect))::int AS "Value"
+                    """,
+                    gatePid
+                )
+                .FirstAsync();
+
+            if (blocked >= backends)
+                return;
+
+            await Task.Yield();
+        }
+
+        Assert.Fail($"Fewer than {backends} dispatcher(s) ever blocked behind the test's gate.");
     }
 
     /// <summary>
