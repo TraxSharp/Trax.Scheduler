@@ -34,9 +34,12 @@ interface FullName is the identifier every other layer already stores.
 **The contract is a public record, and changing it is a breaking change for anyone running
 a worker built against the old shape.** Adding a nullable property is safe, because an older
 peer omits or ignores it; renaming or removing one is not, and neither end validates a version.
-An enum crosses as its integer, so its values are pinned explicitly (`FailureClass` does this),
-and a worker host whose JSON options write enums as strings breaks every error response that
-carries one.
+An enum crosses as its integer, so its values are pinned explicitly (`FailureClass` does this).
+The run response does not depend on either host's JSON options: the worker writes it with Trax's
+own options (`RemoteRunJson.Write`, web defaults, enums as integers) whatever its host configures,
+and both `HttpRunExecutor` and `LambdaRunExecutor` read with options that accept an enum as its
+integer or its name, so a worker built before this, or one whose host writes enums as strings,
+still reads.
 
 **`InputType` is read only on the job path.** `TraxRequestHandler.ExecuteJobAsync` resolves
 it to a `Type` to deserialize a `RemoteJobRequest`'s input, because at that point the handler
@@ -80,6 +83,8 @@ its members is part of the contract too.
   property rename is caught by the compiler here rather than by the round-trip.
 - `HttpRunExecutorTests` captures the request `HttpRunExecutor` actually put on the wire and
   asserts each of the three strings landed in the property it belongs to.
+- `HttpRunExecutorTests` also reads an error response whose `FailureClass` arrives as an integer
+  and as a name, the second being what a worker whose host writes enums as strings would send.
 - `LambdaRunExecutorTests` decodes both layers of the Lambda payload, the envelope and the
   `RemoteRunRequest` inside it, so a change to either shape fails before an invoke does.
 
@@ -96,8 +101,9 @@ Not covered:
 
 - **2026-09-23**: `RemoteRunResponse` gained `FailureClass`, the first enum on the run path.
   Narrowed "adding a property is safe" to nullable properties, recorded that an enum travels as
-  its integer and breaks under a string-enum converter, and pinned its encoding in
-  `RemoteRunContractTests`.
+  its integer, which `RemoteRunContractTests` pins, and that the worker writes the response with
+  Trax's own JSON options while both executors read an enum as integer or name, so neither host's
+  JSON configuration can break it.
 - **2026-09-12**: Corrected the `TrainNotFoundException` claim (its message never names
   the train, by design) and the exemplar description of what the positional tests pin.
 - **2026-09-11**: Corrected `InputType` (read only on the job path, dead on the run path) and
