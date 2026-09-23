@@ -91,7 +91,7 @@ public class HttpRunExecutor(
     /// JSON message so that <c>Metadata.AddException()</c> on the API side correctly parses
     /// the failure into structured fields (FailureException, FailureJunction, FailureReason).
     /// </summary>
-    private static TrainException BuildExceptionFromErrorResponse(RemoteRunResponse response)
+    internal static TrainException BuildExceptionFromErrorResponse(RemoteRunResponse response)
     {
         if (response.ExceptionType is not null)
         {
@@ -102,6 +102,9 @@ public class HttpRunExecutor(
                 Type = response.ExceptionType,
                 Junction = response.FailureJunction ?? "Unknown",
                 Message = response.ErrorMessage ?? "Remote train execution failed",
+                // Carried rather than recomputed: the original exception type is gone by now, so
+                // re-classifying here would mean matching a type name.
+                FailureClass = response.FailureClass,
             };
 
             var json = JsonSerializer.Serialize(data);

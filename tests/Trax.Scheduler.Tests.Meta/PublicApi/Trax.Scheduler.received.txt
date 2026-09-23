@@ -620,10 +620,11 @@ namespace Trax.Scheduler.Services.RunExecutor
     }
     public class RemoteRunResponse : System.IEquatable<Trax.Scheduler.Services.RunExecutor.RemoteRunResponse>
     {
-        public RemoteRunResponse(long MetadataId, string? ExternalId = null, string? OutputJson = null, string? OutputType = null, bool IsError = false, string? ErrorMessage = null, string? ExceptionType = null, string? FailureJunction = null, string? StackTrace = null) { }
+        public RemoteRunResponse(long MetadataId, string? ExternalId = null, string? OutputJson = null, string? OutputType = null, bool IsError = false, string? ErrorMessage = null, string? ExceptionType = null, string? FailureJunction = null, string? StackTrace = null, Trax.Core.Exceptions.FailureClass? FailureClass = default) { }
         public string? ErrorMessage { get; init; }
         public string? ExceptionType { get; init; }
         public string? ExternalId { get; init; }
+        public Trax.Core.Exceptions.FailureClass? FailureClass { get; init; }
         public string? FailureJunction { get; init; }
         public bool IsError { get; init; }
         public long MetadataId { get; init; }

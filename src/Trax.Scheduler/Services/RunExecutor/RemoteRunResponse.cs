@@ -1,3 +1,5 @@
+using Trax.Core.Exceptions;
+
 namespace Trax.Scheduler.Services.RunExecutor;
 
 /// <summary>
@@ -26,5 +28,6 @@ public record RemoteRunResponse(
     string? ErrorMessage = null,
     string? ExceptionType = null,
     string? FailureJunction = null,
-    string? StackTrace = null
+    string? StackTrace = null,
+    FailureClass? FailureClass = null
 );
