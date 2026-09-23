@@ -64,7 +64,7 @@ public class HttpRunExecutor(
         }
 
         var response =
-            await httpResponse.Content.ReadFromJsonAsync<RemoteRunResponse>(ct)
+            await httpResponse.Content.ReadFromJsonAsync<RemoteRunResponse>(RemoteRunJson.Read, ct)
             ?? throw new TrainException("Remote run endpoint returned null response.");
 
         if (response.IsError)

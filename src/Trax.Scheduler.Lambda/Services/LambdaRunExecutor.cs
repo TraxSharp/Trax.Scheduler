@@ -83,6 +83,7 @@ public class LambdaRunExecutor(
         var response =
             await JsonSerializer.DeserializeAsync<RemoteRunResponse>(
                 invokeResponse.Payload,
+                RemoteRunJson.Read,
                 cancellationToken: ct
             ) ?? throw new TrainException("Lambda function returned null response.");
 
