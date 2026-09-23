@@ -250,6 +250,33 @@ public partial class SchedulerConfigurationBuilder
     }
 
     /// <summary>
+    /// Sets how long a work queue entry may stay unconfirmed, in the middle of a two-phase
+    /// enqueue, before it is resolved.
+    /// </summary>
+    /// <param name="timeout">The stale staged entry timeout (default: 10 minutes)</param>
+    /// <returns>The builder for method chaining</returns>
+    public SchedulerConfigurationBuilder StaleStagedEntryTimeout(TimeSpan timeout)
+    {
+        _configuration.StaleStagedEntryTimeout = timeout;
+        return this;
+    }
+
+    /// <summary>
+    /// Promotes a stale unconfirmed work queue entry instead of cancelling it.
+    /// </summary>
+    /// <remarks>
+    /// Only for hosts whose deferring trains re-check in their chain whatever their
+    /// <c>OnQueue</c> hook checked, and whose hooks are idempotent: a promoted entry may be a
+    /// mutation whose hook never ran, or one the hook rejected.
+    /// </remarks>
+    /// <returns>The builder for method chaining</returns>
+    public SchedulerConfigurationBuilder PromoteStaleStagedEntries()
+    {
+        _configuration.PromoteStaleStagedEntries = true;
+        return this;
+    }
+
+    /// <summary>
     /// Sets the default misfire policy for manifests that do not specify one.
     /// </summary>
     /// <param name="policy">The default misfire policy (default: FireOnceNow)</param>
