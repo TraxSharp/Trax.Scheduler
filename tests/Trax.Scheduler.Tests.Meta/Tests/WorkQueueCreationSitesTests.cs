@@ -5,10 +5,10 @@ namespace Trax.Scheduler.Tests.Meta.Tests;
 
 /// <summary>
 /// A work queue row is written directly only by system-initiated enqueues (the ManifestManager,
-/// and dormant dependents a parent train activates with input its own code chose) and by the
-/// admin surface's actions on manifests (trigger, dead-letter requeue). Everything a caller
-/// enqueues goes through <c>ITrainExecutionService.QueueAsync</c>, which applies the train's
-/// authorization, its <c>OnQueue</c> hook and its subject key.
+/// and dormant dependents a parent train activates with input its own code chose) and by
+/// <c>ITraxScheduler</c>'s actions on existing manifests (trigger, group trigger, dead-letter
+/// requeue). Everything a caller enqueues goes through <c>ITrainExecutionService.QueueAsync</c>,
+/// which applies the train's authorization, its <c>OnQueue</c> hook and its subject key.
 /// Guards Trax.Docs/adr/0017-a-callers-enqueue-goes-through-the-mediator.md.
 /// </summary>
 [TestFixture]
@@ -24,14 +24,21 @@ public class WorkQueueCreationSitesTests
     /// The sites allowed to build a row themselves: none enqueues a train and input a caller
     /// chose at request time.
     /// </summary>
+    /// <remarks>
+    /// The allow-list is per file, not per method: every <c>WorkQueue.Create</c> in a listed file
+    /// passes unchecked, including one added there later, so a new one in these files has to be
+    /// reviewed by hand.
+    /// </remarks>
     private static readonly HashSet<string> ManifestSites = new(StringComparer.Ordinal)
     {
         // The ManifestManager's scheduled enqueue: no caller at all.
         "src/Trax.Scheduler/Trains/ManifestManager/Junctions/CreateWorkQueueEntriesJunction.cs",
         // Dormant dependents activated by their parent's run: no caller at all.
         "src/Trax.Scheduler/Services/DormantDependentContext/DormantDependentContext.cs",
-        // Triggering a manifest early and re-queueing a dead letter: the caller picks which
-        // manifest, never the train or the input, and only through the admin surface.
+        // Triggering a manifest (or a group's manifests) early and re-queueing a dead letter: the
+        // caller picks which manifest, never the train or the input. ITraxScheduler is public
+        // host API, reached from the admin surfaces and equally from a host's own background
+        // code, where there is no user to authorize (docs/0017).
         "src/Trax.Scheduler/Services/TraxScheduler/TraxScheduler.cs",
     };
 
