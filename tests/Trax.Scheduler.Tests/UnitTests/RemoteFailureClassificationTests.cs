@@ -154,9 +154,11 @@ public class RemoteFailureClassificationTests
             }
             """;
 
-        var response = System.Text.Json.JsonSerializer.Deserialize<RemoteRunResponse>(
+        // Read with the executors' own options, so the reader's converters are part of what is
+        // proven to tolerate the missing property.
+        var response = JsonSerializer.Deserialize<RemoteRunResponse>(
             olderWorkerJson,
-            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)
+            RemoteRunJson.Read
         )!;
         var rebuilt = HttpRunExecutor.BuildExceptionFromErrorResponse(response);
 

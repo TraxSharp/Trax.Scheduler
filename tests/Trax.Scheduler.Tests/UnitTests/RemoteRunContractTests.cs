@@ -155,31 +155,38 @@ public class RemoteRunContractTests
         deserialized.StackTrace.Should().Contain("ValidateInputJunction");
     }
 
-    [Test]
-    public void RemoteRunResponse_FailureClass_TravelsAsItsPinnedInteger()
+    [TestCase(Trax.Core.Exceptions.FailureClass.Unclassified, 0)]
+    [TestCase(Trax.Core.Exceptions.FailureClass.Transient, 1)]
+    [TestCase(Trax.Core.Exceptions.FailureClass.Conflict, 2)]
+    [TestCase(Trax.Core.Exceptions.FailureClass.Permanent, 3)]
+    public void RemoteRunResponse_FailureClass_TravelsAsItsPinnedInteger(
+        Trax.Core.Exceptions.FailureClass failureClass,
+        int wireValue
+    )
     {
-        // The worker writes with the host's web JSON options and the executors read with web
-        // defaults, so the class crosses as the enum's integer. FailureClass pins those integers
-        // explicitly; this pins that they are what goes on the wire.
+        // A worker writes its response with RemoteRunJson.Write, which sends the class as the
+        // enum's integer whatever the host's own JSON options say, and the executors read it with
+        // RemoteRunJson.Read. FailureClass pins those integers explicitly; this pins every one of
+        // them as what goes on the wire, and that the reader maps each back.
         var response = new RemoteRunResponse(
             MetadataId: 1,
             IsError: true,
             ErrorMessage: "row changed",
-            FailureClass: Trax.Core.Exceptions.FailureClass.Conflict
+            FailureClass: failureClass
         );
 
-        var json = JsonSerializer.Serialize(response, JsonSerializerOptions.Web);
+        var json = JsonSerializer.Serialize(response, RemoteRunJson.Write);
 
         json.Should()
             .Contain(
-                "\"failureClass\":2",
+                $"\"failureClass\":{wireValue}",
                 "reordering FailureClass's members must not change what an older worker's value "
                     + "means. See docs/adr/0001-remote-execution-is-a-json-wire-contract.md"
             );
         JsonSerializer
-            .Deserialize<RemoteRunResponse>(json, JsonSerializerOptions.Web)!
+            .Deserialize<RemoteRunResponse>(json, RemoteRunJson.Read)!
             .FailureClass.Should()
-            .Be(Trax.Core.Exceptions.FailureClass.Conflict);
+            .Be(failureClass);
     }
 
     [Test]
