@@ -26,8 +26,8 @@ namespace Trax.Scheduler.Tests.UnitTests;
 /// <para>Enforces <c>docs/adr/0001-remote-execution-is-a-json-wire-contract.md</c> and, for the
 /// failure class it carries, <c>Trax.Docs/adr/0020-a-failure-is-classified-where-it-happens-and-carried.md</c>.</para>
 /// </summary>
-[Property("adr", "docs/adr/0001-remote-execution-is-a-json-wire-contract.md")]
 [Property("adr", "Trax.Docs/adr/0020-a-failure-is-classified-where-it-happens-and-carried.md")]
+[Property("adr", "docs/adr/0001-remote-execution-is-a-json-wire-contract.md")]
 [TestFixture]
 public class LambdaRunExecutorTests
 {

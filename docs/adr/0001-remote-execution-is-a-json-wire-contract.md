@@ -35,11 +35,14 @@ interface FullName is the identifier every other layer already stores.
 a worker built against the old shape.** Adding a nullable property is safe, because an older
 peer omits or ignores it; renaming or removing one is not, and neither end validates a version.
 An enum crosses as its integer, so its values are pinned explicitly (`FailureClass` does this).
-The run response does not depend on either host's JSON options: the worker writes it with Trax's
-own options (`RemoteRunJson.Write`, web defaults, enums as integers) whatever its host configures,
-and both `HttpRunExecutor` and `LambdaRunExecutor` read with options that accept an enum as its
-integer or its name, so a worker built before this, or one whose host writes enums as strings,
-still reads.
+The run response does not depend on the worker host's JSON options where Trax writes it: the
+job-runner HTTP endpoint and the Lambda runner's local HTTP route both serialize it with Trax's
+own options (`RemoteRunJson.Write`, web defaults, enums as integers). A Lambda function's own
+invocation response is serialized by the function's Lambda serializer, which Trax does not
+control, so that path relies on the reader instead: both `HttpRunExecutor` and
+`LambdaRunExecutor` read with options that accept an enum as its integer or its name. A class the
+reader does not know, an unknown integer or name from a newer worker, reads as `Unclassified` and
+the worker's error is kept.
 
 **`InputType` is read only on the job path.** `TraxRequestHandler.ExecuteJobAsync` resolves
 it to a `Type` to deserialize a `RemoteJobRequest`'s input, because at that point the handler
@@ -101,9 +104,11 @@ Not covered:
 
 - **2026-09-23**: `RemoteRunResponse` gained `FailureClass`, the first enum on the run path.
   Narrowed "adding a property is safe" to nullable properties, recorded that an enum travels as
-  its integer, which `RemoteRunContractTests` pins, and that the worker writes the response with
-  Trax's own JSON options while both executors read an enum as integer or name, so neither host's
-  JSON configuration can break it.
+  its integer, which `RemoteRunContractTests` pins. The job-runner endpoint and the Lambda
+  runner's local HTTP route write the response with Trax's own JSON options; a Lambda
+  invocation's response is serialized by the function's own Lambda serializer, so both executors
+  read an enum as integer or name, and read an unknown class as `Unclassified` without losing the
+  worker's error.
 - **2026-09-12**: Corrected the `TrainNotFoundException` claim (its message never names
   the train, by design) and the exemplar description of what the positional tests pin.
 - **2026-09-11**: Corrected `InputType` (read only on the job path, dead on the run path) and
