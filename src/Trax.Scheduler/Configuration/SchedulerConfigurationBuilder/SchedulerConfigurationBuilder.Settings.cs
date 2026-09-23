@@ -301,6 +301,16 @@ public partial class SchedulerConfigurationBuilder
     /// <summary>
     /// Sets whether to automatically recover stuck jobs on scheduler startup.
     /// </summary>
+    /// <remarks>
+    /// When enabled, every <c>InProgress</c> run in the shared database whose <c>StartTime</c> is
+    /// earlier than this host's start is marked <c>Failed</c> ("Server restarted while job was in
+    /// progress").
+    /// That is every such run, whichever host or worker is executing it: the recovery does not
+    /// know which runs belonged to this process, so on a deployment where several hosts or
+    /// remote workers share the database, starting one host also fails runs that are still
+    /// executing elsewhere. The recovery itself requeues nothing. Skipped when no database
+    /// provider is registered.
+    /// </remarks>
     /// <param name="recover">True to recover stuck jobs (default: true)</param>
     /// <returns>The builder for method chaining</returns>
     public SchedulerConfigurationBuilder RecoverStuckJobsOnStartup(bool recover = true)
