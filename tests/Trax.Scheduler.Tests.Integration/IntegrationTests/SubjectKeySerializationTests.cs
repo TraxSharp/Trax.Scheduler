@@ -216,7 +216,7 @@ public class SubjectKeySerializationTests
     }
 
     [Test]
-    public async Task Entries_for_one_subject_are_dispatched_in_enqueue_order()
+    public async Task Entries_for_one_subject_at_equal_priority_are_dispatched_oldest_first()
     {
         var older = await CreateEntry(
             "customer-1",

@@ -4,9 +4,11 @@ using FluentAssertions;
 namespace Trax.Scheduler.Tests.Meta.Tests;
 
 /// <summary>
-/// A work queue row is written directly only where the scheduler enqueues work a manifest
-/// defines. Everything a caller enqueues goes through <c>ITrainExecutionService.QueueAsync</c>,
-/// which applies the train's authorization, its <c>OnQueue</c> hook and its subject key.
+/// A work queue row is written directly only by system-initiated enqueues (the ManifestManager,
+/// and dormant dependents a parent train activates with input its own code chose) and by the
+/// admin surface's actions on manifests (trigger, dead-letter requeue). Everything a caller
+/// enqueues goes through <c>ITrainExecutionService.QueueAsync</c>, which applies the train's
+/// authorization, its <c>OnQueue</c> hook and its subject key.
 /// Guards Trax.Docs/adr/0017-a-callers-enqueue-goes-through-the-mediator.md.
 /// </summary>
 [TestFixture]
@@ -19,8 +21,8 @@ public class WorkQueueCreationSitesTests
     );
 
     /// <summary>
-    /// The sites allowed to build a row themselves, each enqueueing work whose train and input a
-    /// manifest fixed at startup rather than a caller at request time.
+    /// The sites allowed to build a row themselves: none enqueues a train and input a caller
+    /// chose at request time.
     /// </summary>
     private static readonly HashSet<string> ManifestSites = new(StringComparer.Ordinal)
     {
