@@ -48,6 +48,10 @@ internal class LoadQueuedJobsJunction(
             .Include(q => q.Manifest)
                 .ThenInclude(m => m!.ManifestGroup)
             .Where(q => q.Status == WorkQueueStatus.Queued)
+            // An entry staged by a two-phase enqueue is not dispatchable until promoted. The claim
+            // query rejects it anyway; excluding it here keeps it out of the candidate batch so it
+            // cannot crowd out work that is actually ready.
+            .Where(q => q.ConfirmedAt != null)
             .Where(q => q.ManifestId == null || q.Manifest!.ManifestGroup!.IsEnabled)
             .Where(q => q.ScheduledAt == null || q.ScheduledAt <= DateTime.UtcNow)
             .OrderByDescending(q => q.Manifest != null ? q.Manifest.ManifestGroup!.Priority : 0)
