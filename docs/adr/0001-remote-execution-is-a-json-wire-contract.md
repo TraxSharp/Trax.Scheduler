@@ -44,6 +44,13 @@ control, so that path relies on the reader instead: both `HttpRunExecutor` and
 reader does not know, an unknown integer or name from a newer worker, reads as `Unclassified` and
 the worker's error is kept.
 
+The wire's own code is public: `RemoteRunJson` (both options read-only) and
+`RemoteRunResponse.ToTrainException()`, which rebuilds the failure a response reports. The Lambda
+packages ship separately and depend on Trax.Scheduler only as a version floor, so reaching these
+through `InternalsVisibleTo` would break with `MissingMethodException` once a consumer picked up
+a newer Trax.Scheduler than the Lambda package was built against. Trax.Scheduler grants neither
+Lambda package `InternalsVisibleTo`.
+
 **`InputType` is read only on the job path.** `TraxRequestHandler.ExecuteJobAsync` resolves
 it to a `Type` to deserialize a `RemoteJobRequest`'s input, because at that point the handler
 has only a `MetadataId`: the train, and with it the declared input type, is not resolved
@@ -102,6 +109,8 @@ Not covered:
 
 ## Changelog
 
+- **2026-09-24**: The wire's serializer options and failure rebuilding are public, and the Lambda
+  packages no longer reach Trax.Scheduler's internals.
 - **2026-09-23**: `RemoteRunResponse` gained `FailureClass`, the first enum on the run path.
   Narrowed "adding a property is safe" to nullable properties, recorded that an enum travels as
   its integer, which `RemoteRunContractTests` pins. The job-runner endpoint and the Lambda
