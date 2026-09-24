@@ -59,6 +59,20 @@ public class QueueCancellationTests
                 "the submission is durable once committed — the caller's token no longer governs it"
             );
         entry.MetadataId.Should().NotBeNull();
+
+        // Dispatched only says the scheduler took the row. The in-memory submitter runs the train
+        // inline before the dispatcher returns, so the run has to be terminal by now, and it has
+        // to have finished rather than been cancelled by the token the caller abandoned.
+        var run = await fx
+            .DataContext.Metadatas.AsNoTracking()
+            .FirstAsync(m => m.Id == entry.MetadataId);
+
+        run.TrainState.Should()
+            .Be(
+                TrainState.Completed,
+                "the run belongs to the scheduler once enqueued, so the caller's cancellation "
+                    + "must not reach it"
+            );
     }
 
     [Test]
