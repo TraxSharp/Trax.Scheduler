@@ -54,7 +54,16 @@ public class SubjectKeySerializationTests
 {
     private static readonly string TestTrainName = typeof(SchedulerTestTrain).FullName!;
 
+    /// <summary>
+    /// The ceiling on waiting for a dispatcher or a hand-written claim to finish once the test has
+    /// released it. It sits above Npgsql's 30 second default command timeout, the one inherited
+    /// ceiling those awaits pass through, so a claim stuck on a lock fails with its own error
+    /// rather than with this deadline.
+    /// </summary>
+    private static readonly TimeSpan ReleasedWorkBudget = TimeSpan.FromSeconds(60);
+
     private ServiceProvider _serviceProvider = null!;
+    private ArrayLoggingProvider _logs = null!;
     private IServiceScope _scope = null!;
     private IDataContext _dataContext = null!;
     private ParallelDispatchTests.DelayingJobSubmitter _submitter = null!;
@@ -73,6 +82,7 @@ public class SubjectKeySerializationTests
 
         _submitter = new ParallelDispatchTests.DelayingJobSubmitter(TimeSpan.FromMilliseconds(1));
         var arrayLoggingProvider = new ArrayLoggingProvider();
+        _logs = arrayLoggingProvider;
 
         _serviceProvider = new ServiceCollection()
             .AddSingleton<ILoggerProvider>(arrayLoggingProvider)
@@ -361,7 +371,7 @@ public class SubjectKeySerializationTests
 
         await contextA.CommitTransaction();
 
-        (await b)
+        (await b.WaitAsync(ReleasedWorkBudget))
             .Should()
             .BeNull(
                 "B waits on the subject lock, and once A commits it can see A's run in flight — "
@@ -394,6 +404,10 @@ public class SubjectKeySerializationTests
             "LOCK TABLE trax.metadata IN SHARE MODE"
         );
 
+        // DispatchJobsJunction catches and logs a failed entry rather than throwing, so its errors
+        // are the only account of why an entry ended in the wrong state.
+        _logs.ClearAllLogs();
+
         // A claims the first entry and stops at its metadata insert, holding its claim open.
         var dispatcherA = Task.Run(() => DispatchAlone(first));
         await WaitUntilBlockedBehindGate(gatePid, backends: 1);
@@ -404,17 +418,60 @@ public class SubjectKeySerializationTests
         await WaitUntilBlockedBehindGate(gatePid, backends: 2);
 
         await gate.CommitTransaction();
-        await Task.WhenAll(dispatcherA, dispatcherB);
 
-        (await EntryAsync(first.Id))!.Status.Should().Be(WorkQueueStatus.Dispatched);
+        try
+        {
+            await Task.WhenAll(dispatcherA, dispatcherB).WaitAsync(ReleasedWorkBudget);
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail(
+                $"The dispatchers did not finish within {ReleasedWorkBudget} of the gate opening. "
+                    + $"Dispatcher errors: {DispatcherErrors()}"
+            );
+        }
+
+        (await EntryAsync(first.Id))!
+            .Status.Should()
+            .Be(WorkQueueStatus.Dispatched, "dispatcher errors: {0}", DispatcherErrors());
         (await EntryAsync(second.Id))!
             .Status.Should()
             .Be(
                 WorkQueueStatus.Queued,
                 "the dispatcher locks the subject before claiming, so B only looks once A has "
-                    + "committed and sees A's run in flight — without the lock both claims succeed"
+                    + "committed and sees A's run in flight — without the lock both claims succeed. "
+                    + "Dispatcher errors: {0}",
+                DispatcherErrors()
             );
         (await DispatchedCount()).Should().Be(1);
+    }
+
+    /// <summary>
+    /// The errors <see cref="DispatchJobsJunction"/> logged since the test cleared the logs, or
+    /// "none". Read while a timed-out dispatcher may still be writing, so a snapshot that races a
+    /// write is retried rather than trusted.
+    /// </summary>
+    private string DispatcherErrors()
+    {
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                var errors = _logs
+                    .Loggers.ToList()
+                    .SelectMany(l => l.Logs.ToList())
+                    .Where(l =>
+                        l.Category == typeof(DispatchJobsJunction).FullName
+                        && l.Level >= LogLevel.Error
+                    )
+                    .Select(l => $"{l.Message} {l.Exception}")
+                    .ToList();
+                return errors.Count == 0 ? "none" : string.Join(Environment.NewLine, errors);
+            }
+            catch (InvalidOperationException) { }
+        }
+
+        return "unreadable (the log was still being written)";
     }
 
     /// <summary>Runs one dispatch junction over a single entry, as one dispatcher would.</summary>
@@ -464,7 +521,10 @@ public class SubjectKeySerializationTests
             await Task.Yield();
         }
 
-        Assert.Fail($"Fewer than {backends} dispatcher(s) ever blocked behind the test's gate.");
+        Assert.Fail(
+            $"Fewer than {backends} dispatcher(s) ever blocked behind the test's gate. "
+                + $"Dispatcher errors: {DispatcherErrors()}"
+        );
     }
 
     /// <summary>
@@ -482,7 +542,11 @@ public class SubjectKeySerializationTests
 
             var waiting = await context
                 .Database.SqlQueryRaw<int>(
-                    "SELECT count(*)::int AS \"Value\" FROM pg_locks WHERE locktype = 'advisory' AND NOT granted"
+                    """
+                    SELECT count(*)::int AS "Value" FROM pg_locks
+                    WHERE locktype = 'advisory' AND NOT granted
+                      AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                    """
                 )
                 .FirstAsync();
 
