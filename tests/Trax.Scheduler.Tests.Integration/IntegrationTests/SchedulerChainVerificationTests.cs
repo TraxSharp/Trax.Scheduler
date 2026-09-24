@@ -11,7 +11,7 @@ using Trax.Scheduler.Trains.JobDispatcher;
 using Trax.Scheduler.Trains.JobRunner;
 using Trax.Scheduler.Trains.ManifestManager;
 
-namespace Trax.Scheduler.Tests.Integration.UnitTests;
+namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 
 /// <summary>
 /// Every scheduler host runs the startup chain check over the scheduler's own trains, so a
