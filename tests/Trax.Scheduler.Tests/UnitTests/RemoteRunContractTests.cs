@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using FluentAssertions;
 using Trax.Scheduler.Services.JobSubmitter;
 using Trax.Scheduler.Services.RunExecutor;
@@ -21,6 +22,20 @@ namespace Trax.Scheduler.Tests.UnitTests;
 public class RemoteRunContractTests
 {
     #region RemoteRunRequest Serialization
+
+    [Test]
+    public void The_wire_options_cannot_be_changed_by_anything_that_uses_them()
+    {
+        // RemoteRunJson is public so the separately shipped Lambda packages can use it without
+        // InternalsVisibleTo. A consumer that could add a converter to it would change the wire
+        // for every worker and scheduler in the process.
+        RemoteRunJson.Write.IsReadOnly.Should().BeTrue();
+        RemoteRunJson.Read.IsReadOnly.Should().BeTrue();
+
+        var act = () => RemoteRunJson.Write.Converters.Add(new JsonStringEnumConverter());
+
+        act.Should().Throw<InvalidOperationException>();
+    }
 
     [Test]
     public void RemoteRunRequest_RoundTrips()

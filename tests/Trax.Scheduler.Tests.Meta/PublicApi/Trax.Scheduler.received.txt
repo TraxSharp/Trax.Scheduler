@@ -615,6 +615,11 @@ namespace Trax.Scheduler.Services.RunExecutor
         public HttpRunExecutor(System.Net.Http.HttpClient httpClient, Trax.Scheduler.Configuration.RemoteRunOptions options, Microsoft.Extensions.Logging.ILogger<Trax.Scheduler.Services.RunExecutor.HttpRunExecutor> logger) { }
         public System.Threading.Tasks.Task<Trax.Mediator.Services.TrainExecution.RunTrainResult> ExecuteAsync(string trainName, object input, System.Type outputType, System.Threading.CancellationToken ct = default) { }
     }
+    public static class RemoteRunJson
+    {
+        public static readonly System.Text.Json.JsonSerializerOptions Read;
+        public static readonly System.Text.Json.JsonSerializerOptions Write;
+    }
     public class RemoteRunRequest : System.IEquatable<Trax.Scheduler.Services.RunExecutor.RemoteRunRequest>
     {
         public RemoteRunRequest(string TrainName, string InputJson, string InputType) { }
@@ -635,6 +640,7 @@ namespace Trax.Scheduler.Services.RunExecutor
         public string? OutputJson { get; init; }
         public string? OutputType { get; init; }
         public string? StackTrace { get; init; }
+        public Trax.Core.Exceptions.TrainException ToTrainException() { }
     }
 }
 namespace Trax.Scheduler.Services.SchedulerLiveness

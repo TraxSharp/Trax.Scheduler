@@ -15,11 +15,19 @@ namespace Trax.Scheduler.Services.RunExecutor;
 /// the other's host configuration (see scheduler/0001). A Lambda worker's own response is
 /// serialized by its function's Lambda serializer, which Trax does not control; the reader's
 /// tolerance is what covers that path.
+///
+/// Public because it is the contract between two processes that ship in separate packages:
+/// Trax.Scheduler.Lambda and Trax.Runner.Lambda read and write with it, and a package that
+/// reached it through InternalsVisibleTo would break with MissingMethodException the first time a
+/// consumer pulled in a newer Trax.Scheduler than it was built against. Both options are read-only,
+/// so nothing that uses them can change the wire for everyone else.
 /// </remarks>
-internal static class RemoteRunJson
+public static class RemoteRunJson
 {
     /// <summary>What a worker writes: web defaults, enums as integers.</summary>
-    public static readonly JsonSerializerOptions Write = new(JsonSerializerDefaults.Web);
+    public static readonly JsonSerializerOptions Write = ReadOnly(
+        new JsonSerializerOptions(JsonSerializerDefaults.Web)
+    );
 
     /// <summary>
     /// What a scheduler reads: web defaults, enums as integers or names, and a failure class it
@@ -30,10 +38,18 @@ internal static class RemoteRunJson
     /// away the worker's real error with it, and storing an unknown integer would fail against
     /// the Postgres enum, so the class degrades to unclassified and the failure survives.
     /// </remarks>
-    public static readonly JsonSerializerOptions Read = new(JsonSerializerDefaults.Web)
+    public static readonly JsonSerializerOptions Read = ReadOnly(
+        new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            Converters = { new TolerantFailureClassConverter(), new JsonStringEnumConverter() },
+        }
+    );
+
+    private static JsonSerializerOptions ReadOnly(JsonSerializerOptions options)
     {
-        Converters = { new TolerantFailureClassConverter(), new JsonStringEnumConverter() },
-    };
+        options.MakeReadOnly(populateMissingResolver: true);
+        return options;
+    }
 
     private sealed class TolerantFailureClassConverter : JsonConverter<FailureClass>
     {

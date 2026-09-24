@@ -90,7 +90,7 @@ public class LambdaRunExecutor(
         // Shared with the HTTP executor, so a field the worker sends back, such as its failure
         // classification, is carried by both transports rather than by whichever was updated.
         if (response.IsError)
-            throw HttpRunExecutor.BuildExceptionFromErrorResponse(response);
+            throw response.ToTrainException();
 
         object? output = null;
         if (response.OutputJson is not null && response.OutputType is not null)
