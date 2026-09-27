@@ -862,51 +862,73 @@ public class OperationsService : IOperationsService
     }
 
     /// <summary>
-    /// The ranges a scheduler config patch must stay in, checked before any field is applied
-    /// so a refused patch changes neither the live settings nor the persisted row. Intervals and
-    /// timeouts a poller or a reaper waits on must be positive; delays and retention may be zero;
-    /// counts that bound concurrency must be at least one; the backoff multiplier may not shrink
-    /// the delay.
+    /// The ranges a scheduler config patch must stay in (<see cref="SchedulerConfigLimits"/>),
+    /// checked before any field is applied so a refused patch changes neither the live settings
+    /// nor the persisted row.
     /// </summary>
     internal static string? ValidateSchedulerConfigPatch(UpdateSchedulerConfigInput input)
     {
-        var problems = new List<string>();
-
-        void Positive(TimeSpan? value, string name)
+        var problems = new[]
         {
-            if (value is { } v && v <= TimeSpan.Zero)
-                problems.Add($"{name} must be greater than zero.");
+            SchedulerConfigLimits.TimerInterval(
+                input.ManifestManagerPollingInterval,
+                nameof(input.ManifestManagerPollingInterval)
+            ),
+            SchedulerConfigLimits.TimerInterval(
+                input.JobDispatcherPollingInterval,
+                nameof(input.JobDispatcherPollingInterval)
+            ),
+            input.ClearMaxActiveJobs
+                ? null
+                : SchedulerConfigLimits.AtLeastOne(
+                    input.MaxActiveJobs,
+                    nameof(input.MaxActiveJobs)
+                ),
+            SchedulerConfigLimits.NotNegative(
+                input.DefaultMaxRetries,
+                nameof(input.DefaultMaxRetries)
+            ),
+            SchedulerConfigLimits.NonNegativeDuration(
+                input.DefaultRetryDelay,
+                nameof(input.DefaultRetryDelay)
+            ),
+            SchedulerConfigLimits.BackoffMultiplier(
+                input.RetryBackoffMultiplier,
+                nameof(input.RetryBackoffMultiplier)
+            ),
+            SchedulerConfigLimits.NonNegativeDuration(
+                input.MaxRetryDelay,
+                nameof(input.MaxRetryDelay)
+            ),
+            SchedulerConfigLimits.PositiveDuration(
+                input.DefaultJobTimeout,
+                nameof(input.DefaultJobTimeout)
+            ),
+            SchedulerConfigLimits.PositiveDuration(
+                input.StalePendingTimeout,
+                nameof(input.StalePendingTimeout)
+            ),
+            SchedulerConfigLimits.NonNegativeDuration(
+                input.DeadLetterRetentionPeriod,
+                nameof(input.DeadLetterRetentionPeriod)
+            ),
+            input.ClearLocalWorkerCount
+                ? null
+                : SchedulerConfigLimits.WorkerCount(
+                    input.LocalWorkerCount,
+                    nameof(input.LocalWorkerCount)
+                ),
+            SchedulerConfigLimits.TimerInterval(
+                input.MetadataCleanupInterval,
+                nameof(input.MetadataCleanupInterval)
+            ),
+            SchedulerConfigLimits.PositiveDuration(
+                input.MetadataCleanupRetention,
+                nameof(input.MetadataCleanupRetention)
+            ),
         }
-
-        void NotNegative(TimeSpan? value, string name)
-        {
-            if (value is { } v && v < TimeSpan.Zero)
-                problems.Add($"{name} must not be negative.");
-        }
-
-        Positive(
-            input.ManifestManagerPollingInterval,
-            nameof(input.ManifestManagerPollingInterval)
-        );
-        Positive(input.JobDispatcherPollingInterval, nameof(input.JobDispatcherPollingInterval));
-        if (!input.ClearMaxActiveJobs && input.MaxActiveJobs is < 1)
-            problems.Add("MaxActiveJobs must be at least 1; clear it to remove the limit.");
-        if (input.DefaultMaxRetries is < 0)
-            problems.Add("DefaultMaxRetries must not be negative.");
-        NotNegative(input.DefaultRetryDelay, nameof(input.DefaultRetryDelay));
-        if (
-            input.RetryBackoffMultiplier is { } multiplier
-            && !(multiplier >= 1.0 && double.IsFinite(multiplier))
-        )
-            problems.Add("RetryBackoffMultiplier must be a finite number of at least 1.");
-        NotNegative(input.MaxRetryDelay, nameof(input.MaxRetryDelay));
-        Positive(input.DefaultJobTimeout, nameof(input.DefaultJobTimeout));
-        Positive(input.StalePendingTimeout, nameof(input.StalePendingTimeout));
-        NotNegative(input.DeadLetterRetentionPeriod, nameof(input.DeadLetterRetentionPeriod));
-        if (!input.ClearLocalWorkerCount && input.LocalWorkerCount is < 1)
-            problems.Add("LocalWorkerCount must be at least 1.");
-        Positive(input.MetadataCleanupInterval, nameof(input.MetadataCleanupInterval));
-        Positive(input.MetadataCleanupRetention, nameof(input.MetadataCleanupRetention));
+            .OfType<string>()
+            .ToList();
 
         return problems.Count == 0 ? null : string.Join(" ", problems);
     }

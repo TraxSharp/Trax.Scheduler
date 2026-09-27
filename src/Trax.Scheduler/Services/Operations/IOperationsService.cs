@@ -126,10 +126,12 @@ public interface IOperationsService
     /// <returns>
     /// <c>OperationResult(true, Count: N, ...)</c> where <c>N</c> is the number of
     /// fields actually changed. <c>OperationResult(false, ...)</c>, naming each offending field,
-    /// when a value is out of range: a polling interval, job timeout, stale-pending timeout or
-    /// metadata-cleanup interval or retention that is not positive; a negative retry count,
-    /// retry delay or dead-letter retention; a <c>MaxActiveJobs</c> or <c>LocalWorkerCount</c>
-    /// below 1; or a backoff multiplier below 1 or not finite. A refused patch applies nothing.
+    /// when a value is outside the range the scheduler can run with: a polling or cleanup interval
+    /// outside 1 second to 30 days; a job timeout, stale-pending timeout or metadata retention
+    /// under 1 second; a negative retry count, retry delay or dead-letter retention; any duration
+    /// over ten years; a <c>MaxActiveJobs</c> below 1; a <c>LocalWorkerCount</c> outside 1 to
+    /// 256; or a backoff multiplier below 1 or
+    /// not finite. A refused patch applies nothing.
     /// </returns>
     Task<OperationResult> UpdateSchedulerConfigAsync(
         UpdateSchedulerConfigInput input,
