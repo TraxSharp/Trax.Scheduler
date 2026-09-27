@@ -159,6 +159,13 @@ public class OperationsService : IOperationsService
         if (group is null)
             return new OperationResult(false, Message: $"Manifest group {id} not found.");
 
+        if (ValidateManifestGroupPatch(input) is { } refusal)
+            return new OperationResult(
+                false,
+                Id: id,
+                Message: $"Manifest group {id} not updated: {refusal}"
+            );
+
         var changed = 0;
 
         if (input.ClearMaxActiveJobs)
@@ -676,6 +683,13 @@ public class OperationsService : IOperationsService
         CancellationToken ct
     )
     {
+        if (ValidateSchedulerConfigPatch(input) is { } refusal)
+            return new OperationResult(
+                false,
+                Id: SchedulerConfig.SingletonId,
+                Message: $"Scheduler config not updated: {refusal}"
+            );
+
         var cfg = _schedulerConfiguration;
         var changed = 0;
 
@@ -820,6 +834,81 @@ public class OperationsService : IOperationsService
                 ? "Scheduler config: no changes."
                 : $"Scheduler config: {changed} field(s) updated."
         );
+    }
+
+    /// <summary>
+    /// The ranges a group patch must stay in, checked before any field is written so a refused
+    /// patch changes nothing. The same ranges the dashboard's form enforces, held here so every
+    /// caller of the service gets them: priority is a work queue priority, and a limit of zero
+    /// would stop the group dispatching at all (<see cref="UpdateManifestGroupInput.ClearMaxActiveJobs"/>
+    /// removes the limit instead).
+    /// </summary>
+    internal static string? ValidateManifestGroupPatch(UpdateManifestGroupInput input)
+    {
+        var problems = new List<string>();
+
+        if (
+            input.Priority is { } priority
+            && priority is < WorkQueue.MinPriority or > WorkQueue.MaxPriority
+        )
+            problems.Add(
+                $"Priority must be between {WorkQueue.MinPriority} and {WorkQueue.MaxPriority}."
+            );
+
+        if (!input.ClearMaxActiveJobs && input.MaxActiveJobs is < 1)
+            problems.Add("MaxActiveJobs must be at least 1; clear it to remove the limit.");
+
+        return problems.Count == 0 ? null : string.Join(" ", problems);
+    }
+
+    /// <summary>
+    /// The ranges a scheduler config patch must stay in, checked before any field is applied
+    /// so a refused patch changes neither the live settings nor the persisted row. Intervals and
+    /// timeouts a poller or a reaper waits on must be positive; delays and retention may be zero;
+    /// counts that bound concurrency must be at least one; the backoff multiplier may not shrink
+    /// the delay.
+    /// </summary>
+    internal static string? ValidateSchedulerConfigPatch(UpdateSchedulerConfigInput input)
+    {
+        var problems = new List<string>();
+
+        void Positive(TimeSpan? value, string name)
+        {
+            if (value is { } v && v <= TimeSpan.Zero)
+                problems.Add($"{name} must be greater than zero.");
+        }
+
+        void NotNegative(TimeSpan? value, string name)
+        {
+            if (value is { } v && v < TimeSpan.Zero)
+                problems.Add($"{name} must not be negative.");
+        }
+
+        Positive(
+            input.ManifestManagerPollingInterval,
+            nameof(input.ManifestManagerPollingInterval)
+        );
+        Positive(input.JobDispatcherPollingInterval, nameof(input.JobDispatcherPollingInterval));
+        if (!input.ClearMaxActiveJobs && input.MaxActiveJobs is < 1)
+            problems.Add("MaxActiveJobs must be at least 1; clear it to remove the limit.");
+        if (input.DefaultMaxRetries is < 0)
+            problems.Add("DefaultMaxRetries must not be negative.");
+        NotNegative(input.DefaultRetryDelay, nameof(input.DefaultRetryDelay));
+        if (
+            input.RetryBackoffMultiplier is { } multiplier
+            && !(multiplier >= 1.0 && double.IsFinite(multiplier))
+        )
+            problems.Add("RetryBackoffMultiplier must be a finite number of at least 1.");
+        NotNegative(input.MaxRetryDelay, nameof(input.MaxRetryDelay));
+        Positive(input.DefaultJobTimeout, nameof(input.DefaultJobTimeout));
+        Positive(input.StalePendingTimeout, nameof(input.StalePendingTimeout));
+        NotNegative(input.DeadLetterRetentionPeriod, nameof(input.DeadLetterRetentionPeriod));
+        if (!input.ClearLocalWorkerCount && input.LocalWorkerCount is < 1)
+            problems.Add("LocalWorkerCount must be at least 1.");
+        Positive(input.MetadataCleanupInterval, nameof(input.MetadataCleanupInterval));
+        Positive(input.MetadataCleanupRetention, nameof(input.MetadataCleanupRetention));
+
+        return problems.Count == 0 ? null : string.Join(" ", problems);
     }
 
     private async Task PersistAsync(CancellationToken ct)

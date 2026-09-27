@@ -392,4 +392,87 @@ public class OperationsServiceConfigTests : TestSetup
         await hosted.StopAsync(CancellationToken.None);
         // Pure no-op; just exercise the path for coverage.
     }
+
+    private static IEnumerable<TestCaseData> OutOfRangeConfigPatches()
+    {
+        TestCaseData Case(UpdateSchedulerConfigInput input, string field) =>
+            new TestCaseData(input, field).SetName(
+                $"UpdateSchedulerConfig_{field}_OutOfRange_Refused"
+            );
+
+        yield return Case(
+            new(ManifestManagerPollingInterval: TimeSpan.Zero),
+            "ManifestManagerPollingInterval"
+        );
+        yield return Case(
+            new(JobDispatcherPollingInterval: TimeSpan.FromSeconds(-1)),
+            "JobDispatcherPollingInterval"
+        );
+        yield return Case(new(MaxActiveJobs: 0), "MaxActiveJobs");
+        yield return Case(new(DefaultMaxRetries: -1), "DefaultMaxRetries");
+        yield return Case(new(DefaultRetryDelay: TimeSpan.FromSeconds(-1)), "DefaultRetryDelay");
+        yield return Case(new(RetryBackoffMultiplier: 0.5), "RetryBackoffMultiplier");
+        yield return Case(new(MaxRetryDelay: TimeSpan.FromSeconds(-1)), "MaxRetryDelay");
+        yield return Case(new(DefaultJobTimeout: TimeSpan.Zero), "DefaultJobTimeout");
+        yield return Case(new(StalePendingTimeout: TimeSpan.Zero), "StalePendingTimeout");
+        yield return Case(
+            new(DeadLetterRetentionPeriod: TimeSpan.FromDays(-1)),
+            "DeadLetterRetentionPeriod"
+        );
+        yield return Case(new(LocalWorkerCount: 0), "LocalWorkerCount");
+        yield return Case(new(MetadataCleanupInterval: TimeSpan.Zero), "MetadataCleanupInterval");
+        yield return Case(new(MetadataCleanupRetention: TimeSpan.Zero), "MetadataCleanupRetention");
+    }
+
+    [TestCaseSource(nameof(OutOfRangeConfigPatches))]
+    public async Task UpdateSchedulerConfig_OutOfRange_IsAFailedResultAndChangesNothing(
+        UpdateSchedulerConfigInput input,
+        string field
+    )
+    {
+        // A valid field alongside the invalid one: a refused patch applies neither.
+        var result = await _operations.UpdateSchedulerConfigAsync(
+            input with
+            {
+                DefaultMaxRetries = input.DefaultMaxRetries ?? 9,
+            },
+            CancellationToken.None
+        );
+
+        result.Success.Should().BeFalse("the service validates, not only the dashboard's form");
+        result.Message.Should().Contain(field);
+        _cfg.DefaultMaxRetries.Should().Be(3, "nothing in a refused patch is applied");
+        _cfg.MaxActiveJobs.Should().Be(10);
+        DataContext.Reset();
+        DataContext.SchedulerConfigs.Should().BeEmpty("a refused patch is not persisted");
+    }
+
+    [Test]
+    public async Task UpdateSchedulerConfig_NotANumberMultiplier_Refused()
+    {
+        var result = await _operations.UpdateSchedulerConfigAsync(
+            new UpdateSchedulerConfigInput(RetryBackoffMultiplier: double.NaN),
+            CancellationToken.None
+        );
+
+        result.Success.Should().BeFalse();
+        result.Message.Should().Contain("RetryBackoffMultiplier");
+    }
+
+    [Test]
+    public async Task UpdateSchedulerConfig_BoundaryValues_Accepted()
+    {
+        var result = await _operations.UpdateSchedulerConfigAsync(
+            new UpdateSchedulerConfigInput(
+                MaxActiveJobs: 1,
+                DefaultMaxRetries: 0,
+                DefaultRetryDelay: TimeSpan.Zero,
+                RetryBackoffMultiplier: 1.0,
+                DeadLetterRetentionPeriod: TimeSpan.Zero
+            ),
+            CancellationToken.None
+        );
+
+        result.Success.Should().BeTrue(result.Message);
+    }
 }
