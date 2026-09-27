@@ -224,4 +224,44 @@ public class SchedulerDeadLetterTests
 
         result.Count.Should().Be(2);
     }
+
+    #region Acknowledge in one statement
+
+    [Test]
+    public async Task AcknowledgeAllDeadLettersAsync_ResolvesEveryAwaitingOneAndLeavesResolvedOnesAlone()
+    {
+        await using var fx = await CreateWithManifestAsync("dl-a1");
+        var awaiting = await SeedDeadLetterAsync(fx, "dl-a1");
+        var done = await SeedDeadLetterAsync(fx, "dl-a1");
+        await fx.Scheduler.AcknowledgeDeadLetterAsync(done.Id, "earlier");
+        var before = DateTime.UtcNow;
+
+        var result = await fx.Scheduler.AcknowledgeAllDeadLettersAsync("clearing");
+
+        result.Count.Should().Be(1);
+        fx.DataContext.Reset();
+        var rows = await fx.DataContext.DeadLetters.AsNoTracking().ToDictionaryAsync(d => d.Id);
+        rows[awaiting.Id].Status.Should().Be(DeadLetterStatus.Acknowledged);
+        rows[awaiting.Id].ResolutionNote.Should().Be("clearing");
+        rows[awaiting.Id].ResolvedAt.Should().BeOnOrAfter(before.AddSeconds(-1));
+        rows[done.Id].ResolutionNote.Should().Be("earlier", "an already resolved one is untouched");
+    }
+
+    [Test]
+    public async Task AcknowledgeDeadLettersAsync_OnlyTheListedAwaitingOnes()
+    {
+        await using var fx = await CreateWithManifestAsync("dl-a2");
+        var listed = await SeedDeadLetterAsync(fx, "dl-a2");
+        var unlisted = await SeedDeadLetterAsync(fx, "dl-a2");
+
+        var result = await fx.Scheduler.AcknowledgeDeadLettersAsync(new[] { listed.Id }, "one");
+
+        result.Count.Should().Be(1);
+        fx.DataContext.Reset();
+        var rows = await fx.DataContext.DeadLetters.AsNoTracking().ToDictionaryAsync(d => d.Id);
+        rows[listed.Id].Status.Should().Be(DeadLetterStatus.Acknowledged);
+        rows[unlisted.Id].Status.Should().Be(DeadLetterStatus.AwaitingIntervention);
+    }
+
+    #endregion
 }

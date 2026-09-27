@@ -969,24 +969,20 @@ public class TraxScheduler(
     {
         await using var context = CreateContext();
 
-        var deadLetters = await context
-            .DeadLetters.Where(d =>
+        var acknowledged = await AcknowledgeAwaitingAsync(
+            context,
+            context.DeadLetters.Where(d =>
                 deadLetterIds.Contains(d.Id) && d.Status == DeadLetterStatus.AwaitingIntervention
-            )
-            .ToListAsync(ct);
+            ),
+            note,
+            ct
+        );
 
-        foreach (var dl in deadLetters)
-            dl.Acknowledge(note);
-
-        await context.SaveChanges(ct);
-        if (deadLetters.Count > 0)
-            changeSignal?.Notify(ChangeDomain.DeadLetter);
-
-        logger.LogInformation("Acknowledged {Count} dead letters", deadLetters.Count);
+        logger.LogInformation("Acknowledged {Count} dead letters", acknowledged);
 
         return new BatchDeadLetterResult(
-            deadLetters.Count,
-            $"{deadLetters.Count} dead letter(s) acknowledged"
+            acknowledged,
+            $"{acknowledged} dead letter(s) acknowledged"
         );
     }
 
@@ -1013,23 +1009,61 @@ public class TraxScheduler(
     {
         await using var context = CreateContext();
 
-        var deadLetters = await context
-            .DeadLetters.Where(d => d.Status == DeadLetterStatus.AwaitingIntervention)
-            .ToListAsync(ct);
+        var acknowledged = await AcknowledgeAwaitingAsync(
+            context,
+            context.DeadLetters.Where(d => d.Status == DeadLetterStatus.AwaitingIntervention),
+            note,
+            ct
+        );
 
-        foreach (var dl in deadLetters)
-            dl.Acknowledge(note);
-
-        await context.SaveChanges(ct);
-        if (deadLetters.Count > 0)
-            changeSignal?.Notify(ChangeDomain.DeadLetter);
-
-        logger.LogInformation("Acknowledged all {Count} dead letters", deadLetters.Count);
+        logger.LogInformation("Acknowledged all {Count} dead letters", acknowledged);
 
         return new BatchDeadLetterResult(
-            deadLetters.Count,
-            $"{deadLetters.Count} dead letter(s) acknowledged"
+            acknowledged,
+            $"{acknowledged} dead letter(s) acknowledged"
         );
+    }
+
+    /// <summary>
+    /// Acknowledges every dead letter <paramref name="awaiting"/> selects, in one statement on a
+    /// relational store: loading and saving each row took seconds per fifty thousand, which an
+    /// "acknowledge all" over a large backlog reaches. The InMemory provider has no set-based
+    /// update, so there the rows are loaded and saved, which is what every provider used to do.
+    /// Signals <c>DeadLetter</c> when any row changed.
+    /// </summary>
+    private async Task<int> AcknowledgeAwaitingAsync(
+        IDataContext context,
+        IQueryable<Effect.Models.DeadLetter.DeadLetter> awaiting,
+        string note,
+        CancellationToken ct
+    )
+    {
+        int acknowledged;
+
+        if (((DbContext)context).Database.IsRelational())
+        {
+            var now = DateTime.UtcNow;
+            acknowledged = await awaiting.ExecuteUpdateAsync(
+                s =>
+                    s.SetProperty(d => d.Status, DeadLetterStatus.Acknowledged)
+                        .SetProperty(d => d.ResolvedAt, now)
+                        .SetProperty(d => d.ResolutionNote, note),
+                ct
+            );
+        }
+        else
+        {
+            var rows = await awaiting.ToListAsync(ct);
+            foreach (var row in rows)
+                row.Acknowledge(note);
+            await context.SaveChanges(ct);
+            acknowledged = rows.Count;
+        }
+
+        if (acknowledged > 0)
+            changeSignal?.Notify(ChangeDomain.DeadLetter);
+
+        return acknowledged;
     }
 
     private async Task<BatchDeadLetterResult> RequeueDeadLetterBatch(
