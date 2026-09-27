@@ -224,6 +224,9 @@ public class OperationsService : IOperationsService
         }
         catch (TrainInputValidationException ex)
         {
+            // Generic by design: the cap and the observed size are on the exception's properties,
+            // not in its message, so the caller cannot map the cap. Trax.Api's error filter makes
+            // the same promise for the typed exception.
             return new OperationResult(false, Message: ex.Message);
         }
 
@@ -309,11 +312,11 @@ public class OperationsService : IOperationsService
     }
 
     /// <summary>
-    /// Reads a run's input the way the mediator reads a queued one: the input size cap, a blank
-    /// input standing for an empty object that the input type must be buildable from, the system
-    /// serializer options, and a JSON <c>null</c> refused. A copy, for the same reason as
-    /// <see cref="AuthorizeRunAsync"/>; keeping it identical is what makes a run and a queue of
-    /// the same JSON agree.
+    /// Reads a run's input the way the mediator reads a queued one: the input size cap, property
+    /// names matched whatever their case and a property given twice refused (docs/0023), a blank
+    /// input standing for an empty object that the input type must be buildable from, and a JSON
+    /// <c>null</c> refused. A copy, for the same reason as <see cref="AuthorizeRunAsync"/>;
+    /// keeping it identical is what makes a run and a queue of the same JSON agree.
     /// </summary>
     private static object ReadRunInput(
         IServiceProvider services,
@@ -335,22 +338,14 @@ public class OperationsService : IOperationsService
                 maxBytes
             );
 
+        var options = RunInputOptions();
         object? read;
 
         if (missing)
         {
             try
             {
-                read = JsonSerializer.Deserialize(
-                    json,
-                    registration.InputType,
-                    new JsonSerializerOptions(
-                        TraxEffectConfiguration.StaticSystemJsonSerializerOptions
-                    )
-                    {
-                        RespectRequiredConstructorParameters = true,
-                    }
-                );
+                read = JsonSerializer.Deserialize(json, registration.InputType, options.Missing);
             }
             catch (JsonException refused)
             {
@@ -363,11 +358,7 @@ public class OperationsService : IOperationsService
         }
         else
         {
-            read = JsonSerializer.Deserialize(
-                json,
-                registration.InputType,
-                TraxEffectConfiguration.StaticSystemJsonSerializerOptions
-            );
+            read = JsonSerializer.Deserialize(json, registration.InputType, options.Given);
         }
 
         return read
@@ -375,6 +366,43 @@ public class OperationsService : IOperationsService
                 $"InputJson deserialized to null. Expected an instance of {registration.InputTypeName}."
             );
     }
+
+    private static CallerInputOptions? _runInputOptions;
+
+    /// <summary>
+    /// The system options with property names matched whatever their case and a property given
+    /// twice, in any casing, refused (docs/0023); the missing-input reading also respects
+    /// required constructor parameters. Rebuilt only if the system options object itself is
+    /// replaced, as the mediator's copy is.
+    /// </summary>
+    private static CallerInputOptions RunInputOptions()
+    {
+        var source = TraxEffectConfiguration.StaticSystemJsonSerializerOptions;
+        var cached = _runInputOptions;
+
+        if (cached is not null && ReferenceEquals(cached.Source, source))
+            return cached;
+
+        var given = new JsonSerializerOptions(source)
+        {
+            PropertyNameCaseInsensitive = true,
+            AllowDuplicateProperties = false,
+        };
+        var missing = new JsonSerializerOptions(given)
+        {
+            RespectRequiredConstructorParameters = true,
+        };
+
+        var built = new CallerInputOptions(source, given, missing);
+        _runInputOptions = built;
+        return built;
+    }
+
+    private sealed record CallerInputOptions(
+        JsonSerializerOptions Source,
+        JsonSerializerOptions Given,
+        JsonSerializerOptions Missing
+    );
 
     /// <summary>
     /// The submitter the job dispatcher would use for this train: its builder or

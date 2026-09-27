@@ -176,6 +176,48 @@ public class OperationsServiceRunTests
             );
     }
 
+    [TestCase("{\"customerId\":7}", TestName = "Input_in_camel_case_is_read")]
+    [TestCase("{\"CustomerId\":7}", TestName = "Input_in_pascal_case_is_read")]
+    [TestCase("{\"CUSTOMERID\":7}", TestName = "Input_in_any_case_is_read")]
+    public async Task Input_property_names_match_whatever_their_case(string json)
+    {
+        object? submitted = null;
+        _submitter
+            .EnqueueAsync(
+                Arg.Any<long>(),
+                Arg.Do<object>(input => submitted = input),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns("job-1");
+
+        var result = await Run(typeof(IProbeTrain), json);
+
+        result.Success.Should().BeTrue(result.Message);
+        submitted
+            .Should()
+            .BeEquivalentTo(
+                new ProbeInput { CustomerId = 7 },
+                "a run reads a caller's input the way the mediator reads a queued one (docs/0023)"
+            );
+    }
+
+    [TestCase("{\"customerId\":1,\"customerId\":2}", TestName = "A_repeated_property_is_refused")]
+    [TestCase(
+        "{\"customerId\":1,\"CustomerId\":2}",
+        TestName = "A_property_repeated_in_another_case_is_refused"
+    )]
+    public async Task A_property_given_twice_is_a_failed_result(string json)
+    {
+        var result = await Run(typeof(IProbeTrain), json);
+
+        result
+            .Success.Should()
+            .BeFalse("an ambiguous input is refused, never resolved to its last value (docs/0023)");
+        result.Message.Should().StartWith("Invalid InputJson");
+        (await Runs()).Should().BeEmpty();
+        _submitter.ReceivedCalls().Should().BeEmpty();
+    }
+
     [Test]
     public async Task The_callers_token_reaches_the_submitter()
     {

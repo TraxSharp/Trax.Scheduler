@@ -49,9 +49,10 @@ public interface IOperationsService
     /// <remarks>
     /// The train's <c>[TraxAuthorize]</c> requirements are checked the way the mediator checks
     /// them for <see cref="QueueTrainAsync"/>, before the input is read, and the input is read
-    /// the way the mediator reads a queued input (the system serializer options, the input size
-    /// cap, a blank input standing for an empty object). A run has no <c>OnQueue</c> hook and no
-    /// subject key, so nothing a train does can refuse it.
+    /// the way the mediator reads a caller's input (<c>docs/0023</c>): the system serializer
+    /// options with property names matched whatever their case and a property given twice
+    /// refused, the input size cap, and a blank input standing for an empty object. A run has no
+    /// <c>OnQueue</c> hook and no subject key, so nothing a train does can refuse it.
     /// </remarks>
     /// <returns>
     /// <c>OperationResult(true, Id: metadataId, Count: 1, ...)</c> once the job is submitted; the
