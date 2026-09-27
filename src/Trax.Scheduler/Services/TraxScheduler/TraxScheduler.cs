@@ -867,6 +867,12 @@ public class TraxScheduler(
 
     // ── Dead Letter Operations ────────────────────────────────────────────
 
+    /// <summary>
+    /// Test seam: awaited after a requeue has checked for a queued entry and before it inserts,
+    /// on the first attempt only, so a test can hold two requeues inside that window at once.
+    /// </summary>
+    internal Func<CancellationToken, Task>? BeforeRequeueInsert { get; set; }
+
     /// <inheritdoc />
     public async Task<DeadLetterOperationResult> RequeueDeadLetterAsync(
         long deadLetterId,
@@ -910,7 +916,25 @@ public class TraxScheduler(
         context.WorkQueues.Add(entry);
 
         deadLetter.Requeue($"Re-queued (WorkQueue {entry.Id})");
-        await context.SaveChanges(ct);
+
+        try
+        {
+            await context.SaveChanges(ct);
+        }
+        catch (DbUpdateException)
+        {
+            // Queued by someone else between the check above and this insert: the index refused
+            // the second entry and nothing was written. Anything else is rethrown.
+            if (!await AnyQueuedAsync([deadLetter.ManifestId], ct))
+                throw;
+
+            return new DeadLetterOperationResult(
+                false,
+                null,
+                "The manifest already has a queued entry; the dead letter is left awaiting "
+                    + "intervention."
+            );
+        }
 
         // WorkQueue ID is available after SaveChanges — update the resolution note
         deadLetter.ResolutionNote = $"Re-queued (WorkQueue {entry.Id})";
@@ -965,16 +989,14 @@ public class TraxScheduler(
         CancellationToken ct = default
     )
     {
-        await using var context = CreateContext();
-
-        var deadLetters = await context
-            .DeadLetters.Include(d => d.Manifest)
-            .Where(d =>
-                deadLetterIds.Contains(d.Id) && d.Status == DeadLetterStatus.AwaitingIntervention
-            )
-            .ToListAsync(ct);
-
-        return await RequeueDeadLetterBatch(context, deadLetters, ct);
+        return await RequeueDeadLetterBatch(
+            context =>
+                context.DeadLetters.Where(d =>
+                    deadLetterIds.Contains(d.Id)
+                    && d.Status == DeadLetterStatus.AwaitingIntervention
+                ),
+            ct
+        );
     }
 
     /// <inheritdoc />
@@ -1008,14 +1030,11 @@ public class TraxScheduler(
         CancellationToken ct = default
     )
     {
-        await using var context = CreateContext();
-
-        var deadLetters = await context
-            .DeadLetters.Include(d => d.Manifest)
-            .Where(d => d.Status == DeadLetterStatus.AwaitingIntervention)
-            .ToListAsync(ct);
-
-        return await RequeueDeadLetterBatch(context, deadLetters, ct);
+        return await RequeueDeadLetterBatch(
+            context =>
+                context.DeadLetters.Where(d => d.Status == DeadLetterStatus.AwaitingIntervention),
+            ct
+        );
     }
 
     /// <inheritdoc />
@@ -1092,12 +1111,60 @@ public class TraxScheduler(
     /// one of them is resolved with a note naming the entry. The result's message counts both.
     /// </summary>
     /// <remarks>
-    /// The already-queued check and the insert are separate statements, so a manifest queued by
-    /// the ManifestManager between them still fails the insert on the index.
+    /// The "already queued?" check and the insert are separate statements, so a concurrent
+    /// requeue or the ManifestManager can queue one of the manifests in between, and the insert
+    /// then fails on the index. That is caught provider-neutrally: when the save fails and one of
+    /// the manifests this attempt meant to queue now has a queued entry, the whole attempt is
+    /// rolled back and rerun from a fresh read, which skips that manifest and no longer sees dead
+    /// letters another requeue resolved. Any other failure is rethrown.
     /// </remarks>
     private async Task<BatchDeadLetterResult> RequeueDeadLetterBatch(
+        Func<IDataContext, IQueryable<Effect.Models.DeadLetter.DeadLetter>> select,
+        CancellationToken ct
+    )
+    {
+        const int maxAttempts = 3;
+
+        for (var attempt = 1; ; attempt++)
+        {
+            await using var context = CreateContext();
+            var deadLetters = await select(context).Include(d => d.Manifest).ToListAsync(ct);
+
+            try
+            {
+                return await RequeueDeadLetterBatchOnce(context, deadLetters, attempt == 1, ct);
+            }
+            catch (DbUpdateException ex) when (attempt < maxAttempts)
+            {
+                var manifestIds = deadLetters.Select(d => d.ManifestId).Distinct().ToList();
+                if (!await AnyQueuedAsync(manifestIds, ct))
+                    throw;
+
+                logger.LogInformation(
+                    ex,
+                    "A dead-letter requeue lost a race for a manifest's queued entry; retrying (attempt {Attempt})",
+                    attempt
+                );
+            }
+        }
+    }
+
+    private async Task<bool> AnyQueuedAsync(List<long> manifestIds, CancellationToken ct)
+    {
+        await using var context = CreateContext();
+        return await context.WorkQueues.AnyAsync(
+            q =>
+                q.ManifestId != null
+                && manifestIds.Contains(q.ManifestId.Value)
+                && q.Status == WorkQueueStatus.Queued,
+            ct
+        );
+    }
+
+    private async Task<BatchDeadLetterResult> RequeueDeadLetterBatchOnce(
         IDataContext context,
         List<Effect.Models.DeadLetter.DeadLetter> deadLetters,
+        bool firstAttempt,
         CancellationToken ct
     )
     {
@@ -1123,6 +1190,9 @@ public class TraxScheduler(
                 return (Entry: CreateWorkQueueFromDeadLetter(members[0]), Members: members);
             })
             .ToList();
+
+        if (firstAttempt && BeforeRequeueInsert is { } hook)
+            await hook(ct);
 
         foreach (var (entry, members) in batches)
         {

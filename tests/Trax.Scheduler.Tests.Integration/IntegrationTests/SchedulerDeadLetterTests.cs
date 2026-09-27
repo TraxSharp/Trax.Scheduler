@@ -347,6 +347,32 @@ public class SchedulerDeadLetterTests
             .Be(DeadLetterStatus.AwaitingIntervention);
     }
 
+    [Test]
+    public async Task Two_concurrent_requeue_alls_for_one_manifest_both_succeed_and_queue_one_entry()
+    {
+        await using var fx = await CreateWithManifestAsync("dl-race");
+        var dl = await SeedDeadLetterAsync(fx, "dl-race");
+
+        // Hold both calls between their "already queued?" check and their insert, so both pass
+        // the check before either writes: the window a concurrent requeue or the ManifestManager
+        // can land in.
+        var scheduler = (Trax.Scheduler.Services.TraxScheduler.TraxScheduler)fx.Scheduler;
+        using var bothChecked = new Barrier(2);
+        scheduler.BeforeRequeueInsert = _ =>
+            Task.Run(() => bothChecked.SignalAndWait(TimeSpan.FromSeconds(10)));
+
+        var results = await Task.WhenAll(
+            Task.Run(() => fx.Scheduler.RequeueAllDeadLettersAsync()),
+            Task.Run(() => fx.Scheduler.RequeueAllDeadLettersAsync())
+        );
+
+        results.Select(r => r.Count).Sum().Should().Be(1, "the dead letter is resolved once");
+        (await QueuedFor(fx, "dl-race")).Should().Be(1);
+        (await fx.DataContext.DeadLetters.AsNoTracking().SingleAsync(d => d.Id == dl.Id))
+            .Status.Should()
+            .Be(DeadLetterStatus.Retried);
+    }
+
     #endregion
 
     #region Acknowledge in one statement
