@@ -297,7 +297,7 @@ public class RunnerRequestSigningTests
     [Test]
     public async Task HttpJobSubmitter_WithSigningKey_SignsTheExactBodySent()
     {
-        var handler = new CapturingHandler(HttpStatusCode.OK, "{}");
+        var handler = new CapturingHandler(HttpStatusCode.OK, """{"metadataId":7}""");
         var client = new HttpClient(handler) { BaseAddress = new Uri("http://test/") };
         var submitter = new HttpJobSubmitter(
             client,
@@ -326,7 +326,7 @@ public class RunnerRequestSigningTests
     [Test]
     public async Task HttpJobSubmitter_WithoutSigningKey_SendsNoSignature()
     {
-        var handler = new CapturingHandler(HttpStatusCode.OK, "{}");
+        var handler = new CapturingHandler(HttpStatusCode.OK, """{"metadataId":7}""");
         var client = new HttpClient(handler) { BaseAddress = new Uri("http://test/") };
         var submitter = new HttpJobSubmitter(
             client,
