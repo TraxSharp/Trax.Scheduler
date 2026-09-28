@@ -204,6 +204,45 @@ public class OperationsServiceEnqueueTests
     }
 
     [Test]
+    public async Task An_oversized_input_is_refused_without_the_cap_or_its_size()
+    {
+        // The real mediator, so the refusal is the size cap's own: nothing about the cap or the
+        // input's size may reach the caller, the same promise Trax.Api's error filter makes.
+        var mediatorConfiguration = new Trax.Mediator.Configuration.MediatorConfiguration();
+        var service = new OperationsService(
+            _discovery,
+            Substitute.For<IDataContextProviderFactory>(),
+            new SchedulerConfiguration(),
+            new TrainExecutionService(
+                _discovery,
+                runExecutor: null!,
+                concurrencyLimiter: null!,
+                Substitute.For<IDataContextProviderFactory>(),
+                mediatorConfiguration,
+                new ServiceCollection().BuildServiceProvider()
+            )
+        );
+        var oversized =
+            "{\"customerId\":1,\"pad\":\""
+            + new string('x', mediatorConfiguration.MaxInputJsonBytes)
+            + "\"}";
+
+        var result = await service.QueueTrainAsync(
+            new QueueTrainInput(typeof(IProbeTrain).FullName!, oversized),
+            CancellationToken.None
+        );
+
+        result.Success.Should().BeFalse();
+        result.Message.Should().Be("The train input failed validation.");
+        result
+            .Message.Should()
+            .NotContain(
+                mediatorConfiguration.MaxInputJsonBytes.ToString(),
+                "the cap is not echoed to the caller"
+            );
+    }
+
+    [Test]
     public async Task An_unknown_train_is_still_a_friendly_failure_and_never_reaches_the_mediator()
     {
         var result = await Queue(new QueueTrainInput("Nope.NotATrain", "{}"));
