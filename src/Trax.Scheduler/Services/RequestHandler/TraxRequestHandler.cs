@@ -188,7 +188,10 @@ internal class TraxRequestHandler(
                 ExceptionType: attached.Type,
                 FailureJunction: attached.Junction,
                 FailureClass: Defined(attached.FailureClass)
-            );
+            )
+            {
+                PublicMessage = AuthorsMessage(attached.Type, attached.Message),
+            };
         }
 
         // Priority 2: JSON-serialized data in a TrainException's message (already crossed a
@@ -208,7 +211,10 @@ internal class TraxRequestHandler(
                         ExceptionType: data.Type,
                         FailureJunction: data.Junction,
                         FailureClass: Defined(data.FailureClass)
-                    );
+                    )
+                    {
+                        PublicMessage = AuthorsMessage(data.Type, data.Message),
+                    };
                 }
             }
             catch (JsonException)
@@ -222,8 +228,24 @@ internal class TraxRequestHandler(
             IsError: true,
             ErrorMessage: ex is TrainException ? ex.Message : UnreportedFailureMessage,
             ExceptionType: ex.GetType().Name
-        );
+        )
+        {
+            PublicMessage = AuthorsMessage(ex.GetType().Name, ex.Message),
+        };
     }
+
+    /// <summary>
+    /// The message a client may see: the message of a plain <see cref="TrainException"/>, which a
+    /// train author wrote for the caller, and nothing for any other type, a type derived from it
+    /// included. A message that is itself a carried failure's JSON is not an author's message.
+    /// See <c>Trax.Docs/adr/0028-a-remote-runs-client-message-is-chosen-by-the-runner.md</c>.
+    /// </summary>
+    private static string? AuthorsMessage(string? exceptionType, string? message) =>
+        string.Equals(exceptionType, nameof(TrainException), StringComparison.Ordinal)
+        && !string.IsNullOrEmpty(message)
+        && !message.AsSpan().TrimStart().StartsWith("{")
+            ? message
+            : null;
 
     private static FailureClass? Defined(FailureClass? failureClass) =>
         failureClass is { } value && !Enum.IsDefined(value)

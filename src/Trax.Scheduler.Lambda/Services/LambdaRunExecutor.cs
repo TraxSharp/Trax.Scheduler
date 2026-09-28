@@ -82,7 +82,7 @@ public class LambdaRunExecutor(
         if (!string.IsNullOrEmpty(invokeResponse.FunctionError))
         {
             var errorPayload = await ReadPayloadAsync(invokeResponse);
-            throw new TrainException(
+            throw new RemoteRunException(
                 $"Lambda function '{options.FunctionName}' returned error: "
                     + $"{invokeResponse.FunctionError}. {errorPayload}"
             );
@@ -93,7 +93,7 @@ public class LambdaRunExecutor(
                 invokeResponse.Payload,
                 RemoteRunJson.Read,
                 cancellationToken: ct
-            ) ?? throw new TrainException("Lambda function returned null response.");
+            ) ?? throw new RemoteRunException("Lambda function returned null response.");
 
         // Shared with the HTTP executor, so a field the worker sends back, such as its failure
         // classification, is carried by both transports rather than by whichever was updated.

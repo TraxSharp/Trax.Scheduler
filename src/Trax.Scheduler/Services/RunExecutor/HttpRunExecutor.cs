@@ -60,14 +60,14 @@ public class HttpRunExecutor(
         if (!httpResponse.IsSuccessStatusCode)
         {
             var body = await ReadErrorBodyAsync(httpResponse);
-            throw new TrainException(
+            throw new RemoteRunException(
                 $"Remote run endpoint returned HTTP {(int)httpResponse.StatusCode}: {body}"
             );
         }
 
         var response =
             await httpResponse.Content.ReadFromJsonAsync<RemoteRunResponse>(RemoteRunJson.Read, ct)
-            ?? throw new TrainException("Remote run endpoint returned null response.");
+            ?? throw new RemoteRunException("Remote run endpoint returned null response.");
 
         if (response.IsError)
             throw BuildExceptionFromErrorResponse(response);

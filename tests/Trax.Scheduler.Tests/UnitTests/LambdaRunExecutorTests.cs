@@ -447,6 +447,50 @@ public class LambdaRunExecutorTests
         await act.Should().ThrowAsync<TrainException>().WithMessage("*Unhandled*");
     }
 
+    [Test]
+    public async Task ExecuteAsync_FunctionError_OffersTheClientNoMessage()
+    {
+        var client = new MockLambdaClient { FunctionError = "Unhandled" };
+        var executor = CreateExecutor(client);
+
+        var act = async () =>
+            await executor.ExecuteAsync(
+                "My.Train",
+                new TestRunInput { Name = "crash" },
+                typeof(TestRunOutput)
+            );
+
+        (await act.Should().ThrowAsync<RemoteRunException>())
+            .Which.PublicMessage.Should()
+            .BeNull("a function error is not a message a train author wrote");
+    }
+
+    [Test]
+    public async Task ExecuteAsync_ErrorResponse_CarriesTheRunnersPublicMessage()
+    {
+        var response = new RemoteRunResponse(
+            MetadataId: 0,
+            IsError: true,
+            ErrorMessage: "Order 42 is already closed.",
+            ExceptionType: nameof(TrainException)
+        )
+        {
+            PublicMessage = "Order 42 is already closed.",
+        };
+        var executor = CreateExecutor(CreateMockClient(response));
+
+        var act = async () =>
+            await executor.ExecuteAsync(
+                "My.FailingTrain",
+                new TestRunInput { Name = "fail" },
+                typeof(TestRunOutput)
+            );
+
+        (await act.Should().ThrowAsync<RemoteRunException>())
+            .Which.PublicMessage.Should()
+            .Be("Order 42 is already closed.");
+    }
+
     #endregion
 
     #region Error Handling — Null Response

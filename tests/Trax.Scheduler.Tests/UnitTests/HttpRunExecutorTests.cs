@@ -469,6 +469,57 @@ public class HttpRunExecutorTests
         ex.Message.Should().Contain("Service Unavailable");
     }
 
+    [Test]
+    public async Task ExecuteAsync_Non2xx_OffersTheClientNoMessage()
+    {
+        var handler = new FakeHttpMessageHandler(
+            HttpStatusCode.BadGateway,
+            responseBody: "<html>upstream 10.0.0.5 down</html>"
+        );
+        var client = new HttpClient(handler) { BaseAddress = new Uri("http://test/") };
+        var executor = CreateExecutor(client);
+
+        var act = async () =>
+            await executor.ExecuteAsync(
+                "My.Train",
+                new TestInput { Name = "error" },
+                typeof(TestOutput)
+            );
+
+        (await act.Should().ThrowAsync<RemoteRunException>())
+            .Which.PublicMessage.Should()
+            .BeNull("a transport failure is not a message a train author wrote");
+    }
+
+    [Test]
+    public async Task ExecuteAsync_ErrorResponse_CarriesTheRunnersPublicMessage()
+    {
+        var response = new RemoteRunResponse(
+            MetadataId: 0,
+            IsError: true,
+            ErrorMessage: "Order 42 is already closed.",
+            ExceptionType: nameof(TrainException),
+            FailureJunction: "CloseOrder"
+        )
+        {
+            PublicMessage = "Order 42 is already closed.",
+        };
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, response);
+        var client = new HttpClient(handler) { BaseAddress = new Uri("http://test/") };
+        var executor = CreateExecutor(client);
+
+        var act = async () =>
+            await executor.ExecuteAsync(
+                "My.FailingTrain",
+                new TestInput { Name = "fail" },
+                typeof(TestOutput)
+            );
+
+        (await act.Should().ThrowAsync<RemoteRunException>())
+            .Which.PublicMessage.Should()
+            .Be("Order 42 is already closed.");
+    }
+
     #endregion
 
     #region Error Handling — Null Response
