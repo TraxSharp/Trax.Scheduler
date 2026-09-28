@@ -63,7 +63,11 @@ A queued job's request names its input type. The runner looks that name up among
 of its registered trains and refuses anything else; it never loads a type by the name it was sent.
 `LoadMetadataJunction` then refuses a row whose train is not the train registered for the input,
 before anything touches the row, so the row stays `Pending`. On the scheduler side, a remote run's
-output is read into the output type the caller expects, not a type the response names.
+output is read into the output type the caller expects, not a type the response names. When that
+type is an interface or abstract, and so cannot be read into, the response's type name picks an
+implementation of the expected type: only a concrete type already loaded in the scheduler's process
+that implements it, matched by name. Nothing is loaded by the name a response gives, and a name that
+matches no such implementation is refused.
 
 Registered does not include the scheduler's own trains (`AdminTrains`: the ManifestManager, the
 JobDispatcher, the JobRunner and the two cleanup trains). They are registered on any host that
@@ -131,6 +135,10 @@ request as stale.
 - `StoredInputTypeResolutionTests` gives the dispatcher and the local worker a stored input type
   that no train takes and asserts nothing is constructed from it; `RegisteredInputTypesTests`
   covers the name matching itself.
+- `RemoteRunOutputTests` pins which type a remote run's output is read into: the expected type when
+  it is concrete, otherwise only a loaded implementation of it that the response names. Both run
+  executors read through it, and `HttpRunExecutorTests.cs` and `LambdaRunExecutorTests.cs` cover the
+  same cases end to end.
 - `SqsJobRunnerHandlerTests` and `TraxLambdaFunctionTests` cover the same posture on the SQS and
   Lambda paths, including a redelivered `Execute` running again and a repeated `Run` refused.
 - [Remote Execution](/docs/scheduler/remote-execution) is the rule this produces.
@@ -145,4 +153,7 @@ Not covered: sharing nonces across runner instances is
 - **2026-09-27**: A runner refuses the scheduler's own trains on the run path and the job path.
 - **2026-09-27**: The dispatcher and the local worker resolve stored input type names among the
   registered trains' inputs too.
+- **2026-09-27**: An interface or abstract expected output is read into an implementation of the
+  expected type the response names, matched among loaded types; the rule was "never a type the
+  response names", which left such outputs unreadable.
 - **2026-09-27**: Recorded, with the change it describes.

@@ -72,16 +72,9 @@ public class HttpRunExecutor(
         if (response.IsError)
             throw BuildExceptionFromErrorResponse(response);
 
-        object? output = null;
-        // Read into the output type the caller expects, never into a type the response names.
-        if (response.OutputJson is not null)
-        {
-            output = JsonSerializer.Deserialize(
-                response.OutputJson,
-                outputType,
-                TraxJsonSerializationOptions.ManifestProperties
-            );
-        }
+        // Read into the output type the caller expects, or, when that is an interface or abstract
+        // type, into the loaded implementation of it the response names; never a type loaded by name.
+        var output = RemoteRunOutput.Read(response.OutputJson, outputType, response.OutputType);
 
         return new RunTrainResult(response.MetadataId, response.ExternalId ?? "", output);
     }
