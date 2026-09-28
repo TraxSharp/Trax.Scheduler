@@ -46,21 +46,23 @@ public class SqsJobSubmitterTests
         var attribute = client.LastRequest!.MessageAttributes[
             Trax.Scheduler.Services.RequestSigning.RunnerRequestSignature.HeaderName
         ];
-        new Trax.Scheduler.Services.RequestSigning.RunnerRequestVerifier(
-            new Trax.Scheduler.Configuration.TraxJobRunnerOptions { SigningKey = key },
-            Microsoft
-                .Extensions
-                .Logging
-                .Abstractions
-                .NullLogger<Trax.Scheduler.Services.RequestSigning.RunnerRequestVerifier>
-                .Instance
-        )
-            .Verify(
+        (
+            await new Trax.Scheduler.Services.RequestSigning.RunnerRequestVerifier(
+                new Trax.Scheduler.Configuration.TraxJobRunnerOptions { SigningKey = key },
+                Microsoft
+                    .Extensions
+                    .Logging
+                    .Abstractions
+                    .NullLogger<Trax.Scheduler.Services.RequestSigning.RunnerRequestVerifier>
+                    .Instance,
+                new Trax.Scheduler.Services.RequestSigning.InMemoryNonceStore()
+            ).VerifyAsync(
                 Trax.Scheduler.Services.RequestSigning.RunnerRequestPurpose.Execute,
                 System.Text.Encoding.UTF8.GetBytes(client.LastRequest.MessageBody),
                 attribute.StringValue,
                 requireFresh: false
             )
+        )
             .Should()
             .Be(Trax.Scheduler.Services.RequestSigning.RunnerRequestVerdict.Accepted);
     }

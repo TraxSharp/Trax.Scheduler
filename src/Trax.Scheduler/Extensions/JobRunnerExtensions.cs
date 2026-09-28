@@ -3,8 +3,11 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Trax.Core.Exceptions;
+using Trax.Effect.Data.Services.IDataContextFactory;
+using Trax.Effect.Data.Services.SqlDialect;
 using Trax.Effect.Extensions;
 using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Services.CancellationRegistry;
@@ -71,7 +74,17 @@ public static class JobRunnerExtensions
         runnerOptions.Validate();
 
         services.AddSingleton(runnerOptions);
-        services.AddSingleton<RunnerRequestVerifier>();
+        services.TryAddSingleton<INonceStore>(sp => CreateNonceStore(sp, runnerOptions));
+        services.AddSingleton(sp => new RunnerRequestVerifier(
+            runnerOptions,
+            sp.GetRequiredService<ILogger<RunnerRequestVerifier>>(),
+            // Only a signing key has nonces to keep, so a runner without one needs no store.
+            runnerOptions.SigningKey
+                is null
+                ? null
+                : sp.GetRequiredService<INonceStore>(),
+            sp.GetService<TimeProvider>()
+        ));
 
         // Empty scheduler configuration (no manifests, no polling)
         services.AddSingleton(new SchedulerConfiguration());
@@ -95,6 +108,32 @@ public static class JobRunnerExtensions
         services.AddScoped<ITraxRequestHandler, TraxRequestHandler>();
 
         return services;
+    }
+
+    /// <summary>
+    /// The store a signing runner keeps accepted nonces in: the database, which every instance of
+    /// the runner shares, unless the host chose memory (see scheduler/0009).
+    /// </summary>
+    private static INonceStore CreateNonceStore(
+        IServiceProvider services,
+        TraxJobRunnerOptions runnerOptions
+    )
+    {
+        if (runnerOptions.InMemoryNonceStore)
+            return new InMemoryNonceStore();
+
+        if (
+            services.GetService<ISqlDialect>() is not { } dialect
+            || services.GetService<IDataContextProviderFactory>() is not { } contexts
+        )
+            throw new InvalidOperationException(
+                "A Trax runner with a SigningKey keeps the nonces it accepts in the database, so that "
+                    + "every instance of the runner refuses a repeated request, and this host has no "
+                    + "relational data provider (UsePostgres or UseSqlite). Add one, register an "
+                    + "INonceStore, or call UseInMemoryNonceStore() if the runner runs as one instance."
+            );
+
+        return new DatabaseNonceStore(contexts, dialect);
     }
 
     /// <summary>
@@ -292,11 +331,12 @@ public static class JobRunnerExtensions
         await request.Body.CopyToAsync(buffer, request.HttpContext.RequestAborted);
         var body = buffer.GetBuffer().AsMemory(0, (int)buffer.Length);
 
-        var verdict = verifier.Verify(
+        var verdict = await verifier.VerifyAsync(
             purpose,
-            body.Span,
+            body,
             request.Headers[RunnerRequestSignature.HeaderName].ToString(),
-            requireFresh: true
+            requireFresh: true,
+            request.HttpContext.RequestAborted
         );
         if (verdict != RunnerRequestVerdict.Accepted)
         {

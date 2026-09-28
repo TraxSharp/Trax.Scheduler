@@ -175,12 +175,13 @@ public abstract class TraxLambdaFunction
 
         // An Execute arrives by asynchronous invocation, which Lambda retries with the same
         // payload, so only its signature is checked; a Run is synchronous and must be fresh.
-        var verdict = RequireVerifier(scope.ServiceProvider)
-            .Verify(
+        var verdict = await RequireVerifier(scope.ServiceProvider)
+            .VerifyAsync(
                 purpose,
                 Encoding.UTF8.GetBytes(envelope.PayloadJson),
                 envelope.Signature,
-                requireFresh: purpose == RunnerRequestPurpose.Run
+                requireFresh: purpose == RunnerRequestPurpose.Run,
+                cts.Token
             );
         if (verdict != RunnerRequestVerdict.Accepted)
         {
@@ -255,12 +256,13 @@ public abstract class TraxLambdaFunction
                     ILogger<TraxLambdaFunction>
                 >();
 
-                var verdict = RequireVerifier(scope.ServiceProvider)
-                    .Verify(
+                var verdict = await RequireVerifier(scope.ServiceProvider)
+                    .VerifyAsync(
                         RunnerRequestPurpose.Execute,
                         Encoding.UTF8.GetBytes(body),
                         ctx.Request.Headers[RunnerRequestSignature.HeaderName].ToString(),
-                        requireFresh: true
+                        requireFresh: true,
+                        ctx.RequestAborted
                     );
                 if (verdict != RunnerRequestVerdict.Accepted)
                 {
@@ -294,12 +296,13 @@ public abstract class TraxLambdaFunction
                     ILogger<TraxLambdaFunction>
                 >();
 
-                var verdict = RequireVerifier(scope.ServiceProvider)
-                    .Verify(
+                var verdict = await RequireVerifier(scope.ServiceProvider)
+                    .VerifyAsync(
                         RunnerRequestPurpose.Run,
                         Encoding.UTF8.GetBytes(body),
                         ctx.Request.Headers[RunnerRequestSignature.HeaderName].ToString(),
-                        requireFresh: true
+                        requireFresh: true,
+                        ctx.RequestAborted
                     );
                 if (verdict != RunnerRequestVerdict.Accepted)
                 {

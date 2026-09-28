@@ -30,6 +30,11 @@ public sealed class TraxJobRunnerOptions
     /// How far a signed request's timestamp may be from this process's clock, either way, before
     /// it is refused as stale. Also how long a nonce is remembered. Default five minutes.
     /// </summary>
+    /// <remarks>
+    /// Accepted nonces go to the database by default, so every instance of the runner refuses a
+    /// request any of them has accepted. <see cref="UseInMemoryNonceStore"/> keeps them in this
+    /// process instead, and a host can register its own <see cref="INonceStore"/>.
+    /// </remarks>
     public TimeSpan MaxClockSkew { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
@@ -39,6 +44,24 @@ public sealed class TraxJobRunnerOptions
     /// run gated trains.
     /// </summary>
     public string? AuthorizationPolicy { get; set; }
+
+    /// <summary>
+    /// Whether <see cref="UseInMemoryNonceStore"/> was called.
+    /// </summary>
+    public bool InMemoryNonceStore { get; private set; }
+
+    /// <summary>
+    /// Keeps the nonces of accepted requests in this process rather than the database. Correct
+    /// only for a runner that runs as one instance: each instance keeps its own, so a request sent
+    /// to two of them is accepted by both. Needed for a signing key on a host without a relational
+    /// data provider, unless the host registers its own <see cref="INonceStore"/>.
+    /// </summary>
+    /// <returns>These options, for chaining.</returns>
+    public TraxJobRunnerOptions UseInMemoryNonceStore()
+    {
+        InMemoryNonceStore = true;
+        return this;
+    }
 
     /// <summary>
     /// Whether <see cref="AllowUnsignedRequests"/> was called.

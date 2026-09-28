@@ -194,6 +194,7 @@ public class SqsJobRunnerHandlerTests
         var options = new TraxJobRunnerOptions();
         (runner ?? (o => o.AllowUnsignedRequests()))(options);
         services.AddSingleton(options);
+        services.AddSingleton<INonceStore, InMemoryNonceStore>();
         services.AddSingleton<RunnerRequestVerifier>();
         return new SqsJobRunnerHandler(services.BuildServiceProvider());
     }

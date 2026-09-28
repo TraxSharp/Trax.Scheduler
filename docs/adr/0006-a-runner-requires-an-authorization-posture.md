@@ -87,10 +87,9 @@ startup check possible.
 **Mutual TLS or a network boundary.** Both are good and neither is portable across HTTP, SQS and
 Lambda. A host that has one uses `AllowUnsignedRequests()` and says so in its log.
 
-**A shared nonce store.** The nonce memory is per process, so a runner scaled to several instances
-refuses a replay only on the instance that saw the original. A store in the Trax database would
-close that, at the cost of a write on every synchronous run; the window is bounded by the clock skew
-and needs a captured signed request, so it is left as a known limit rather than a table.
+**A shared nonce store.** Left out when this was recorded, with the nonce memory per process.
+[0009](./0009-a-runner-shares-its-accepted-nonces-through-the-database.md) has since put the nonces
+in the Trax database by default, shared by every instance of a runner.
 
 ## Consequences
 
@@ -118,8 +117,11 @@ request as stale.
   Lambda paths, including a redelivered `Execute` running again and a repeated `Run` refused.
 - [Remote Execution](/docs/scheduler/remote-execution) is the rule this produces.
 
-Not covered: nothing checks that a replay is refused across runner instances, because it is not.
+Not covered: sharing nonces across runner instances is
+[0009](./0009-a-runner-shares-its-accepted-nonces-through-the-database.md)'s, and its guards are named there.
 
 ## Changelog
 
+- **2026-09-27**: The per-process nonce memory is replaced by a shared store, recorded in
+  [0009](./0009-a-runner-shares-its-accepted-nonces-through-the-database.md).
 - **2026-09-27**: Recorded, with the change it describes.

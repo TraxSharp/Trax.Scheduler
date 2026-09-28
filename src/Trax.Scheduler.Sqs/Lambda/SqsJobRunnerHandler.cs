@@ -80,7 +80,7 @@ public class SqsJobRunnerHandler(IServiceProvider serviceProvider)
                         ? attribute.StringValue
                         : null;
 
-                var verdict = verifier.Verify(
+                var verdict = await verifier.VerifyAsync(
                     RunnerRequestPurpose.Execute,
                     body,
                     signature,

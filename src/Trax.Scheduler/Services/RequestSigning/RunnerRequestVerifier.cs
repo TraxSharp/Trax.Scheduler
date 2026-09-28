@@ -31,33 +31,47 @@ public enum RunnerRequestVerdict
 /// request.
 /// </summary>
 /// <remarks>
-/// Public because Trax.Runner.Lambda, which ships separately, verifies with it. The nonce memory is
-/// per process: a runner scaled to several instances refuses a replay only on the instance that
-/// saw the original (see scheduler/0006).
+/// Public because Trax.Runner.Lambda, which ships separately, verifies with it. The nonces it has
+/// accepted are kept in an <see cref="INonceStore"/>, which instances of one runner share so that a
+/// request is accepted once across all of them (see scheduler/0009).
 /// </remarks>
 public sealed class RunnerRequestVerifier
 {
     private readonly TraxJobRunnerOptions _options;
     private readonly ILogger<RunnerRequestVerifier> _logger;
     private readonly TimeProvider _time;
-    private readonly ConcurrentDictionary<string, long> _seenNonces = new(StringComparer.Ordinal);
+    private readonly INonceStore? _nonces;
     private readonly ConcurrentDictionary<string, bool> _warnedEntryPoints = new(
         StringComparer.Ordinal
     );
-    private long _acceptedSinceSweep;
 
     /// <summary>Creates a verifier over <paramref name="options"/>.</summary>
+    /// <param name="options">The runner's posture.</param>
+    /// <param name="logger">Where refusals and posture warnings go.</param>
+    /// <param name="nonces">
+    /// Where accepted nonces are kept. Required when <paramref name="options"/> has a signing key,
+    /// and shared by every instance of the runner.
+    /// </param>
+    /// <param name="time">The clock freshness is judged by.</param>
+    /// <exception cref="ArgumentException">A signing key is set and <paramref name="nonces"/> is null.</exception>
     public RunnerRequestVerifier(
         TraxJobRunnerOptions options,
         ILogger<RunnerRequestVerifier> logger,
+        INonceStore? nonces = null,
         TimeProvider? time = null
     )
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(logger);
         options.Validate();
+        if (options.SigningKey is not null && nonces is null)
+            throw new ArgumentException(
+                "A runner with a SigningKey needs an INonceStore to refuse a repeated request.",
+                nameof(nonces)
+            );
         _options = options;
         _logger = logger;
+        _nonces = nonces;
         _time = time ?? TimeProvider.System;
     }
 
@@ -112,11 +126,13 @@ public sealed class RunnerRequestVerifier
     /// redeliver the same message by design (SQS, an asynchronous Lambda invocation), where the
     /// job's Pending metadata row is what stops a second run.
     /// </param>
-    public RunnerRequestVerdict Verify(
+    /// <param name="cancellationToken">Cancels the nonce store's check.</param>
+    public async ValueTask<RunnerRequestVerdict> VerifyAsync(
         RunnerRequestPurpose purpose,
-        ReadOnlySpan<byte> body,
+        ReadOnlyMemory<byte> body,
         string? signature,
-        bool requireFresh
+        bool requireFresh,
+        CancellationToken cancellationToken = default
     )
     {
         var key = _options.SigningKey;
@@ -130,7 +146,7 @@ public sealed class RunnerRequestVerifier
             !RunnerRequestSignature.TryVerifyMac(
                 key,
                 purpose,
-                body,
+                body.Span,
                 signature,
                 out var timestamp,
                 out var nonce
@@ -141,25 +157,19 @@ public sealed class RunnerRequestVerifier
         if (!requireFresh)
             return RunnerRequestVerdict.Accepted;
 
-        var now = _time.GetUtcNow().ToUnixTimeSeconds();
+        var now = _time.GetUtcNow();
         var skew = (long)_options.MaxClockSkew.TotalSeconds;
-        if (Math.Abs(now - timestamp) > skew)
+        if (Math.Abs(now.ToUnixTimeSeconds() - timestamp) > skew)
             return RunnerRequestVerdict.Stale;
 
         // Remembered until the timestamp itself goes stale; after that freshness refuses it.
-        if (!_seenNonces.TryAdd(nonce, timestamp + skew))
-            return RunnerRequestVerdict.Replayed;
+        var recorded = await _nonces!.TryRecordAsync(
+            nonce,
+            DateTimeOffset.FromUnixTimeSeconds(timestamp + skew),
+            now,
+            cancellationToken
+        );
 
-        if (Interlocked.Increment(ref _acceptedSinceSweep) % 256 == 0)
-            SweepExpired(now);
-
-        return RunnerRequestVerdict.Accepted;
-    }
-
-    private void SweepExpired(long now)
-    {
-        foreach (var (nonce, expires) in _seenNonces)
-            if (expires < now)
-                _seenNonces.TryRemove(nonce, out _);
+        return recorded ? RunnerRequestVerdict.Accepted : RunnerRequestVerdict.Replayed;
     }
 }

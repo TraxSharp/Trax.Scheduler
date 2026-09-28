@@ -254,10 +254,12 @@ namespace Trax.Scheduler.Configuration
     {
         public TraxJobRunnerOptions() { }
         public string? AuthorizationPolicy { get; set; }
+        public bool InMemoryNonceStore { get; }
         public System.TimeSpan MaxClockSkew { get; set; }
         public byte[]? SigningKey { get; set; }
         public bool UnsignedRequestsAllowed { get; }
         public Trax.Scheduler.Configuration.TraxJobRunnerOptions AllowUnsignedRequests() { }
+        public Trax.Scheduler.Configuration.TraxJobRunnerOptions UseInMemoryNonceStore() { }
     }
 }
 namespace Trax.Scheduler.Extensions
@@ -710,6 +712,15 @@ namespace Trax.Scheduler.Services.RequestHandler
 }
 namespace Trax.Scheduler.Services.RequestSigning
 {
+    public interface INonceStore
+    {
+        System.Threading.Tasks.ValueTask<bool> TryRecordAsync(string nonce, System.DateTimeOffset expiresAt, System.DateTimeOffset now, System.Threading.CancellationToken cancellationToken);
+    }
+    public sealed class InMemoryNonceStore : Trax.Scheduler.Services.RequestSigning.INonceStore
+    {
+        public InMemoryNonceStore() { }
+        public System.Threading.Tasks.ValueTask<bool> TryRecordAsync(string nonce, System.DateTimeOffset expiresAt, System.DateTimeOffset now, System.Threading.CancellationToken cancellationToken) { }
+    }
     public enum RunnerRequestPurpose
     {
         Execute = 0,
@@ -732,9 +743,9 @@ namespace Trax.Scheduler.Services.RequestSigning
     }
     public sealed class RunnerRequestVerifier
     {
-        public RunnerRequestVerifier(Trax.Scheduler.Configuration.TraxJobRunnerOptions options, Microsoft.Extensions.Logging.ILogger<Trax.Scheduler.Services.RequestSigning.RunnerRequestVerifier> logger, System.TimeProvider? time = null) { }
+        public RunnerRequestVerifier(Trax.Scheduler.Configuration.TraxJobRunnerOptions options, Microsoft.Extensions.Logging.ILogger<Trax.Scheduler.Services.RequestSigning.RunnerRequestVerifier> logger, Trax.Scheduler.Services.RequestSigning.INonceStore? nonces = null, System.TimeProvider? time = null) { }
         public void EnsurePosture(string entryPoint) { }
-        public Trax.Scheduler.Services.RequestSigning.RunnerRequestVerdict Verify(Trax.Scheduler.Services.RequestSigning.RunnerRequestPurpose purpose, System.ReadOnlySpan<byte> body, string? signature, bool requireFresh) { }
+        public System.Threading.Tasks.ValueTask<Trax.Scheduler.Services.RequestSigning.RunnerRequestVerdict> VerifyAsync(Trax.Scheduler.Services.RequestSigning.RunnerRequestPurpose purpose, System.ReadOnlyMemory<byte> body, string? signature, bool requireFresh, System.Threading.CancellationToken cancellationToken = default) { }
     }
 }
 namespace Trax.Scheduler.Services.RunExecutor

@@ -54,21 +54,23 @@ public class LambdaJobSubmitterTests
         await submitter.EnqueueAsync(42);
 
         var envelope = JsonSerializer.Deserialize<LambdaEnvelope>(client.LastRequest!.Payload)!;
-        new Trax.Scheduler.Services.RequestSigning.RunnerRequestVerifier(
-            new Trax.Scheduler.Configuration.TraxJobRunnerOptions { SigningKey = key },
-            Microsoft
-                .Extensions
-                .Logging
-                .Abstractions
-                .NullLogger<Trax.Scheduler.Services.RequestSigning.RunnerRequestVerifier>
-                .Instance
-        )
-            .Verify(
+        (
+            await new Trax.Scheduler.Services.RequestSigning.RunnerRequestVerifier(
+                new Trax.Scheduler.Configuration.TraxJobRunnerOptions { SigningKey = key },
+                Microsoft
+                    .Extensions
+                    .Logging
+                    .Abstractions
+                    .NullLogger<Trax.Scheduler.Services.RequestSigning.RunnerRequestVerifier>
+                    .Instance,
+                new Trax.Scheduler.Services.RequestSigning.InMemoryNonceStore()
+            ).VerifyAsync(
                 Trax.Scheduler.Services.RequestSigning.RunnerRequestPurpose.Execute,
                 System.Text.Encoding.UTF8.GetBytes(envelope.PayloadJson),
                 envelope.Signature,
                 requireFresh: true
             )
+        )
             .Should()
             .Be(Trax.Scheduler.Services.RequestSigning.RunnerRequestVerdict.Accepted);
     }

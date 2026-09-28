@@ -100,15 +100,17 @@ public class LambdaRunExecutorTests
         var envelope = JsonSerializer.Deserialize<LambdaEnvelope>(client.LastRequest!.Payload)!;
         var verifier = new Trax.Scheduler.Services.RequestSigning.RunnerRequestVerifier(
             new Trax.Scheduler.Configuration.TraxJobRunnerOptions { SigningKey = key },
-            NullLogger<Trax.Scheduler.Services.RequestSigning.RunnerRequestVerifier>.Instance
+            NullLogger<Trax.Scheduler.Services.RequestSigning.RunnerRequestVerifier>.Instance,
+            new Trax.Scheduler.Services.RequestSigning.InMemoryNonceStore()
         );
-        verifier
-            .Verify(
+        (
+            await verifier.VerifyAsync(
                 Trax.Scheduler.Services.RequestSigning.RunnerRequestPurpose.Run,
                 Encoding.UTF8.GetBytes(envelope.PayloadJson),
                 envelope.Signature,
                 requireFresh: true
             )
+        )
             .Should()
             .Be(Trax.Scheduler.Services.RequestSigning.RunnerRequestVerdict.Accepted);
     }
