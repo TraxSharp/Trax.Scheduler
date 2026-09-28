@@ -55,6 +55,29 @@ public class OperationsService : IOperationsService
         _trainExecution = trainExecution;
     }
 
+    /// <summary>
+    /// The constructor as it shipped before the logger parameter, kept so that an assembly built
+    /// against it still binds. It takes no defaults, so a call that leaves the optional
+    /// parameters out resolves to the constructor above rather than being ambiguous.
+    /// </summary>
+    public OperationsService(
+        ITrainDiscoveryService discoveryService,
+        IDataContextProviderFactory dataContextFactory,
+        SchedulerConfiguration schedulerConfiguration,
+        ITrainExecutionService trainExecution,
+        LocalWorkerOptions? localWorkerOptions,
+        ITraxChangeSignal? changeSignal
+    )
+        : this(
+            discoveryService,
+            dataContextFactory,
+            schedulerConfiguration,
+            trainExecution,
+            localWorkerOptions,
+            changeSignal,
+            logger: null
+        ) { }
+
     /// <inheritdoc />
     public async Task<OperationResult> QueueTrainAsync(QueueTrainInput input, CancellationToken ct)
     {
