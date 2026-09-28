@@ -5,6 +5,7 @@ using Trax.Core.Exceptions;
 using Trax.Effect.Utils;
 using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Services.Http;
+using Trax.Scheduler.Services.RequestSigning;
 
 namespace Trax.Scheduler.Services.JobSubmitter;
 
@@ -68,7 +69,9 @@ public class HttpJobSubmitter(
             request,
             options.Retry,
             logger,
-            cancellationToken
+            cancellationToken,
+            options.SigningKey,
+            RunnerRequestPurpose.Execute
         );
 
         if (!httpResponse.IsSuccessStatusCode)

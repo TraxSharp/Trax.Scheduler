@@ -3,11 +3,11 @@ using Microsoft.Extensions.Logging;
 using Trax.Core.Exceptions;
 using Trax.Effect.Utils;
 using Trax.Mediator.Services.TrainExecution;
+using Trax.Mediator.Services.TrainRegistry;
 using Trax.Mediator.Services.TrustedExecution;
 using Trax.Scheduler.Services.JobSubmitter;
 using Trax.Scheduler.Services.RunExecutor;
 using Trax.Scheduler.Trains.JobRunner;
-using Trax.Scheduler.Utilities;
 
 namespace Trax.Scheduler.Services.RequestHandler;
 
@@ -18,9 +18,17 @@ internal class TraxRequestHandler(
     IJobRunnerTrain jobRunnerTrain,
     ITrainExecutionService executionService,
     ITrustedExecutionScope trustedScope,
+    ITrainRegistry trainRegistry,
     ILogger<TraxRequestHandler> logger
 ) : ITraxRequestHandler
 {
+    /// <summary>
+    /// What a runner reports for a failure that is not a <see cref="TrainException"/>. The
+    /// exception itself is in this process's log; its message and stack are not sent back.
+    /// </summary>
+    internal const string UnreportedFailureMessage =
+        "The runner could not complete the request; its log has the detail.";
+
     public async Task<ExecuteJobResult> ExecuteJobAsync(
         RemoteJobRequest request,
         CancellationToken ct = default
@@ -29,7 +37,7 @@ internal class TraxRequestHandler(
         object? deserializedInput = null;
         if (request.Input is not null && request.InputType is not null)
         {
-            var type = TypeResolver.ResolveType(request.InputType);
+            var type = ResolveRegisteredInputType(request.InputType);
             deserializedInput = JsonSerializer.Deserialize(
                 request.Input,
                 type,
@@ -44,6 +52,21 @@ internal class TraxRequestHandler(
         await jobRunnerTrain.Run(jobRequest, ct);
 
         return new ExecuteJobResult(request.MetadataId);
+    }
+
+    /// <summary>
+    /// Finds the input type among the registered trains' input types. The name comes from the
+    /// request, so it is only ever compared, never loaded.
+    /// </summary>
+    private Type ResolveRegisteredInputType(string inputTypeName)
+    {
+        foreach (var inputType in trainRegistry.InputTypeToTrain.Keys)
+            if (string.Equals(inputType.FullName, inputTypeName, StringComparison.Ordinal))
+                return inputType;
+
+        throw new TrainException(
+            "The request's input type is not the input of any registered train."
+        );
     }
 
     public async Task<RemoteRunResponse> RunTrainAsync(
@@ -91,8 +114,9 @@ internal class TraxRequestHandler(
     /// Builds a <see cref="RemoteRunResponse"/> with structured error fields from an exception.
     /// Uses the <see cref="TrainExceptionData"/> attached to the exception when there is one; else,
     /// for a <see cref="TrainException"/> whose message is a serialized
-    /// <see cref="TrainExceptionData"/>, the fields in that message. Otherwise falls back to the raw
-    /// exception details.
+    /// <see cref="TrainExceptionData"/>, the fields in that message. Otherwise reports the
+    /// exception's type, and its message only when it is a <see cref="TrainException"/>. No stack
+    /// trace leaves the runner: the train's metadata row and this process's log hold it.
     /// </summary>
     /// <remarks>
     /// Only a <see cref="TrainException"/> is rebuilt from a recorded failure, so only its message
@@ -114,7 +138,6 @@ internal class TraxRequestHandler(
                 ErrorMessage: attached.Message,
                 ExceptionType: attached.Type,
                 FailureJunction: attached.Junction,
-                StackTrace: attached.StackTrace ?? ex.StackTrace,
                 FailureClass: Defined(attached.FailureClass)
             );
         }
@@ -135,7 +158,6 @@ internal class TraxRequestHandler(
                         ErrorMessage: data.Message,
                         ExceptionType: data.Type,
                         FailureJunction: data.Junction,
-                        StackTrace: ex.StackTrace,
                         FailureClass: Defined(data.FailureClass)
                     );
                 }
@@ -149,9 +171,8 @@ internal class TraxRequestHandler(
         return new RemoteRunResponse(
             MetadataId: 0,
             IsError: true,
-            ErrorMessage: ex.Message,
-            ExceptionType: ex.GetType().Name,
-            StackTrace: ex.StackTrace
+            ErrorMessage: ex is TrainException ? ex.Message : UnreportedFailureMessage,
+            ExceptionType: ex.GetType().Name
         );
     }
 

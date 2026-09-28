@@ -53,6 +53,27 @@ public class HttpRunExecutorTests
     }
 
     [Test]
+    public async Task ExecuteAsync_ResponseNamingAnotherOutputType_ReadsIntoTheExpectedType()
+    {
+        var response = new RemoteRunResponse(
+            MetadataId: 43,
+            OutputJson: """{"value":"hello","count":7}""",
+            OutputType: typeof(Dictionary<string, object>).AssemblyQualifiedName
+        );
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.OK, response);
+        var client = new HttpClient(handler) { BaseAddress = new Uri("http://test/") };
+        var executor = CreateExecutor(client);
+
+        var result = await executor.ExecuteAsync(
+            "My.Train",
+            new TestInput { Name = "test" },
+            typeof(TestOutput)
+        );
+
+        result.Output.Should().BeOfType<TestOutput>();
+    }
+
+    [Test]
     public async Task ExecuteAsync_UnitResponse_ReturnsNullOutput()
     {
         var response = new RemoteRunResponse(MetadataId: 10);

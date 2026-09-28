@@ -7,7 +7,7 @@ using Trax.Mediator.Services.RunExecutor;
 using Trax.Mediator.Services.TrainExecution;
 using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Services.Http;
-using Trax.Scheduler.Utilities;
+using Trax.Scheduler.Services.RequestSigning;
 
 namespace Trax.Scheduler.Services.RunExecutor;
 
@@ -52,7 +52,9 @@ public class HttpRunExecutor(
             request,
             options.Retry,
             logger,
-            ct
+            ct,
+            options.SigningKey,
+            RunnerRequestPurpose.Run
         );
 
         if (!httpResponse.IsSuccessStatusCode)
@@ -71,12 +73,12 @@ public class HttpRunExecutor(
             throw BuildExceptionFromErrorResponse(response);
 
         object? output = null;
-        if (response.OutputJson is not null && response.OutputType is not null)
+        // Read into the output type the caller expects, never into a type the response names.
+        if (response.OutputJson is not null)
         {
-            var resolvedType = TypeResolver.ResolveType(response.OutputType);
             output = JsonSerializer.Deserialize(
                 response.OutputJson,
-                resolvedType,
+                outputType,
                 TraxJsonSerializationOptions.ManifestProperties
             );
         }

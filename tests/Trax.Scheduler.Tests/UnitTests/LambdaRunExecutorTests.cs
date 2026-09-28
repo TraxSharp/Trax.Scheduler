@@ -62,6 +62,58 @@ public class LambdaRunExecutorTests
     }
 
     [Test]
+    public async Task ExecuteAsync_ResponseNamingAnotherOutputType_ReadsIntoTheExpectedType()
+    {
+        var response = new RemoteRunResponse(
+            MetadataId: 43,
+            OutputJson: """{"value":"hello","count":7}""",
+            OutputType: typeof(Dictionary<string, object>).AssemblyQualifiedName
+        );
+        var executor = CreateExecutor(CreateMockClient(response));
+
+        var result = await executor.ExecuteAsync(
+            "My.Train",
+            new TestRunInput { Name = "test" },
+            typeof(TestRunOutput)
+        );
+
+        result.Output.Should().BeOfType<TestRunOutput>();
+    }
+
+    [Test]
+    public async Task ExecuteAsync_WithSigningKey_SignsThePayloadForRun()
+    {
+        var key = Enumerable.Range(1, 32).Select(i => (byte)i).ToArray();
+        var client = CreateMockClient(new RemoteRunResponse(MetadataId: 1));
+        var executor = new LambdaRunExecutor(
+            client,
+            new LambdaRunOptions { FunctionName = "my-runner", SigningKey = key },
+            NullLogger<LambdaRunExecutor>.Instance
+        );
+
+        await executor.ExecuteAsync(
+            "My.Train",
+            new TestRunInput { Name = "x" },
+            typeof(TestRunOutput)
+        );
+
+        var envelope = JsonSerializer.Deserialize<LambdaEnvelope>(client.LastRequest!.Payload)!;
+        var verifier = new Trax.Scheduler.Services.RequestSigning.RunnerRequestVerifier(
+            new Trax.Scheduler.Configuration.TraxJobRunnerOptions { SigningKey = key },
+            NullLogger<Trax.Scheduler.Services.RequestSigning.RunnerRequestVerifier>.Instance
+        );
+        verifier
+            .Verify(
+                Trax.Scheduler.Services.RequestSigning.RunnerRequestPurpose.Run,
+                Encoding.UTF8.GetBytes(envelope.PayloadJson),
+                envelope.Signature,
+                requireFresh: true
+            )
+            .Should()
+            .Be(Trax.Scheduler.Services.RequestSigning.RunnerRequestVerdict.Accepted);
+    }
+
+    [Test]
     public async Task ExecuteAsync_UnitResponse_ReturnsNullOutput()
     {
         // Arrange

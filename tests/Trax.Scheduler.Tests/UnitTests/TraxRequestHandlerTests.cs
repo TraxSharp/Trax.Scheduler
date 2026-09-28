@@ -78,6 +78,43 @@ public class TraxRequestHandlerTests
         await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("Train exploded");
     }
 
+    [Test]
+    public async Task ExecuteJobAsync_InputTypeNoRegisteredTrainTakes_IsRefusedWithoutRunning()
+    {
+        var request = new RemoteJobRequest(
+            MetadataId: 400,
+            Input: "{}",
+            InputType: typeof(UnregisteredInput).FullName
+        );
+        var jobRunner = new FakeJobRunnerTrain();
+        var handler = CreateHandler(jobRunner: jobRunner);
+
+        var act = async () => await handler.ExecuteJobAsync(request);
+
+        await act.Should()
+            .ThrowAsync<TrainException>()
+            .WithMessage("*not the input of any registered train*");
+        jobRunner.ReceivedRequest.Should().BeNull();
+    }
+
+    [Test]
+    public async Task ExecuteJobAsync_InputTypeNamingALoadableType_IsRefusedWithoutRunning()
+    {
+        // A name Type.GetType would resolve, but that no registered train takes.
+        var request = new RemoteJobRequest(
+            MetadataId: 401,
+            Input: "\"x\"",
+            InputType: typeof(string).AssemblyQualifiedName
+        );
+        var jobRunner = new FakeJobRunnerTrain();
+        var handler = CreateHandler(jobRunner: jobRunner);
+
+        var act = async () => await handler.ExecuteJobAsync(request);
+
+        await act.Should().ThrowAsync<TrainException>();
+        jobRunner.ReceivedRequest.Should().BeNull();
+    }
+
     #endregion
 
     #region RunTrainAsync — Success
@@ -145,7 +182,7 @@ public class TraxRequestHandlerTests
     #region RunTrainAsync — Error Handling
 
     [Test]
-    public async Task RunTrainAsync_TrainFailsWithPlainException_PopulatesExceptionTypeAndStackTrace()
+    public async Task RunTrainAsync_TrainFailsWithPlainException_ReportsTypeButNotMessageOrStack()
     {
         var executionService = new FakeTrainExecutionService
         {
@@ -162,9 +199,9 @@ public class TraxRequestHandlerTests
 
         response.IsError.Should().BeTrue();
         response.MetadataId.Should().Be(0);
-        response.ErrorMessage.Should().Be("Something broke");
+        response.ErrorMessage.Should().Be(TraxRequestHandler.UnreportedFailureMessage);
         response.ExceptionType.Should().Be("InvalidOperationException");
-        response.StackTrace.Should().NotBeNull();
+        response.StackTrace.Should().BeNull();
         response.FailureJunction.Should().BeNull();
         response.OutputJson.Should().BeNull();
     }
@@ -198,7 +235,7 @@ public class TraxRequestHandlerTests
         response.ExceptionType.Should().Be("ArgumentException");
         response.FailureJunction.Should().Be("ValidateInputJunction");
         response.ErrorMessage.Should().Be("Input was invalid");
-        response.StackTrace.Should().NotBeNull();
+        response.StackTrace.Should().BeNull();
     }
 
     [Test]
@@ -218,11 +255,11 @@ public class TraxRequestHandlerTests
 
         response.IsError.Should().BeTrue();
         response.ExceptionType.Should().Be("InvalidOperationException");
-        response.ErrorMessage.Should().Be("Operation failed");
+        response.ErrorMessage.Should().Be(TraxRequestHandler.UnreportedFailureMessage);
     }
 
     [Test]
-    public async Task RunTrainAsync_TrainFails_StackTraceIsPopulated()
+    public async Task RunTrainAsync_TrainFails_StackTraceIsNotSent()
     {
         var executionService = new FakeTrainExecutionService
         {
@@ -238,7 +275,7 @@ public class TraxRequestHandlerTests
         var response = await handler.RunTrainAsync(request);
 
         response.IsError.Should().BeTrue();
-        response.StackTrace.Should().NotBeNullOrEmpty();
+        response.StackTrace.Should().BeNull();
     }
 
     #endregion
@@ -267,7 +304,7 @@ public class TraxRequestHandlerTests
     }
 
     [Test]
-    public void BuildErrorResponse_WithPlainException_UsesRawExceptionDetails()
+    public void BuildErrorResponse_WithPlainException_ReportsTypeOnly()
     {
         var ex = new ArgumentException("Bad value");
 
@@ -275,7 +312,7 @@ public class TraxRequestHandlerTests
 
         response.IsError.Should().BeTrue();
         response.ExceptionType.Should().Be("ArgumentException");
-        response.ErrorMessage.Should().Be("Bad value");
+        response.ErrorMessage.Should().Be(TraxRequestHandler.UnreportedFailureMessage);
         response.FailureJunction.Should().BeNull();
     }
 
@@ -288,7 +325,7 @@ public class TraxRequestHandlerTests
 
         response.IsError.Should().BeTrue();
         response.ExceptionType.Should().Be("InvalidOperationException");
-        response.ErrorMessage.Should().Be("This is not { valid JSON");
+        response.ErrorMessage.Should().Be(TraxRequestHandler.UnreportedFailureMessage);
     }
 
     #endregion
@@ -304,6 +341,7 @@ public class TraxRequestHandlerTests
             jobRunner ?? new FakeJobRunnerTrain(),
             executionService ?? new FakeTrainExecutionService(),
             new TrustedExecutionScope(),
+            new FakeTrainRegistry(typeof(TestInput)),
             NullLogger<TraxRequestHandler>.Instance
         );
     }
@@ -311,6 +349,15 @@ public class TraxRequestHandlerTests
     #endregion
 
     #region Test Types
+
+    public record UnregisteredInput;
+
+    private sealed class FakeTrainRegistry(params Type[] inputTypes)
+        : Trax.Mediator.Services.TrainRegistry.ITrainRegistry
+    {
+        public Dictionary<Type, Type> InputTypeToTrain { get; set; } =
+            inputTypes.ToDictionary(t => t, _ => typeof(IJobRunnerTrain));
+    }
 
     public record TestInput
     {

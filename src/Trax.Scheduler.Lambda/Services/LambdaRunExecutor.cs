@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Amazon.Lambda;
 using Amazon.Lambda.Model;
@@ -8,8 +9,8 @@ using Trax.Mediator.Services.RunExecutor;
 using Trax.Mediator.Services.TrainExecution;
 using Trax.Scheduler.Lambda.Configuration;
 using Trax.Scheduler.Services.Lambda;
+using Trax.Scheduler.Services.RequestSigning;
 using Trax.Scheduler.Services.RunExecutor;
-using Trax.Scheduler.Utilities;
 
 namespace Trax.Scheduler.Lambda.Services;
 
@@ -45,10 +46,17 @@ public class LambdaRunExecutor(
         );
 
         var runRequest = new RemoteRunRequest(trainName, inputJson, input.GetType().FullName!);
-        var envelope = new LambdaEnvelope(
-            LambdaRequestType.Run,
-            JsonSerializer.Serialize(runRequest)
-        );
+        var payloadJson = JsonSerializer.Serialize(runRequest);
+        var envelope = new LambdaEnvelope(LambdaRequestType.Run, payloadJson)
+        {
+            Signature = options.SigningKey is { } key
+                ? RunnerRequestSignature.Create(
+                    key,
+                    RunnerRequestPurpose.Run,
+                    Encoding.UTF8.GetBytes(payloadJson)
+                )
+                : null,
+        };
 
         var invokeRequest = new InvokeRequest
         {
@@ -93,12 +101,12 @@ public class LambdaRunExecutor(
             throw response.ToTrainException();
 
         object? output = null;
-        if (response.OutputJson is not null && response.OutputType is not null)
+        // Read into the output type the caller expects, never into a type the response names.
+        if (response.OutputJson is not null)
         {
-            var resolvedType = TypeResolver.ResolveType(response.OutputType);
             output = JsonSerializer.Deserialize(
                 response.OutputJson,
-                resolvedType,
+                outputType,
                 TraxJsonSerializationOptions.ManifestProperties
             );
         }

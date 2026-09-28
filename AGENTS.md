@@ -16,6 +16,7 @@ if your work contradicts one, say so rather than silently overriding it.
 | Working on | Read first |
 | --- | --- |
 | the remote run request or response | [0001](./docs/adr/0001-remote-execution-is-a-json-wire-contract.md), the shape is a deployed contract with no version field |
+| a runner entry point (`UseTraxJobRunner`, `UseTraxRunEndpoint`, `SqsJobRunnerHandler`, `TraxLambdaFunction`) or request signing | [0006](./docs/adr/0006-a-runner-requires-an-authorization-posture.md), every runner needs a posture and runs only registered trains |
 | SQL, or anything provider-shaped | [0002](./docs/adr/0002-a-database-provider-is-interchangeable.md), the difference belongs behind `ISqlDialect` |
 | `OperationsService`, or anywhere that builds a work queue row | central `docs/0017`, a caller's enqueue goes through the mediator; only the allow-listed system and admin paths build their own |
 | a dashboard or API action, or `OperationsService.RunTrainAsync` | central `docs/0022`, the dashboard and the GraphQL API call one operations-service method per action; neither surface carries its own copy of the logic |
