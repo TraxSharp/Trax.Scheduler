@@ -4,9 +4,10 @@ namespace Trax.Scheduler.Utilities;
 /// Resolves types by fully-qualified name from loaded assemblies.
 /// </summary>
 /// <remarks>
-/// Used for type names Trax wrote itself, such as a work queue row's input type. A name that
-/// arrives in a runner request is never passed here: the request handler matches it against the
-/// registered trains' input types instead (see scheduler/0006).
+/// Trax itself no longer calls this. It loads whatever type the name identifies, so it is not a
+/// way to turn a stored or received name back into a train input: the dispatcher, the local
+/// worker and the runners match those names against the registered trains' input types instead
+/// (see scheduler/0006). Kept for compatibility.
 /// </remarks>
 public static class TypeResolver
 {

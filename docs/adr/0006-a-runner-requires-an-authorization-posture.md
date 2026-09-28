@@ -72,6 +72,11 @@ one to a runner. The run path refuses a train name that is, or could resolve to,
 `LoadMetadataJunction` refuses a job whose input belongs to one, leaving the row `Pending`. A host
 train that shares a scheduler train's short name still runs by that name.
 
+The scheduler's own stored names follow the same rule. The dispatcher resolves a work queue row's
+input type, and `LocalWorkerService` a background job's, among the registered trains' input types
+rather than by loading the name, so no path that turns a name back into a train input loads a type
+by it. `TypeResolver` is no longer called by Trax.
+
 ## What a runner sends back
 
 A `TrainException`'s message is Trax's own account of a failure (see central `docs/0020`) and still
@@ -123,6 +128,9 @@ request as stale.
 - `RunnerRefusesSchedulerTrainsTests` sends each scheduler train's full and short name to the run
   path and a `Pending` row of one to the job runner, and asserts nothing ran and the row stayed
   `Pending`; `TraxRequestHandlerTests` checks a host train sharing a short name still runs.
+- `StoredInputTypeResolutionTests` gives the dispatcher and the local worker a stored input type
+  that no train takes and asserts nothing is constructed from it; `RegisteredInputTypesTests`
+  covers the name matching itself.
 - `SqsJobRunnerHandlerTests` and `TraxLambdaFunctionTests` cover the same posture on the SQS and
   Lambda paths, including a redelivered `Execute` running again and a repeated `Run` refused.
 - [Remote Execution](/docs/scheduler/remote-execution) is the rule this produces.
@@ -135,4 +143,6 @@ Not covered: sharing nonces across runner instances is
 - **2026-09-27**: The per-process nonce memory is replaced by a shared store, recorded in
   [0009](./0009-a-runner-shares-its-accepted-nonces-through-the-database.md).
 - **2026-09-27**: A runner refuses the scheduler's own trains on the run path and the job path.
+- **2026-09-27**: The dispatcher and the local worker resolve stored input type names among the
+  registered trains' inputs too.
 - **2026-09-27**: Recorded, with the change it describes.

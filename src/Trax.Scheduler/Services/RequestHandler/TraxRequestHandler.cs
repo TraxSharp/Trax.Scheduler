@@ -10,6 +10,7 @@ using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Services.JobSubmitter;
 using Trax.Scheduler.Services.RunExecutor;
 using Trax.Scheduler.Trains.JobRunner;
+using Trax.Scheduler.Utilities;
 
 namespace Trax.Scheduler.Services.RequestHandler;
 
@@ -61,16 +62,11 @@ internal class TraxRequestHandler(
     /// Finds the input type among the registered trains' input types. The name comes from the
     /// request, so it is only ever compared, never loaded.
     /// </summary>
-    private Type ResolveRegisteredInputType(string inputTypeName)
-    {
-        foreach (var inputType in trainRegistry.InputTypeToTrain.Keys)
-            if (string.Equals(inputType.FullName, inputTypeName, StringComparison.Ordinal))
-                return inputType;
-
-        throw new TrainException(
+    private Type ResolveRegisteredInputType(string inputTypeName) =>
+        RegisteredInputTypes.Find(trainRegistry, inputTypeName)
+        ?? throw new TrainException(
             "The request's input type is not the input of any registered train."
         );
-    }
 
     public async Task<RemoteRunResponse> RunTrainAsync(
         RemoteRunRequest request,
