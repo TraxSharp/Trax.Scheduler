@@ -2,9 +2,11 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Trax.Core.Exceptions;
 using Trax.Effect.Utils;
+using Trax.Mediator.Services.TrainDiscovery;
 using Trax.Mediator.Services.TrainExecution;
 using Trax.Mediator.Services.TrainRegistry;
 using Trax.Mediator.Services.TrustedExecution;
+using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Services.JobSubmitter;
 using Trax.Scheduler.Services.RunExecutor;
 using Trax.Scheduler.Trains.JobRunner;
@@ -19,6 +21,7 @@ internal class TraxRequestHandler(
     ITrainExecutionService executionService,
     ITrustedExecutionScope trustedScope,
     ITrainRegistry trainRegistry,
+    ITrainDiscoveryService trainDiscovery,
     ILogger<TraxRequestHandler> logger
 ) : ITraxRequestHandler
 {
@@ -76,6 +79,8 @@ internal class TraxRequestHandler(
     {
         try
         {
+            RefuseSchedulerTrain(request.TrainName);
+
             // Remote job submissions were already authorized at the original API
             // submission point. Mark this execution as trusted so the mediator's
             // authorization service skips the per-train check.
@@ -108,6 +113,54 @@ internal class TraxRequestHandler(
 
             return BuildErrorResponse(ex);
         }
+    }
+
+    /// <summary>
+    /// Refuses a name that is, or could resolve to, one of the scheduler's own trains
+    /// (<see cref="AdminTrains"/>). The run path runs the host's trains; the ManifestManager, the
+    /// JobDispatcher, the JobRunner and the cleanup trains are started by the scheduler in its own
+    /// process. The execution service accepts a full name or a short one, so both are checked: a
+    /// scheduler train's full name is refused outright, and a short name unless the host registers
+    /// a train of its own under it.
+    /// </summary>
+    private void RefuseSchedulerTrain(string trainName)
+    {
+        if (!IsSchedulerTrainName(trainName))
+            return;
+
+        throw new TrainException(
+            $"'{trainName}' is one of the scheduler's own trains, which a runner does not run."
+        );
+    }
+
+    private bool IsSchedulerTrainName(string trainName)
+    {
+        if (AdminTrains.FullNames.Contains(trainName, StringComparer.Ordinal))
+            return true;
+
+        var registrations = trainDiscovery.DiscoverTrains();
+
+        foreach (var registration in registrations)
+            if (
+                string.Equals(
+                    registration.ServiceType.FullName,
+                    trainName,
+                    StringComparison.Ordinal
+                ) && AdminTrains.Includes(registration)
+            )
+                return true;
+
+        if (!AdminTrains.ShortNames.Contains(trainName, StringComparer.Ordinal))
+            return false;
+
+        foreach (var registration in registrations)
+            if (
+                string.Equals(registration.ServiceTypeName, trainName, StringComparison.Ordinal)
+                && !AdminTrains.Includes(registration)
+            )
+                return false;
+
+        return true;
     }
 
     /// <summary>

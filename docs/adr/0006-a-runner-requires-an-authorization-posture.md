@@ -65,6 +65,13 @@ of its registered trains and refuses anything else; it never loads a type by the
 before anything touches the row, so the row stays `Pending`. On the scheduler side, a remote run's
 output is read into the output type the caller expects, not a type the response names.
 
+Registered does not include the scheduler's own trains (`AdminTrains`: the ManifestManager, the
+JobDispatcher, the JobRunner and the two cleanup trains). They are registered on any host that
+also runs the scheduler, but the scheduler starts them itself, in its own process, and never sends
+one to a runner. The run path refuses a train name that is, or could resolve to, one of them, and
+`LoadMetadataJunction` refuses a job whose input belongs to one, leaving the row `Pending`. A host
+train that shares a scheduler train's short name still runs by that name.
+
 ## What a runner sends back
 
 A `TrainException`'s message is Trax's own account of a failure (see central `docs/0020`) and still
@@ -113,6 +120,9 @@ request as stale.
   with a key, and checks the refusals and that no message or stack trace is returned.
 - `JobRunnerTrainTests` runs a `Pending` row with another train's input and asserts the refusal
   leaves the row `Pending`.
+- `RunnerRefusesSchedulerTrainsTests` sends each scheduler train's full and short name to the run
+  path and a `Pending` row of one to the job runner, and asserts nothing ran and the row stayed
+  `Pending`; `TraxRequestHandlerTests` checks a host train sharing a short name still runs.
 - `SqsJobRunnerHandlerTests` and `TraxLambdaFunctionTests` cover the same posture on the SQS and
   Lambda paths, including a redelivered `Execute` running again and a repeated `Run` refused.
 - [Remote Execution](/docs/scheduler/remote-execution) is the rule this produces.
@@ -124,4 +134,5 @@ Not covered: sharing nonces across runner instances is
 
 - **2026-09-27**: The per-process nonce memory is replaced by a shared store, recorded in
   [0009](./0009-a-runner-shares-its-accepted-nonces-through-the-database.md).
+- **2026-09-27**: A runner refuses the scheduler's own trains on the run path and the job path.
 - **2026-09-27**: Recorded, with the change it describes.

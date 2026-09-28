@@ -6,6 +6,7 @@ using Trax.Effect.Models.Metadata;
 using Trax.Effect.Services.EffectJunction;
 using Trax.Mediator.Services.TrainDiscovery;
 using Trax.Mediator.Services.TrainRegistry;
+using Trax.Scheduler.Configuration;
 
 namespace Trax.Scheduler.Trains.JobRunner.Junctions;
 
@@ -49,6 +50,13 @@ internal class LoadMetadataJunction(
         if (!trainRegistry.InputTypeToTrain.TryGetValue(input.Input.GetType(), out var trainType))
             throw new TrainException(
                 $"No registered train takes the input given for Metadata ID {input.MetadataId}."
+            );
+
+        // The scheduler starts its own trains in its own process; a job never carries one.
+        if (AdminTrains.Includes(trainType))
+            throw new TrainException(
+                $"Metadata ID {input.MetadataId} was given the input of '{trainType.FullName}', "
+                    + "one of the scheduler's own trains, which a runner does not run."
             );
 
         if (!NamesTrain(metadata.Name, trainType))

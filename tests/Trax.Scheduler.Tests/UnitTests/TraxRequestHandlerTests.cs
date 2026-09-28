@@ -15,6 +15,12 @@ using Trax.Scheduler.Trains.JobRunner;
 
 namespace Trax.Scheduler.Tests.UnitTests;
 
+/// <summary>
+/// The hosting-agnostic request handler behind every runner entry point.
+///
+/// <para>Enforces <c>docs/adr/0006-a-runner-requires-an-authorization-posture.md</c>.</para>
+/// </summary>
+[Property("adr", "docs/adr/0006-a-runner-requires-an-authorization-posture.md")]
 [TestFixture]
 public class TraxRequestHandlerTests
 {
@@ -330,11 +336,82 @@ public class TraxRequestHandlerTests
 
     #endregion
 
+    #region RunTrainAsync — Scheduler Trains
+
+    [Test]
+    public async Task RunTrainAsync_SchedulerTrainFullName_IsRefusedWithoutRunning()
+    {
+        var executionService = new FakeTrainExecutionService();
+        var handler = CreateHandler(executionService: executionService);
+
+        var response = await handler.RunTrainAsync(
+            new RemoteRunRequest(
+                typeof(Trax.Scheduler.Trains.JobRunner.IJobRunnerTrain).FullName!,
+                "{}",
+                "ignored"
+            )
+        );
+
+        response.IsError.Should().BeTrue();
+        response.ErrorMessage.Should().Contain("scheduler's own");
+        executionService
+            .Calls.Should()
+            .Be(
+                0,
+                "a runner does not run the scheduler's own trains (see docs/adr/0006-a-runner-requires-an-authorization-posture.md)"
+            );
+    }
+
+    [Test]
+    public async Task RunTrainAsync_SchedulerTrainShortName_IsRefusedWithoutRunning()
+    {
+        var executionService = new FakeTrainExecutionService();
+        var handler = CreateHandler(executionService: executionService);
+
+        var response = await handler.RunTrainAsync(
+            new RemoteRunRequest("IManifestManagerTrain", "{}", "ignored")
+        );
+
+        response.IsError.Should().BeTrue();
+        response.ErrorMessage.Should().Contain("scheduler's own");
+        executionService
+            .Calls.Should()
+            .Be(
+                0,
+                "a runner does not run the scheduler's own trains (see docs/adr/0006-a-runner-requires-an-authorization-posture.md)"
+            );
+    }
+
+    [Test]
+    public async Task RunTrainAsync_ShortNameAHostTrainShares_StillRuns()
+    {
+        var executionService = new FakeTrainExecutionService();
+        var handler = CreateHandler(
+            executionService: executionService,
+            registeredTrains: typeof(HostTrains.IJobRunnerTrain)
+        );
+
+        var response = await handler.RunTrainAsync(
+            new RemoteRunRequest("IJobRunnerTrain", "{}", "ignored")
+        );
+
+        response.IsError.Should().BeFalse();
+        executionService
+            .Calls.Should()
+            .Be(
+                1,
+                "only the scheduler's trains are refused, not a host train sharing a short name (see docs/adr/0006-a-runner-requires-an-authorization-posture.md)"
+            );
+    }
+
+    #endregion
+
     #region Helpers
 
     private static TraxRequestHandler CreateHandler(
         FakeJobRunnerTrain? jobRunner = null,
-        FakeTrainExecutionService? executionService = null
+        FakeTrainExecutionService? executionService = null,
+        params Type[] registeredTrains
     )
     {
         return new TraxRequestHandler(
@@ -342,6 +419,7 @@ public class TraxRequestHandlerTests
             executionService ?? new FakeTrainExecutionService(),
             new TrustedExecutionScope(),
             new FakeTrainRegistry(typeof(TestInput)),
+            new FakeTrainDiscovery(registeredTrains),
             NullLogger<TraxRequestHandler>.Instance
         );
     }
@@ -357,6 +435,39 @@ public class TraxRequestHandlerTests
     {
         public Dictionary<Type, Type> InputTypeToTrain { get; set; } =
             inputTypes.ToDictionary(t => t, _ => typeof(IJobRunnerTrain));
+    }
+
+    private sealed class FakeTrainDiscovery(Type[] serviceTypes)
+        : Trax.Mediator.Services.TrainDiscovery.ITrainDiscoveryService
+    {
+        public IReadOnlyList<Trax.Mediator.Services.TrainDiscovery.TrainRegistration> DiscoverTrains() =>
+            serviceTypes
+                .Select(t => new Trax.Mediator.Services.TrainDiscovery.TrainRegistration
+                {
+                    ServiceType = t,
+                    ImplementationType = t,
+                    InputType = typeof(TestInput),
+                    OutputType = typeof(Unit),
+                    Lifetime = Microsoft.Extensions.DependencyInjection.ServiceLifetime.Scoped,
+                    ServiceTypeName = t.Name,
+                    ImplementationTypeName = t.Name,
+                    InputTypeName = nameof(TestInput),
+                    OutputTypeName = nameof(Unit),
+                    RequiredPolicies = [],
+                    RequiredRoles = [],
+                    IsQuery = false,
+                    IsMutation = false,
+                    IsBroadcastEnabled = false,
+                    IsRemote = false,
+                    GraphQLOperations = default,
+                })
+                .ToList();
+    }
+
+    /// <summary>A host train that shares its short name with the scheduler's JobRunner.</summary>
+    public static class HostTrains
+    {
+        public interface IJobRunnerTrain;
     }
 
     public record TestInput
@@ -401,6 +512,7 @@ public class TraxRequestHandlerTests
     {
         public RunTrainResult? ResultToReturn { get; init; }
         public Exception? ExceptionToThrow { get; init; }
+        public int Calls { get; private set; }
 
         public Task<QueueTrainResult> QueueAsync(
             string trainName,
@@ -419,6 +531,7 @@ public class TraxRequestHandlerTests
             CancellationToken ct = default
         )
         {
+            Calls++;
             if (ExceptionToThrow is not null)
                 throw ExceptionToThrow;
 
