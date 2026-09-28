@@ -19,9 +19,9 @@
       },
       "Trax.Effect": {
         "type": "Direct",
-        "requested": "[1.56.0, )",
-        "resolved": "1.56.0",
-        "contentHash": "N6w8UAcm4XFheh8Xm/XCDGHJYotC7t/A/zWcNQNDS/zUZOE8xs+QV+X1gxrCp0GFJ5DtmX6xf+L7NusAaEWqYA==",
+        "requested": "[1.57.0, )",
+        "resolved": "1.57.0",
+        "contentHash": "9mq6Z27Nfxiq6t0amsRMaO/T3bsReFYmYxX+aWXnv7fSJervfEjTwM5ezFoYt/my8AuYah1PS0kvsCxBKPOYKw==",
         "dependencies": {
           "Microsoft.Extensions.Hosting.Abstractions": "10.0.12",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.12",
