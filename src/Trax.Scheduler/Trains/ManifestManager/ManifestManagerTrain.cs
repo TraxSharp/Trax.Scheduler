@@ -9,7 +9,7 @@ namespace Trax.Scheduler.Trains.ManifestManager;
 /// turns due manifests into work queue entries.
 /// Infrastructure the scheduler registers and runs itself; not intended to be called directly.
 /// </summary>
-public class ManifestManagerTrain : ServiceTrain<Unit, Unit>, IManifestManagerTrain
+internal class ManifestManagerTrain : ServiceTrain<Unit, Unit>, IManifestManagerTrain
 {
     /// <summary>
     /// One scheduler cycle, in order: load manifests, cancel jobs past their timeout, reap stale

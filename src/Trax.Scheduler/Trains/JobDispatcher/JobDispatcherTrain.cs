@@ -8,7 +8,7 @@ namespace Trax.Scheduler.Trains.JobDispatcher;
 /// Picks queued work queue entries and dispatches them as background tasks.
 /// Infrastructure the scheduler registers and runs itself; not intended to be called directly.
 /// </summary>
-public class JobDispatcherTrain : ServiceTrain<Unit, Unit>, IJobDispatcherTrain
+internal class JobDispatcherTrain : ServiceTrain<Unit, Unit>, IJobDispatcherTrain
 {
     /// <summary>
     /// Loads queued work queue entries, reads the free dispatch capacity, trims the batch to the

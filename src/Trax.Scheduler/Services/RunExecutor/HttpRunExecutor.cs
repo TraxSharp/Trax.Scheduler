@@ -25,7 +25,7 @@ namespace Trax.Scheduler.Services.RunExecutor;
 /// Retries transient HTTP failures (429, 502, 503) with exponential backoff.
 /// Configure retry behavior via <see cref="RemoteRunOptions.Retry"/>.
 /// </remarks>
-public class HttpRunExecutor(
+internal class HttpRunExecutor(
     HttpClient httpClient,
     RemoteRunOptions options,
     ILogger<HttpRunExecutor> logger

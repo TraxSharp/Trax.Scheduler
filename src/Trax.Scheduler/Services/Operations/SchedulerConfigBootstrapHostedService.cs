@@ -19,7 +19,7 @@ namespace Trax.Scheduler.Services.Operations;
 /// older deployment skipped the migration), or no row is present, the in-memory
 /// builder defaults remain in effect.
 /// </remarks>
-public class SchedulerConfigBootstrapHostedService : IHostedService
+internal class SchedulerConfigBootstrapHostedService : IHostedService
 {
     private readonly IServiceProvider _services;
     private readonly ILogger<SchedulerConfigBootstrapHostedService> _logger;

@@ -27,7 +27,7 @@ namespace Trax.Scheduler.Lambda.Services;
 ///
 /// No public endpoint is created — access is governed by IAM policies.
 /// </remarks>
-public class LambdaRunExecutor(
+internal class LambdaRunExecutor(
     IAmazonLambda lambdaClient,
     LambdaRunOptions options,
     ILogger<LambdaRunExecutor> logger
