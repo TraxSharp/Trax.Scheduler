@@ -16,7 +16,8 @@ namespace Trax.Scheduler.Lambda.Services;
 
 /// <summary>
 /// AWS Lambda implementation of <see cref="IRunExecutor"/> that dispatches synchronous run requests
-/// via direct SDK invocation and blocks until the train completes.
+/// via direct SDK invocation and blocks until the train completes. Registered by
+/// <c>UseLambdaRun()</c>; not intended to be constructed directly.
 /// </summary>
 /// <remarks>
 /// Used by <c>UseLambdaRun()</c>. Wraps a <see cref="RemoteRunRequest"/> in a
@@ -32,6 +33,32 @@ public class LambdaRunExecutor(
     ILogger<LambdaRunExecutor> logger
 ) : IRunExecutor
 {
+    /// <summary>
+    /// Serializes <paramref name="input"/>, wraps it in a Run <see cref="LambdaEnvelope"/> (signed
+    /// when <see cref="LambdaRunOptions.SigningKey"/> is set), invokes the function synchronously
+    /// with retries for transient AWS failures, and waits for the train to finish. The output is
+    /// read into <paramref name="outputType"/>, or, when that is an interface or abstract type,
+    /// into the loaded implementation of it that the response names.
+    /// </summary>
+    /// <param name="trainName">The canonical name of the train the function runs.</param>
+    /// <param name="input">The train input; serialized using its runtime type.</param>
+    /// <param name="outputType">The output type the caller expects.</param>
+    /// <param name="ct">Cancels the invocation, including waits between retries.</param>
+    /// <returns>The remote run's metadata id, external id (empty when none) and output.</returns>
+    /// <exception cref="RemoteRunException">
+    /// The function reported a <c>FunctionError</c> (an unhandled exception or a timeout in the
+    /// function), or returned an empty payload.
+    /// </exception>
+    /// <exception cref="TrainException">
+    /// The train failed inside the function (rebuilt by
+    /// <see cref="RemoteRunResponse.ToTrainException"/>), or the output type the response names is
+    /// not a loaded implementation of <paramref name="outputType"/>.
+    /// </exception>
+    /// <exception cref="Amazon.Runtime.AmazonServiceException">
+    /// The invocation itself failed with a non-transient AWS error, or with a transient one that
+    /// outlasted <see cref="LambdaRunOptions.Retry"/>. A network failure that outlasts the retries
+    /// surfaces as <see cref="HttpRequestException"/>.
+    /// </exception>
     public async Task<RunTrainResult> ExecuteAsync(
         string trainName,
         object input,
