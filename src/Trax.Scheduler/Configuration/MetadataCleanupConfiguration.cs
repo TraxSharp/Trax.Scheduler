@@ -18,7 +18,8 @@ namespace Trax.Scheduler.Configuration;
 public class MetadataCleanupConfiguration
 {
     /// <summary>
-    /// The interval at which the cleanup service runs.
+    /// The interval at which the cleanup service runs. Must be between one second and 30 days;
+    /// the scheduler refuses to build otherwise.
     /// </summary>
     public TimeSpan CleanupInterval { get; set; } = TimeSpan.FromMinutes(1);
 
@@ -29,6 +30,7 @@ public class MetadataCleanupConfiguration
     /// <remarks>
     /// Only metadata in a terminal state (Completed or Failed) older than this
     /// period will be deleted. Pending or InProgress metadata is never cleaned up.
+    /// Must be between one second and ten years; the scheduler refuses to build otherwise.
     ///
     /// <para>This is the value the persisted runtime override replaces. A retention passed to
     /// <see cref="AddTrainType{TTrain}(TimeSpan)"/> is set in code and is not affected by it: a
@@ -39,7 +41,8 @@ public class MetadataCleanupConfiguration
 
     /// <summary>
     /// Maximum number of metadata rows deleted per batch. Limits row-level lock duration
-    /// during cleanup. Set to null for single-statement deletes (pre-batch behavior).
+    /// during cleanup. Set to null for single-statement deletes (pre-batch behavior). Must be at
+    /// least 1 when set; the scheduler refuses to build otherwise.
     /// </summary>
     /// <remarks>
     /// The limit is per batch, and trains sharing a retention are swept as one group, so a
@@ -79,7 +82,8 @@ public class MetadataCleanupConfiguration
     /// </summary>
     /// <typeparam name="TTrain">The train class type to clean up</typeparam>
     /// <param name="retention">
-    /// How long this train's metadata is kept. Must be positive.
+    /// How long this train's metadata is kept. Must be positive, and the scheduler refuses to
+    /// build with one shorter than a second or longer than ten years.
     /// </param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="retention"/> is not positive.</exception>
     /// <exception cref="InvalidOperationException">
@@ -105,7 +109,10 @@ public class MetadataCleanupConfiguration
     /// <param name="trainTypeName">
     /// The train type name as it appears in the metadata <c>name</c> column.
     /// </param>
-    /// <param name="retention">How long this train's metadata is kept. Must be positive.</param>
+    /// <param name="retention">
+    /// How long this train's metadata is kept. Must be positive, and the scheduler refuses to
+    /// build with one shorter than a second or longer than ten years.
+    /// </param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="retention"/> is not positive.</exception>
     /// <exception cref="InvalidOperationException">
     /// The train is an internal scheduler train, or it was already added with a different

@@ -274,7 +274,10 @@ public partial class SchedulerConfigurationBuilder
     /// Sets how long a resolved (retried or acknowledged) dead letter is kept before the automatic
     /// purge deletes it. Dead letters awaiting intervention are never purged.
     /// </summary>
-    /// <param name="retention">The retention period (default: 30 days)</param>
+    /// <param name="retention">
+    /// The retention period (default: 30 days). Must be between zero and ten years; the scheduler
+    /// refuses to build otherwise.
+    /// </param>
     /// <returns>The builder for method chaining</returns>
     public SchedulerConfigurationBuilder DeadLetterRetentionPeriod(TimeSpan retention)
     {

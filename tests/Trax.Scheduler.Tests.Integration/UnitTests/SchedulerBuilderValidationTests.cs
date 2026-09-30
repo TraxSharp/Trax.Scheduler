@@ -336,6 +336,85 @@ public class SchedulerBuilderValidationTests
         Building(b => b.DefaultMaxRetries(0)).Should().NotThrow();
     }
 
+    private static readonly TestCaseData[] RetentionsOutOfRange =
+    [
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(
+                b => b.DeadLetterRetentionPeriod(TimeSpan.FromSeconds(-1))
+            ),
+            "DeadLetterRetentionPeriod must be between"
+        ).SetName("DeadLetterRetentionPeriod negative"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(
+                b => b.DeadLetterRetentionPeriod(TimeSpan.MaxValue)
+            ),
+            "DeadLetterRetentionPeriod must be between"
+        ).SetName("DeadLetterRetentionPeriod past ten years"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(
+                b => b.AddMetadataCleanup(c => c.RetentionPeriod = TimeSpan.Zero)
+            ),
+            "AddMetadataCleanup: RetentionPeriod must be between"
+        ).SetName("Metadata cleanup RetentionPeriod zero"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(
+                b => b.AddMetadataCleanup(c => c.RetentionPeriod = TimeSpan.FromSeconds(-5))
+            ),
+            "AddMetadataCleanup: RetentionPeriod must be between"
+        ).SetName("Metadata cleanup RetentionPeriod negative"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(
+                b => b.AddMetadataCleanup(c => c.CleanupInterval = TimeSpan.Zero)
+            ),
+            "AddMetadataCleanup: CleanupInterval must be between"
+        ).SetName("Metadata cleanup CleanupInterval zero"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(
+                b => b.AddMetadataCleanup(c => c.CleanupInterval = TimeSpan.FromDays(31))
+            ),
+            "AddMetadataCleanup: CleanupInterval must be between"
+        ).SetName("Metadata cleanup CleanupInterval over 30 days"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(
+                b => b.AddMetadataCleanup(c => c.DeleteBatchSize = 0)
+            ),
+            "AddMetadataCleanup: DeleteBatchSize must be at least 1"
+        ).SetName("Metadata cleanup DeleteBatchSize zero"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(
+                b =>
+                    b.AddMetadataCleanup(c => c.AddTrainType("Some.INoisyTrain", TimeSpan.MaxValue))
+            ),
+            "AddMetadataCleanup: the retention of 'Some.INoisyTrain' must be between"
+        ).SetName("Per-train retention of TimeSpan.MaxValue"),
+    ];
+
+    [TestCaseSource(nameof(RetentionsOutOfRange))]
+    public void A_retention_or_cleanup_setting_out_of_range_is_refused_at_build(
+        Action<SchedulerConfigurationBuilder> configure,
+        string problem
+    )
+    {
+        Building(configure).Should().Throw<InvalidOperationException>().WithMessage($"*{problem}*");
+    }
+
+    [Test]
+    public void Retention_and_cleanup_settings_at_their_limits_build()
+    {
+        Building(b =>
+                b.DeadLetterRetentionPeriod(TimeSpan.Zero)
+                    .AddMetadataCleanup(c =>
+                    {
+                        c.RetentionPeriod = TimeSpan.FromSeconds(1);
+                        c.CleanupInterval = TimeSpan.FromDays(30);
+                        c.DeleteBatchSize = null;
+                        c.AddTrainType("Some.INoisyTrain", TimeSpan.FromDays(3650));
+                    })
+            )
+            .Should()
+            .NotThrow();
+    }
+
     [Test]
     public void Polling_intervals_at_their_limits_build()
     {

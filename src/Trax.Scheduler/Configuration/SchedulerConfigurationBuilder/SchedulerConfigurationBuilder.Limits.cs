@@ -26,7 +26,12 @@ public partial class SchedulerConfigurationBuilder
                 _configuration.DefaultMaxRetries,
                 nameof(DefaultMaxRetries)
             ),
+            SchedulerConfigLimits.NonNegativeDuration(
+                _configuration.DeadLetterRetentionPeriod,
+                nameof(DeadLetterRetentionPeriod)
+            ),
         }
+            .Concat(MetadataCleanupProblems(_configuration.MetadataCleanup))
             .OfType<string>()
             .ToList();
 
@@ -34,6 +39,35 @@ public partial class SchedulerConfigurationBuilder
             throw new InvalidOperationException(
                 "The scheduler configuration has values it cannot run with. "
                     + string.Join(" ", problems)
+            );
+    }
+
+    private static IEnumerable<string?> MetadataCleanupProblems(
+        MetadataCleanupConfiguration? cleanup
+    )
+    {
+        if (cleanup is null)
+            yield break;
+
+        const string method = nameof(AddMetadataCleanup);
+
+        yield return SchedulerConfigLimits.PositiveDuration(
+            cleanup.RetentionPeriod,
+            $"{method}: {nameof(MetadataCleanupConfiguration.RetentionPeriod)}"
+        );
+        yield return SchedulerConfigLimits.TimerInterval(
+            cleanup.CleanupInterval,
+            $"{method}: {nameof(MetadataCleanupConfiguration.CleanupInterval)}"
+        );
+        yield return SchedulerConfigLimits.AtLeastOne(
+            cleanup.DeleteBatchSize,
+            $"{method}: {nameof(MetadataCleanupConfiguration.DeleteBatchSize)}"
+        );
+
+        foreach (var (name, retention) in cleanup.TrainTypeRetentions)
+            yield return SchedulerConfigLimits.PositiveDuration(
+                retention,
+                $"{method}: the retention of '{name}'"
             );
     }
 }

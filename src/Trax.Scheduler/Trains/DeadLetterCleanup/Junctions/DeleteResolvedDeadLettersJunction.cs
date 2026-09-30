@@ -5,6 +5,7 @@ using Trax.Effect.Data.Services.DataContext;
 using Trax.Effect.Enums;
 using Trax.Effect.Services.EffectJunction;
 using Trax.Scheduler.Configuration;
+using Trax.Scheduler.Utilities;
 
 namespace Trax.Scheduler.Trains.DeadLetterCleanup.Junctions;
 
@@ -35,7 +36,10 @@ internal class DeleteResolvedDeadLettersJunction(
             return Unit.Default;
         }
 
-        var cutoffTime = DateTime.UtcNow - configuration.DeadLetterRetentionPeriod;
+        var cutoffTime = TimeCutoff.Before(
+            DateTime.UtcNow,
+            configuration.DeadLetterRetentionPeriod
+        );
         var totalDeleted = 0;
 
         logger.LogDebug("Deleting resolved dead letters older than {CutoffTime}", cutoffTime);
