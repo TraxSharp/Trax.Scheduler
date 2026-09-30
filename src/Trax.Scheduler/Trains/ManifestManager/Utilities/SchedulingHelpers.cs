@@ -183,8 +183,13 @@ internal static class SchedulingHelpers
 
     /// <summary>
     /// Evaluates a cron-based schedule with misfire policy support.
-    /// Uses Cronos for precise next-occurrence calculation.
+    /// Uses Cronos for precise next-occurrence calculation, in UTC.
     /// </summary>
+    /// <remarks>
+    /// A cron that has never succeeded is due at <see cref="Manifest.NextScheduledRun"/>, which
+    /// scheduling it set to its first occurrence. One with neither value, written before that
+    /// was stamped, is due at once.
+    /// </remarks>
     private static bool EvaluateCronSchedule(
         Manifest manifest,
         DateTime now,
@@ -192,11 +197,11 @@ internal static class SchedulingHelpers
         ILogger logger
     )
     {
-        // If never run, always due
-        if (manifest.LastSuccessfulRun is null)
+        // Never run and no first occurrence recorded: due at once.
+        if (manifest.LastSuccessfulRun is null && manifest.NextScheduledRun is null)
             return true;
 
-        // Use pre-computed next run time if available (variance-aware)
+        // Use pre-computed next run time if available (variance-aware, or the first occurrence)
         DateTime nextDueValue;
         if (manifest.NextScheduledRun.HasValue)
         {
@@ -216,7 +221,7 @@ internal static class SchedulingHelpers
             }
 
             var nextDue = parsed.GetNextOccurrence(
-                manifest.LastSuccessfulRun.Value,
+                manifest.LastSuccessfulRun!.Value,
                 TimeZoneInfo.Utc
             );
             if (nextDue is null)
@@ -250,9 +255,14 @@ internal static class SchedulingHelpers
         if (cronParsed is null)
             return false;
 
+        // Occurrences after the last success count; a cron that never succeeded counts from its
+        // first occurrence, inclusive.
+        var countFrom = manifest.LastSuccessfulRun ?? nextDueValue.AddTicks(-1);
+
         return EvaluateCronBoundary(
             cronParsed,
             manifest,
+            countFrom,
             now,
             thresholdSeconds,
             overdueSeconds,
@@ -268,13 +278,14 @@ internal static class SchedulingHelpers
     private static bool EvaluateCronBoundary(
         Cronos.CronExpression parsed,
         Manifest manifest,
+        DateTime countFrom,
         DateTime now,
         int thresholdSeconds,
         double overdueSeconds,
         ILogger logger
     )
     {
-        var mostRecent = LatestOccurrence(parsed, manifest.LastSuccessfulRun!.Value, now);
+        var mostRecent = LatestOccurrence(parsed, countFrom, now);
 
         if (mostRecent is null)
             return false;

@@ -6,6 +6,7 @@ using Trax.Effect.Models.Manifest;
 using Trax.Effect.Models.ManifestGroup;
 using Trax.Effect.Services.ServiceTrain;
 using Trax.Scheduler.Configuration;
+using Trax.Scheduler.Services.Scheduling;
 using Schedule = Trax.Scheduler.Services.Scheduling.Schedule;
 
 namespace Trax.Scheduler.Extensions;
@@ -378,6 +379,12 @@ internal static class DataContextExtensions
     /// </summary>
     private static void ApplySchedule(Manifest manifest, Schedule schedule)
     {
+        var unchangedCron =
+            manifest.ScheduleType == ScheduleType.Cron
+            && schedule.Type == ScheduleType.Cron
+            && manifest.CronExpression == schedule.CronExpression;
+        var firstOccurrence = manifest.NextScheduledRun;
+
         manifest.ScheduleType = schedule.Type;
         manifest.CronExpression = schedule.CronExpression;
         manifest.IntervalSeconds = schedule.Interval.HasValue
@@ -387,6 +394,17 @@ internal static class DataContextExtensions
         // Clear pre-computed next run on schedule change so it gets recomputed
         // after the next successful execution.
         manifest.NextScheduledRun = null;
+
+        // A cron that has never succeeded first runs at its first occurrence after it was
+        // scheduled, not on the next poll. Re-stating the same cron keeps the occurrence already
+        // recorded, so a restart does not push a pending first run back.
+        if (schedule.Type == ScheduleType.Cron && manifest.LastSuccessfulRun is null)
+            manifest.NextScheduledRun =
+                unchangedCron && firstOccurrence is not null
+                    ? firstOccurrence
+                    : CronParser
+                        .Parse(schedule.CronExpression!)
+                        .GetNextOccurrence(DateTime.UtcNow, TimeZoneInfo.Utc);
     }
 
     /// <summary>
