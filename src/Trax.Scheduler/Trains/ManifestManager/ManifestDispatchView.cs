@@ -39,4 +39,16 @@ internal record ManifestDispatchView
     /// while the dependent is running was not seen by that run, so it earns another.
     /// </remarks>
     public DateTime? LatestSuccessfulRunStart { get; init; }
+
+    /// <summary>
+    /// When the manifest's latest cancelled run started, loaded for dependents only (null for
+    /// every other schedule type, and when no cancelled run is on record).
+    /// </summary>
+    /// <remarks>
+    /// A cancelled dependent run consumed the parent success it was started for, and only that
+    /// one: a parent success that landed after it started, even before it was cancelled, was not
+    /// seen by it, so the baseline is when it started, as for a successful run. The scheduled
+    /// schedule types use <see cref="LastCancelledRun"/>, the run's end, instead.
+    /// </remarks>
+    public DateTime? LatestCancelledRunStart { get; init; }
 }

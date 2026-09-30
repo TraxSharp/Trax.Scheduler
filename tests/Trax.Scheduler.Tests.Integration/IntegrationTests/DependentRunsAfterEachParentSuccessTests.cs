@@ -92,6 +92,53 @@ public class DependentRunsAfterEachParentSuccessTests : TestSetup
         (await QueuedCount(dependent)).Should().Be(0);
     }
 
+    [Test]
+    public async Task A_parent_success_during_a_cancelled_dependent_run_queues_the_dependent_again()
+    {
+        // The dependent started at T0+5 for the parent's earlier output, the parent succeeded
+        // again at T0+10, and the dependent run was cancelled at T0+20. The cancelled run began
+        // before the T0+10 output existed, so it cannot have consumed it.
+        var dependent = await ArrangeAsync(
+            parentSucceededAt: T0.AddMinutes(10),
+            dependentStartedAt: T0.AddMinutes(-40),
+            dependentSucceededAt: T0.AddMinutes(-30)
+        );
+        await AddMetadataAsync(
+            dependent.Id,
+            TrainState.Cancelled,
+            T0.AddMinutes(5),
+            endTime: T0.AddMinutes(20)
+        );
+
+        await RunManifestManagerAsync();
+
+        (await QueuedCount(dependent))
+            .Should()
+            .Be(1, "the T0+10 parent success was never run against");
+    }
+
+    [Test]
+    public async Task A_dependent_run_cancelled_after_the_parents_latest_success_consumes_it()
+    {
+        var dependent = await ArrangeAsync(
+            parentSucceededAt: T0.AddMinutes(10),
+            dependentStartedAt: T0.AddMinutes(-40),
+            dependentSucceededAt: T0.AddMinutes(-30)
+        );
+        await AddMetadataAsync(
+            dependent.Id,
+            TrainState.Cancelled,
+            T0.AddMinutes(15),
+            endTime: T0.AddMinutes(20)
+        );
+
+        await RunManifestManagerAsync();
+
+        (await QueuedCount(dependent))
+            .Should()
+            .Be(0, "the cancelled run started after the parent's latest success");
+    }
+
     private async Task<Manifest> ArrangeAsync(
         DateTime parentSucceededAt,
         DateTime? dependentStartedAt,
@@ -147,7 +194,12 @@ public class DependentRunsAfterEachParentSuccessTests : TestSetup
         return manifest;
     }
 
-    private async Task AddMetadataAsync(long manifestId, TrainState state, DateTime startTime)
+    private async Task AddMetadataAsync(
+        long manifestId,
+        TrainState state,
+        DateTime startTime,
+        DateTime? endTime = null
+    )
     {
         var metadata = Metadata.Create(
             new CreateMetadata
@@ -160,6 +212,7 @@ public class DependentRunsAfterEachParentSuccessTests : TestSetup
         );
         metadata.TrainState = state;
         metadata.StartTime = startTime;
+        metadata.EndTime = endTime;
         await DataContext.Track(metadata);
         await DataContext.SaveChanges(CancellationToken.None);
         DataContext.Reset();

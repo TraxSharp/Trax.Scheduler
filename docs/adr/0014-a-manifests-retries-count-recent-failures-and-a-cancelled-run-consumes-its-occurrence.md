@@ -64,6 +64,10 @@ failed.
 **A triggered run that is cancelled moves the schedule** the same way a triggered success
 already did, because the anchor is the run's end time, not the occurrence it was queued for.
 
+**A cancelled dependent run consumes only the parent success it started for.** A dependent is
+anchored on when its latest run started, cancelled or successful, not when it ended: a parent
+success that landed while the run was going was not seen by it, so it still earns a run.
+
 ## Exemplars
 
 - `FailureCountWindowTests` covers a failure 30 days ago (no backoff), three failures over 90
@@ -85,3 +89,5 @@ check) applies the same window, or that a new place deciding "due" consults the 
   Trax.Effect 1.57.4 has the column.
 - **2026-09-30**: A window the retry backoff outlasts is warned about at startup; the reaper
   requires a counted failure before it dead-letters.
+- **2026-09-30**: A cancelled dependent run is anchored on its start, not its end, so a parent
+  success during the cancelled run is not lost.
