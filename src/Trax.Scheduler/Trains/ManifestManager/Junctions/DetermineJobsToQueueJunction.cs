@@ -62,7 +62,15 @@ internal class DetermineJobsToQueueJunction(
                 continue;
 
             // Check if this manifest is due for execution
-            if (SchedulingHelpers.ShouldRunNow(view.Manifest, now, config, logger))
+            if (
+                SchedulingHelpers.ShouldRunNow(
+                    view.Manifest,
+                    now,
+                    config,
+                    logger,
+                    view.LastCancelledRun
+                )
+            )
             {
                 logger.LogDebug(
                     "Manifest {ManifestId} (name: {ManifestName}) is due for execution",
@@ -123,12 +131,22 @@ internal class DetermineJobsToQueueJunction(
                     continue;
                 }
 
-                // Queue if parent's LastSuccessfulRun is newer than dependent's LastSuccessfulRun
+                // Queue if parent's LastSuccessfulRun is newer than the dependent's last run: its
+                // last success, or its last cancelled run, which consumed the parent's success it
+                // was started for.
+                var dependentLastRun =
+                    dependent.LastCancelledRun is { } cancelled
+                    && (
+                        dependent.Manifest.LastSuccessfulRun == null
+                        || cancelled > dependent.Manifest.LastSuccessfulRun
+                    )
+                        ? cancelled
+                        : dependent.Manifest.LastSuccessfulRun;
                 if (
                     parent.Manifest.LastSuccessfulRun != null
                     && (
-                        dependent.Manifest.LastSuccessfulRun == null
-                        || parent.Manifest.LastSuccessfulRun > dependent.Manifest.LastSuccessfulRun
+                        dependentLastRun == null
+                        || parent.Manifest.LastSuccessfulRun > dependentLastRun
                     )
                 )
                 {

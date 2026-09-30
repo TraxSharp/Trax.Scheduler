@@ -51,6 +51,9 @@ internal class LoadManifestsJunction(IDataContext dataContext, SchedulerConfigur
                         && md.StartTime <= dl.ResolvedAt
                     )
                 ),
+                LastCancelledRun = m
+                    .Metadatas.Where(md => md.TrainState == TrainState.Cancelled)
+                    .Max(md => (DateTime?)(md.EndTime ?? md.StartTime)),
                 HasAwaitingDeadLetter = m.DeadLetters.Any(dl =>
                     dl.Status == DeadLetterStatus.AwaitingIntervention
                 ),
