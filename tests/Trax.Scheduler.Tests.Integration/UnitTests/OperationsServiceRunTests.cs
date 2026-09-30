@@ -10,6 +10,10 @@ using Trax.Effect.Data.Services.DataContext;
 using Trax.Effect.Data.Services.IDataContextFactory;
 using Trax.Effect.Enums;
 using Trax.Effect.Extensions;
+using Trax.Mediator.Configuration;
+using Trax.Mediator.Exceptions;
+using Trax.Mediator.Services.ConcurrencyLimiter;
+using Trax.Mediator.Services.RunExecutor;
 using Trax.Mediator.Services.TrainAuthorization;
 using Trax.Mediator.Services.TrainDiscovery;
 using Trax.Mediator.Services.TrainExecution;
@@ -44,6 +48,7 @@ public class OperationsServiceRunTests
     private CapturingLogger _logger = null!;
     private OperationsService _service = null!;
     private ITrainAuthorizationService? _authorization;
+    private ITrainExecutionService _execution = null!;
 
     public record ProbeInput
     {
@@ -80,6 +85,8 @@ public class OperationsServiceRunTests
         services.AddTrax(trax => trax.AddEffects(effects => effects.UseInMemory()));
         services.AddSingleton(_submitter);
         services.AddSingleton<ITrustedExecutionScope, TrustedExecutionScope>();
+        var mediatorConfiguration = new MediatorConfiguration();
+        services.AddSingleton(mediatorConfiguration);
         if (_authorization is not null)
             services.AddSingleton(_authorization);
         configure?.Invoke(services);
@@ -94,11 +101,32 @@ public class OperationsServiceRunTests
                 Registration(typeof(IRoutedTrain), guarded: false),
             ]);
 
+        // The mediator's own execution service prepares the run, behind a substitute so a test
+        // can see the call or make it fail.
+        var mediator = new TrainExecutionService(
+            discovery,
+            Substitute.For<IRunExecutor>(),
+            Substitute.For<IConcurrencyLimiter>(),
+            _provider.GetRequiredService<IDataContextProviderFactory>(),
+            mediatorConfiguration,
+            _provider
+        );
+        _execution = Substitute.For<ITrainExecutionService>();
+        _execution
+            .PrepareAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+                mediator.PrepareAsync(
+                    call.ArgAt<string>(0),
+                    call.ArgAt<string?>(1),
+                    call.ArgAt<CancellationToken>(2)
+                )
+            );
+
         _service = new OperationsService(
             discovery,
             _provider.GetRequiredService<IDataContextProviderFactory>(),
             new SchedulerConfiguration(),
-            Substitute.For<ITrainExecutionService>(),
+            _execution,
             _provider,
             logger: _logger
         );
@@ -333,9 +361,39 @@ public class OperationsServiceRunTests
     {
         var act = async () => await Run(typeof(IGuardedTrain), "{}");
 
-        (await act.Should().ThrowAsync<InvalidOperationException>())
+        (await act.Should().ThrowAsync<TrainAuthorizationNotConfiguredException>())
             .Which.Message.Should()
             .Contain("ITrainAuthorizationService");
+        (await Runs()).Should().BeEmpty();
+    }
+
+    [Test]
+    public async Task A_run_is_prepared_by_the_mediator_so_its_refusals_are_the_mediators()
+    {
+        const string json = "{\"customerId\":1,\"CustomerId\":2}";
+
+        var result = await Run(typeof(IProbeTrain), json);
+
+        result.Success.Should().BeFalse("docs/0023: a property given twice is refused");
+        result.Message.Should().StartWith("Invalid InputJson");
+        await _execution
+            .Received(1)
+            .PrepareAsync(typeof(IProbeTrain).FullName!, json, Arg.Any<CancellationToken>());
+    }
+
+    [Test]
+    public async Task A_train_the_mediator_cannot_find_is_an_unknown_train()
+    {
+        _execution
+            .PrepareAsync(Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns<Task<PreparedTrain>>(_ =>
+                throw new TrainNotFoundException(typeof(IProbeTrain).FullName!)
+            );
+
+        var result = await Run(typeof(IProbeTrain), "{}");
+
+        result.Success.Should().BeFalse();
+        result.Message.Should().Contain("Unknown train");
         (await Runs()).Should().BeEmpty();
     }
 
