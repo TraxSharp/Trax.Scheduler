@@ -46,10 +46,11 @@ also needs no new column: the cancelled run's own end time is the record.
 
 ## Consequences
 
-**The window is scheduler-wide.** A per-manifest override (`FailureWindow` on `ScheduleOptions`
-and `ManifestOptions`) was asked for and needs a manifest column in Trax.Effect; until it exists
-every manifest uses `FailureCountWindow`. The persisted scheduler settings row has no column for
-the window either, so a value patched through `UpdateSchedulerConfigAsync` lasts until restart.
+**A manifest can carry its own window.** `FailureWindow` on `ScheduleOptions` and
+`ManifestOptions` stores it in `manifest.failure_window_seconds`, and the failure count uses it
+in place of `FailureCountWindow` for that manifest. Following scheduler/0011 it is written on a
+seed only when the code states it, so removing it from the code leaves the stored window in
+place. The persisted scheduler settings row has no column for the scheduler's window, so a value patched through `UpdateSchedulerConfigAsync` lasts until restart.
 
 **A triggered run that is cancelled moves the schedule** the same way a triggered success
 already did, because the anchor is the run's end time, not the occurrence it was queued for.
@@ -57,8 +58,8 @@ already did, because the anchor is the run's end time, not the occurrence it was
 ## Exemplars
 
 - `FailureCountWindowTests` covers a failure 30 days ago (no backoff), three failures over 90
-  days (no dead letter), failures inside the window (backoff and dead letter) and a configured
-  window.
+  days (no dead letter), failures inside the window (backoff and dead letter), a configured
+  window, and a manifest's own window overriding it either way.
 - `MaxRetriesBoundaryTests` pins the boundary: dead-lettered on failure n + 1, never on n.
 - `CancelledOccurrenceIsNotRerunTests` covers interval, cron, `Once` and dependent manifests
   whose run was cancelled, and that the following occurrence still runs.
@@ -71,3 +72,5 @@ check) applies the same window, or that a new place deciding "due" consults the 
 ## Changelog
 
 - **2026-09-30**: Recorded.
+- **2026-09-30**: A manifest's own `FailureWindow` overrides `FailureCountWindow`, now that
+  Trax.Effect 1.57.4 has the column.

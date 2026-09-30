@@ -27,8 +27,10 @@ internal class LoadManifestsJunction(IDataContext dataContext, SchedulerConfigur
 {
     public override async Task<List<ManifestDispatchView>> Run(Unit input)
     {
-        // A failed run counts toward the backoff and the dead letter only while it is recent.
-        var failureWindowStart = DateTime.UtcNow - config.FailureCountWindow;
+        // A failed run counts toward the backoff and the dead letter only while it is recent:
+        // inside the manifest's own failure window when it has one, the scheduler's otherwise.
+        var now = DateTime.UtcNow;
+        var failureWindowStart = now - config.FailureCountWindow;
 
         return await dataContext
             .Manifests.Where(m => m.IsEnabled)
@@ -41,7 +43,12 @@ internal class LoadManifestsJunction(IDataContext dataContext, SchedulerConfigur
                 FailedCount = m.Metadatas.Count(md =>
                     md.TrainState == TrainState.Failed
                     // Started inside the failure count window.
-                    && md.StartTime >= failureWindowStart
+                    && md.StartTime
+                        >= (
+                            m.FailureWindowSeconds == null
+                                ? failureWindowStart
+                                : now.AddSeconds(-(double)m.FailureWindowSeconds.Value)
+                        )
                     // Not a dispatch attempt that was requeued: only one delivery failed, not
                     // the job (see DispatchFailure).
                     && md.FailureException != DispatchFailure.Requeued

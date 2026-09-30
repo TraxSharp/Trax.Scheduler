@@ -134,6 +134,38 @@ public class FailureCountWindowTests : TestSetup
             .Be(0, "the only failure started before the one hour window");
     }
 
+    [Test]
+    public async Task A_manifests_own_window_overrides_the_scheduler_window()
+    {
+        // The scheduler counts a day of failures; this manifest counts only its last hour.
+        var manifest = await CreateDueManifest(maxRetries: 0, failureWindow: TimeSpan.FromHours(1));
+        await CreateRun(manifest, TrainState.Failed, DateTime.UtcNow.AddHours(-2));
+
+        await RunManifestManager();
+
+        (await DataContext.DeadLetters.AsNoTracking().CountAsync(d => d.ManifestId == manifest.Id))
+            .Should()
+            .Be(0, "the failure started before the manifest's own one hour window");
+        var entry = await DataContext
+            .WorkQueues.AsNoTracking()
+            .SingleAsync(q => q.ManifestId == manifest.Id && q.Status == WorkQueueStatus.Queued);
+        entry.ScheduledAt.Should().BeNull("a failure outside the window does not back off the run");
+    }
+
+    [Test]
+    public async Task A_manifests_own_window_can_count_further_back_than_the_scheduler_window()
+    {
+        _config.FailureCountWindow = TimeSpan.FromHours(1);
+        var manifest = await CreateDueManifest(maxRetries: 0, failureWindow: TimeSpan.FromDays(2));
+        await CreateRun(manifest, TrainState.Failed, DateTime.UtcNow.AddHours(-30));
+
+        await RunManifestManager();
+
+        (await DataContext.DeadLetters.AsNoTracking().CountAsync(d => d.ManifestId == manifest.Id))
+            .Should()
+            .Be(1, "the failure is inside the manifest's two day window");
+    }
+
     private async Task RunManifestManager()
     {
         await Scope.ServiceProvider.GetRequiredService<IManifestManagerTrain>().Run(Unit.Default);
@@ -141,7 +173,7 @@ public class FailureCountWindowTests : TestSetup
     }
 
     /// <summary>An interval manifest whose next run is due now.</summary>
-    private async Task<Manifest> CreateDueManifest(int maxRetries)
+    private async Task<Manifest> CreateDueManifest(int maxRetries, TimeSpan? failureWindow = null)
     {
         var group = await CreateAndSaveManifestGroup(
             DataContext,
@@ -160,6 +192,7 @@ public class FailureCountWindowTests : TestSetup
         );
         manifest.ManifestGroupId = group.Id;
         manifest.LastSuccessfulRun = DateTime.UtcNow.AddMinutes(-5);
+        manifest.FailureWindowSeconds = (int?)failureWindow?.TotalSeconds;
         await DataContext.Track(manifest);
         await DataContext.SaveChanges(CancellationToken.None);
         DataContext.Reset();

@@ -55,7 +55,7 @@ public class ManifestOptions
     /// takes the scheduler's <c>DefaultMaxRetries</c> (3, four attempts, unless configured);
     /// inside a <c>configureEach</c> callback it already reads the batch's value. Failures count
     /// within <see cref="SchedulerConfiguration.FailureCountWindow"/> and after the manifest's
-    /// latest resolved dead letter.
+    /// latest resolved dead letter, or within <see cref="FailureWindow"/> when it is set.
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">The value set is negative.</exception>
     public int MaxRetries
@@ -134,6 +134,44 @@ public class ManifestOptions
     public TimeSpan? Variance { get; set; }
 
     /// <summary>
+    /// Gets or sets how far back this manifest's failed runs count toward its retry backoff and
+    /// its dead letter. Null means the scheduler's
+    /// <see cref="SchedulerConfiguration.FailureCountWindow"/> applies.
+    /// </summary>
+    /// <remarks>
+    /// A failure that started before the window no longer delays the next run or counts toward
+    /// <see cref="MaxRetries"/>. Stored in whole seconds. Written to an existing manifest only
+    /// when set: left null, a re-seed keeps the window the manifest already has.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// The value set is not between one second and ten years.
+    /// </exception>
+    public TimeSpan? FailureWindow
+    {
+        get => _failureWindow;
+        set
+        {
+            if (value is { } window)
+                ThrowIfFailureWindowOutOfRange(window);
+            _failureWindow = value;
+        }
+    }
+
+    private TimeSpan? _failureWindow;
+
+    internal static void ThrowIfFailureWindowOutOfRange(TimeSpan window)
+    {
+        if (
+            Services.Operations.SchedulerConfigLimits.PositiveDuration(
+                window,
+                nameof(FailureWindow)
+            ) is
+            { } problem
+        )
+            throw new ArgumentOutOfRangeException(nameof(window), window, problem);
+    }
+
+    /// <summary>
     /// A copy of these options with its own exclusion list, so a change to one item's options
     /// in a batch cannot reach another's. Copies every field, stated or not.
     /// </summary>
@@ -149,5 +187,6 @@ public class ManifestOptions
             MisfireThreshold = MisfireThreshold,
             Exclusions = [.. Exclusions],
             Variance = Variance,
+            FailureWindow = FailureWindow,
         };
 }

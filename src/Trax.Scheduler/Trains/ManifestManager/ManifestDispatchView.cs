@@ -14,7 +14,8 @@ internal record ManifestDispatchView
 
     /// <summary>
     /// Failed runs that count toward the retry backoff and the dead letter: those started within
-    /// <c>SchedulerConfiguration.FailureCountWindow</c> and after the latest resolved dead letter.
+    /// the manifest's own failure window (<c>SchedulerConfiguration.FailureCountWindow</c> when it
+    /// has none) and after the latest resolved dead letter.
     /// </summary>
     public required int FailedCount { get; init; }
 

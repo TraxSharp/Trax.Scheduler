@@ -43,6 +43,7 @@ public class ScheduleOptions
     internal TimeSpan? _misfireThreshold;
     internal List<Exclusion> _exclusions = [];
     internal TimeSpan? _variance;
+    internal TimeSpan? _failureWindow;
 
     // Group-level state
     internal string? _groupId;
@@ -88,7 +89,8 @@ public class ScheduleOptions
     /// The count is of retries after the first run, so a manifest runs at most
     /// <paramref name="retries"/> + 1 times in a row before it is dead-lettered: <c>MaxRetries(0)</c>
     /// runs once and dead-letters on the first failure, and the default of 3 allows four attempts.
-    /// Failures count within <see cref="SchedulerConfiguration.FailureCountWindow"/> and after the
+    /// Failures count within the manifest's <see cref="FailureWindow"/> (the scheduler's
+    /// <see cref="SchedulerConfiguration.FailureCountWindow"/> when unstated) and after the
     /// manifest's latest resolved dead letter.
     /// </remarks>
     /// <param name="retries">The number of retries after the first run (default: 3).</param>
@@ -183,6 +185,31 @@ public class ScheduleOptions
         return this;
     }
 
+    /// <summary>
+    /// Sets how far back this manifest's failed runs count toward its retry backoff and its
+    /// dead letter, in place of the scheduler's <see cref="SchedulerConfiguration.FailureCountWindow"/>.
+    /// </summary>
+    /// <remarks>
+    /// A failure that started before the window no longer delays the next run or counts toward
+    /// <see cref="MaxRetries"/>. Use a short window for a frequent job whose old failures say
+    /// nothing about its health, and a long one for a daily job that should still dead-letter
+    /// after failing on several days in a row. The window is stored in whole seconds.
+    /// <para>
+    /// Stated, it is written on every seed. Left unstated, a new manifest uses the scheduler's
+    /// window and an existing one keeps the window it has.
+    /// </para>
+    /// </remarks>
+    /// <param name="window">How far back failures count.</param>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="window"/> is not between one second and ten years.
+    /// </exception>
+    public ScheduleOptions FailureWindow(TimeSpan window)
+    {
+        ManifestOptions.ThrowIfFailureWindowOutOfRange(window);
+        _failureWindow = window;
+        return this;
+    }
+
     // ── Group-level fluent methods ────────────────────────────────────
 
     /// <summary>
@@ -248,6 +275,7 @@ public class ScheduleOptions
             MisfireThreshold = _misfireThreshold,
             Exclusions = [.. _exclusions],
             Variance = _variance,
+            FailureWindow = _failureWindow,
         };
 
     /// <summary>

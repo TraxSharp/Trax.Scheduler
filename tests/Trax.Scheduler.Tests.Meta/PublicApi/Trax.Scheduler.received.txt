@@ -40,6 +40,7 @@ namespace Trax.Scheduler.Configuration
     {
         public ManifestOptions() { }
         public System.Collections.Generic.List<Trax.Effect.Models.Manifest.Exclusion> Exclusions { get; set; }
+        public System.TimeSpan? FailureWindow { get; set; }
         public bool IsDormant { get; set; }
         public bool IsEnabled { get; set; }
         public int MaxRetries { get; set; }
@@ -95,6 +96,7 @@ namespace Trax.Scheduler.Configuration
         public Trax.Scheduler.Configuration.ScheduleOptions Dormant() { }
         public Trax.Scheduler.Configuration.ScheduleOptions Enabled(bool enabled) { }
         public Trax.Scheduler.Configuration.ScheduleOptions Exclude(Trax.Effect.Models.Manifest.Exclusion exclusion) { }
+        public Trax.Scheduler.Configuration.ScheduleOptions FailureWindow(System.TimeSpan window) { }
         public Trax.Scheduler.Configuration.ScheduleOptions Group(System.Action<Trax.Scheduler.Configuration.ManifestGroupOptions> configure) { }
         public Trax.Scheduler.Configuration.ScheduleOptions Group(string groupId, System.Action<Trax.Scheduler.Configuration.ManifestGroupOptions>? configure = null) { }
         public Trax.Scheduler.Configuration.ScheduleOptions MaxRetries(int retries) { }

@@ -125,6 +125,41 @@ public class SeedingPreservesOperatorStateTests
             );
     }
 
+    [Test]
+    public async Task A_stated_failure_window_is_written_and_an_unstated_one_keeps_the_stored_window()
+    {
+        await using var fx = await SchedulerE2EFixture.CreateAsync(_ => { });
+
+        var created = await ScheduleAsync(
+            fx,
+            "windowed",
+            o => o.FailureWindow(TimeSpan.FromHours(2))
+        );
+        created.FailureWindowSeconds.Should().Be(7200);
+
+        await ScheduleAsync(fx, "windowed", o => o.FailureWindow(TimeSpan.FromHours(6)));
+        (await LoadAsync(fx, "windowed"))
+            .FailureWindowSeconds.Should()
+            .Be(21600, "the code states a new window, and code wins");
+
+        await ScheduleAsync(fx, "windowed");
+        (await LoadAsync(fx, "windowed"))
+            .FailureWindowSeconds.Should()
+            .Be(
+                21600,
+                "the code no longer states a window, so the stored one stands. See docs/adr/0011-a-re-seed-writes-only-the-settings-the-code-states.md."
+            );
+
+        (await ScheduleAsync(fx, "unwindowed"))
+            .FailureWindowSeconds.Should()
+            .BeNull("a manifest that states no window uses the scheduler's");
+    }
+
+    private static Task<Effect.Models.Manifest.Manifest> LoadAsync(
+        SchedulerE2EFixture fx,
+        string externalId
+    ) => fx.DataContext.Manifests.AsNoTracking().FirstAsync(m => m.ExternalId == externalId);
+
     private static Task<Effect.Models.Manifest.Manifest> ScheduleAsync(
         SchedulerE2EFixture fx,
         string externalId,

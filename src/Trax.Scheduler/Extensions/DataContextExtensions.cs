@@ -141,6 +141,7 @@ internal static class DataContextExtensions
             ApplyVariance(existing, schedule, options);
             ApplyMisfireOptions(existing, options);
             ApplyExclusions(existing, options);
+            ApplyFailureWindow(existing, options);
 
             return existing;
         }
@@ -163,6 +164,7 @@ internal static class DataContextExtensions
         ApplyVariance(manifest, schedule, options);
         ApplyMisfireOptions(manifest, options);
         ApplyExclusions(manifest, options);
+        ApplyFailureWindow(manifest, options);
 
         context.Manifests.Add(manifest);
 
@@ -239,6 +241,7 @@ internal static class DataContextExtensions
             existing.IntervalSeconds = null;
             ApplyMisfireOptions(existing, options);
             ApplyExclusions(existing, options);
+            ApplyFailureWindow(existing, options);
 
             return existing;
         }
@@ -260,6 +263,7 @@ internal static class DataContextExtensions
         manifest.SetProperties(input);
         ApplyMisfireOptions(manifest, options);
         ApplyExclusions(manifest, options);
+        ApplyFailureWindow(manifest, options);
 
         context.Manifests.Add(manifest);
 
@@ -332,6 +336,7 @@ internal static class DataContextExtensions
             existing.IntervalSeconds = null;
             ApplyMisfireOptions(existing, options);
             ApplyExclusions(existing, options);
+            ApplyFailureWindow(existing, options);
 
             return existing;
         }
@@ -353,6 +358,7 @@ internal static class DataContextExtensions
         manifest.SetProperties(input);
         ApplyMisfireOptions(manifest, options);
         ApplyExclusions(manifest, options);
+        ApplyFailureWindow(manifest, options);
 
         context.Manifests.Add(manifest);
 
@@ -442,6 +448,16 @@ internal static class DataContextExtensions
         manifest.MisfireThresholdSeconds = options.MisfireThreshold.HasValue
             ? (int)options.MisfireThreshold.Value.TotalSeconds
             : null;
+    }
+
+    /// <summary>
+    /// Writes the manifest's own failure window when the options state one. Unstated, a new
+    /// manifest keeps null (the scheduler's window) and an existing one keeps the window it has.
+    /// </summary>
+    private static void ApplyFailureWindow(Manifest manifest, ManifestOptions options)
+    {
+        if (options.FailureWindow is { } window)
+            manifest.FailureWindowSeconds = (int)window.TotalSeconds;
     }
 
     /// <summary>
