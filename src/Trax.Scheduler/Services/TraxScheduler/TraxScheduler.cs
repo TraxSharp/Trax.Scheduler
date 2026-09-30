@@ -161,7 +161,12 @@ public class TraxScheduler(
             if (resolved.PrunePrefix is not null)
             {
                 var keepIds = results.Select(m => m.ExternalId).ToHashSet();
-                await PruneSafeAsync(resolved.PrunePrefix, keepIds, ct);
+                await PruneSafeAsync(
+                    resolved.PrunePrefix,
+                    resolved.BatchName is null ? null : effectiveGroupId,
+                    keepIds,
+                    ct
+                );
             }
 
             return results;
@@ -308,7 +313,12 @@ public class TraxScheduler(
             if (resolved.PrunePrefix is not null)
             {
                 var keepIds = results.Select(m => m.ExternalId).ToHashSet();
-                await PruneSafeAsync(resolved.PrunePrefix, keepIds, ct);
+                await PruneSafeAsync(
+                    resolved.PrunePrefix,
+                    resolved.BatchName is null ? null : effectiveGroupId,
+                    keepIds,
+                    ct
+                );
             }
 
             return results;
@@ -751,7 +761,12 @@ public class TraxScheduler(
             if (resolved.PrunePrefix is not null)
             {
                 var keepIds = results.Select(m => m.ExternalId).ToHashSet();
-                await PruneSafeAsync(resolved.PrunePrefix, keepIds, ct);
+                await PruneSafeAsync(
+                    resolved.PrunePrefix,
+                    resolved.BatchName is null ? null : effectiveGroupId,
+                    keepIds,
+                    ct
+                );
             }
 
             return results;
@@ -844,7 +859,12 @@ public class TraxScheduler(
             if (resolved.PrunePrefix is not null)
             {
                 var keepIds = results.Select(m => m.ExternalId).ToHashSet();
-                await PruneSafeAsync(resolved.PrunePrefix, keepIds, ct);
+                await PruneSafeAsync(
+                    resolved.PrunePrefix,
+                    resolved.BatchName is null ? null : effectiveGroupId,
+                    keepIds,
+                    ct
+                );
             }
 
             return results;
@@ -1270,9 +1290,11 @@ public class TraxScheduler(
         manifestOptions._maxRetries ??= configuration?.DefaultMaxRetries;
         manifestOptions.MisfirePolicy ??= configuration?.DefaultMisfirePolicy;
 
-        // A group of the manifest's own (no group name) has no other members to disagree with,
-        // so the manifest's stated priority is the group's too.
-        var ownsGroup = opts._groupId is null;
+        // A group of the manifest's own (no group name) or a named batch's own group has no other
+        // members to disagree with, so the manifest's stated priority is the group's too.
+        var ownsGroup =
+            opts._groupId is null
+            || (opts._batchName is not null && opts._groupId == opts._batchName);
         var group = opts._groupOptions;
 
         return new ResolvedOptions(
@@ -1285,7 +1307,8 @@ public class TraxScheduler(
                 IsEnabled: group?._isEnabled,
                 PriorityIfNew: manifestOptions.Priority
             ),
-            PrunePrefix: opts._prunePrefix
+            PrunePrefix: opts._prunePrefix,
+            BatchName: opts._batchName
         );
     }
 
@@ -1299,6 +1322,7 @@ public class TraxScheduler(
 
     private async Task PruneSafeAsync(
         string prunePrefix,
+        string? batchGroup,
         System.Collections.Generic.HashSet<string> keepExternalIds,
         CancellationToken ct
     )
@@ -1306,7 +1330,13 @@ public class TraxScheduler(
         try
         {
             await using var pruneContext = CreateContext();
-            await PruneStaleManifestsAsync(pruneContext, prunePrefix, keepExternalIds, ct);
+            await PruneStaleManifestsAsync(
+                pruneContext,
+                prunePrefix,
+                batchGroup,
+                keepExternalIds,
+                ct
+            );
         }
         catch (Exception ex)
         {
@@ -1320,11 +1350,14 @@ public class TraxScheduler(
 
     /// <summary>
     /// Deletes the manifests whose external ID starts with <paramref name="prunePrefix"/> and that
-    /// this batch no longer declares.
+    /// this batch no longer declares. A named batch passes its group in
+    /// <paramref name="batchGroup"/> and prunes only manifests of that group, so a batch named
+    /// <c>sync</c> never prunes the manifests of one named <c>sync-users</c>.
     /// </summary>
     private async Task PruneStaleManifestsAsync(
         IDataContext context,
         string prunePrefix,
+        string? batchGroup,
         System.Collections.Generic.HashSet<string> keepExternalIds,
         CancellationToken ct
     )
@@ -1332,8 +1365,11 @@ public class TraxScheduler(
         // Server compute: load prefixed manifest IDs, filter stale ones in C#.
         // Avoids a NOT IN(...) clause with many string parameters that can timeout
         // on low-resource Postgres instances during query planning.
-        var prefixedManifests = await context
-            .Manifests.Where(m => m.ExternalId.StartsWith(prunePrefix))
+        var prefixed = context.Manifests.Where(m => m.ExternalId.StartsWith(prunePrefix));
+        if (batchGroup is not null)
+            prefixed = prefixed.Where(m => m.ManifestGroup.Name == batchGroup);
+
+        var prefixedManifests = await prefixed
             .Select(m => new { m.Id, m.ExternalId })
             .ToListAsync(ct);
 
@@ -1359,6 +1395,7 @@ public class TraxScheduler(
         ManifestOptions ManifestOptions,
         string? GroupId,
         ManifestGroupSeed Group,
-        string? PrunePrefix
+        string? PrunePrefix,
+        string? BatchName
     );
 }

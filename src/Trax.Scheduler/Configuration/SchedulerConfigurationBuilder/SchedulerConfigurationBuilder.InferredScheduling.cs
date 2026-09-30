@@ -260,6 +260,7 @@ public partial class SchedulerConfigurationBuilder
     /// Name-based overload of <c>ScheduleMany</c>.
     /// The <paramref name="name"/> automatically derives <c>groupId</c>, <c>prunePrefix</c>,
     /// and external IDs as <c>"{name}-{item.Id}"</c>.
+    /// The batch prunes only manifests of its own group.
     /// </summary>
     public SchedulerConfigurationBuilder ScheduleMany<TTrain>(
         string name,
@@ -273,8 +274,7 @@ public partial class SchedulerConfigurationBuilder
             schedule,
             opts =>
             {
-                opts.Group(name);
-                opts.PrunePrefix($"{name}-");
+                opts.NamedBatch(name);
                 options?.Invoke(opts);
             }
         );
@@ -355,6 +355,7 @@ public partial class SchedulerConfigurationBuilder
     /// Name-based overload of <c>IncludeMany</c>.
     /// The <paramref name="name"/> automatically derives <c>groupId</c>, <c>prunePrefix</c>,
     /// and external IDs as <c>"{name}-{item.Id}"</c>.
+    /// The batch prunes only manifests of its own group.
     /// </summary>
     public SchedulerConfigurationBuilder IncludeMany<TTrain>(
         string name,
@@ -366,8 +367,7 @@ public partial class SchedulerConfigurationBuilder
             items.Select(item => item with { Id = $"{name}-{item.Id}" }),
             opts =>
             {
-                opts.Group(name);
-                opts.PrunePrefix($"{name}-");
+                opts.NamedBatch(name);
                 options?.Invoke(opts);
             }
         );
@@ -438,6 +438,7 @@ public partial class SchedulerConfigurationBuilder
     /// Name-based overload of <c>ThenIncludeMany</c>.
     /// The <paramref name="name"/> automatically derives <c>groupId</c>, <c>prunePrefix</c>,
     /// and external IDs as <c>"{name}-{item.Id}"</c>.
+    /// The batch prunes only manifests of its own group.
     /// </summary>
     public SchedulerConfigurationBuilder ThenIncludeMany<TTrain>(
         string name,
@@ -449,8 +450,7 @@ public partial class SchedulerConfigurationBuilder
             items.Select(item => item with { Id = $"{name}-{item.Id}" }),
             opts =>
             {
-                opts.Group(name);
-                opts.PrunePrefix($"{name}-");
+                opts.NamedBatch(name);
                 options?.Invoke(opts);
             }
         );

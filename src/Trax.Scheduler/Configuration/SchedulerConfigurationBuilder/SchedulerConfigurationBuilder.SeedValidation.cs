@@ -4,6 +4,7 @@ public partial class SchedulerConfigurationBuilder
 {
     // What each schedule or batch declares about its group and its prune, checked at build time.
     private readonly List<GroupDeclaration> _groupDeclarations = [];
+    private readonly List<BatchPruneDeclaration> _batchPrunes = [];
 
     private sealed record GroupDeclaration(
         string Group,
@@ -12,6 +13,13 @@ public partial class SchedulerConfigurationBuilder
         bool MaxActiveJobsStated,
         int? MaxActiveJobs,
         bool? IsEnabled
+    );
+
+    private sealed record BatchPruneDeclaration(
+        string Prefix,
+        string DeclaredBy,
+        string Group,
+        bool ScopedToGroup
     );
 
     /// <summary>
@@ -27,17 +35,31 @@ public partial class SchedulerConfigurationBuilder
         );
 
     /// <summary>
-    /// Records a batch's group settings, for <see cref="ValidateSeedDeclarations"/>.
+    /// Records a batch's group settings and prune, for <see cref="ValidateSeedDeclarations"/>.
     /// The group is the one the scheduler seeds the batch into: its group name, else its prune
     /// prefix, else its first external ID.
     /// </summary>
     private void DeclareBatchGroup(string firstId, ScheduleOptions resolved)
     {
-        var declaredBy = $"the batch starting '{firstId}'";
+        var declaredBy = resolved._batchName is { } name
+            ? $"batch '{name}'"
+            : $"the batch starting '{firstId}'";
         var group = resolved._groupId ?? resolved._prunePrefix ?? firstId;
-        var ownsGroup = resolved._groupId is null;
+        var ownsGroup =
+            resolved._groupId is null
+            || (resolved._batchName is not null && resolved._groupId == resolved._batchName);
 
         AddGroupDeclaration(group, declaredBy, resolved, ownsGroup);
+
+        if (resolved._prunePrefix is { } prefix)
+            _batchPrunes.Add(
+                new BatchPruneDeclaration(
+                    prefix,
+                    declaredBy,
+                    group,
+                    ScopedToGroup: resolved._batchName is not null
+                )
+            );
     }
 
     private void AddGroupDeclaration(
@@ -62,12 +84,14 @@ public partial class SchedulerConfigurationBuilder
 
     /// <summary>
     /// Fails the build when two members of one manifest group state different values for the same
-    /// group setting.
+    /// group setting, or when one batch's prune could delete another batch's manifests.
     /// </summary>
     /// <remarks>
     /// A group setting is written whenever a member's options state it, so two members stating
     /// different values would overwrite each other at every start, and which one held would depend
-    /// on seeding order.
+    /// on seeding order. A batch's prune deletes the manifests whose external ID starts with its
+    /// prefix and that the batch no longer declares; a named batch prunes only within its own
+    /// group, so overlapping prefixes are refused only where the groups do not tell them apart.
     /// </remarks>
     private void ValidateSeedDeclarations()
     {
@@ -91,6 +115,31 @@ public partial class SchedulerConfigurationBuilder
                 "Enabled",
                 members.Where(m => m.IsEnabled is not null),
                 m => m.IsEnabled
+            );
+        }
+
+        for (var i = 0; i < _batchPrunes.Count; i++)
+        for (var j = 0; j < _batchPrunes.Count; j++)
+        {
+            if (i == j)
+                continue;
+
+            var shorter = _batchPrunes[i];
+            var longer = _batchPrunes[j];
+            if (!longer.Prefix.StartsWith(shorter.Prefix, StringComparison.Ordinal))
+                continue;
+
+            // A group-scoped prune never reaches outside its group.
+            if (shorter.ScopedToGroup && shorter.Group != longer.Group)
+                continue;
+
+            throw new InvalidOperationException(
+                $"{Capitalise(shorter.DeclaredBy)} prunes manifests whose external ID starts with "
+                    + $"'{shorter.Prefix}', which includes the manifests of {longer.DeclaredBy} "
+                    + $"(prefix '{longer.Prefix}'). Each start, one batch would delete the other's "
+                    + "manifests and their history.\n\n"
+                    + "Give the batches names where neither plus '-' starts the other, or put them "
+                    + "in different groups."
             );
         }
     }
@@ -122,4 +171,7 @@ public partial class SchedulerConfigurationBuilder
     }
 
     private static string Describe<T>(T value) => value is null ? "none" : value.ToString()!;
+
+    private static string Capitalise(string text) =>
+        text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
 }

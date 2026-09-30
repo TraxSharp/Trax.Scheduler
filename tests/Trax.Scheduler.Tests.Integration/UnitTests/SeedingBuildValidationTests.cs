@@ -95,6 +95,31 @@ public class SeedingBuildValidationTests
         act.Should().NotThrow();
     }
 
+    [Test]
+    public void Two_named_batches_sharing_a_group_where_one_name_extends_the_other_fail_the_build()
+    {
+        var act = () =>
+            Build(scheduler =>
+                scheduler
+                    .ScheduleMany<ISchedulerTestTrain, SchedulerTestInput, Unit, string>(
+                        "sync-users",
+                        ["alice"],
+                        id => (id, new SchedulerTestInput { Value = id }),
+                        Every.Minutes(5),
+                        o => o.Group("all-sync")
+                    )
+                    .ScheduleMany<ISchedulerTestTrain, SchedulerTestInput, Unit, string>(
+                        "sync",
+                        ["orders"],
+                        id => (id, new SchedulerTestInput { Value = id }),
+                        Every.Minutes(5),
+                        o => o.Group("all-sync")
+                    )
+            );
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*'sync'*'sync-users'*");
+    }
+
     private static void Build(
         Func<SchedulerConfigurationBuilder, SchedulerConfigurationBuilder> configure
     )

@@ -51,6 +51,10 @@ public class ScheduleOptions
     // Batch-level state
     internal string? _prunePrefix;
 
+    // Set by the named ScheduleMany/IncludeMany/ThenIncludeMany overloads: the batch's prune is
+    // scoped to the batch's own group rather than to every manifest sharing its prefix.
+    internal string? _batchName;
+
     // ── Manifest-level fluent methods ─────────────────────────────────
 
     /// <summary>
@@ -202,8 +206,15 @@ public class ScheduleOptions
 
     /// <summary>
     /// Sets the prune prefix for batch scheduling. Manifests whose ExternalId starts with this
-    /// prefix but were not in the current batch will be deleted.
+    /// prefix but were not in the current batch will be deleted, with their finished runs; a
+    /// manifest with a pending or running run is kept until a later prune.
     /// </summary>
+    /// <remarks>
+    /// The named <c>ScheduleMany(name, ...)</c> overloads set this to <c>"{name}-"</c> and prune
+    /// only within the batch's own group. Set directly, the prefix alone decides, so it also
+    /// reaches manifests of another batch whose prefix starts with it; <c>AddScheduler</c> refuses
+    /// two batches declared in the builder whose prunes overlap that way.
+    /// </remarks>
     public ScheduleOptions PrunePrefix(string prefix)
     {
         _prunePrefix = prefix;
@@ -228,4 +239,17 @@ public class ScheduleOptions
             Exclusions = [.. _exclusions],
             Variance = _variance,
         };
+
+    /// <summary>
+    /// Makes this a named batch: its manifests share the group <paramref name="name"/>, their
+    /// external IDs start with <c>"{name}-"</c>, and its prune removes only manifests of its own
+    /// group.
+    /// </summary>
+    internal ScheduleOptions NamedBatch(string name)
+    {
+        _groupId = name;
+        _prunePrefix = $"{name}-";
+        _batchName = name;
+        return this;
+    }
 }
