@@ -7,8 +7,10 @@ namespace Trax.Scheduler.Configuration;
 /// Controls which train types have their metadata automatically purged
 /// and how aggressively old entries are cleaned up.
 ///
-/// Default behavior cleans up <c>ManifestManagerTrain</c> and
-/// <c>MetadataCleanupTrain</c> metadata older than 1 hour, running every minute.
+/// By default the cleanup runs every minute and deletes terminal metadata older than 30 minutes
+/// for the scheduler's internal trains (ManifestManager, JobDispatcher, JobRunner,
+/// MetadataCleanup and DeadLetterCleanup, the types in <see cref="AdminTrains"/>). Those are
+/// always swept at <see cref="RetentionPeriod"/>, whether or not they are added here.
 ///
 /// Additional train types can be added via <see cref="AddTrainType{TTrain}()"/>
 /// or <see cref="AddTrainType(string)"/>, each optionally with a retention period of its own.

@@ -17,9 +17,11 @@ namespace Trax.Scheduler.Trains.ManifestManager.Junctions;
 /// will mark the metadata as Failed so it doesn't stay orphaned and block the
 /// DormantDependentContext concurrency guard or count against MaxActiveJobs capacity.
 ///
-/// This junction runs after ReapStalePendingMetadataJunction and before ReapFailedJobsJunction
-/// so that newly-failed metadata is visible to the reaper in the same ManifestManager cycle
-/// (enabling dead-lettering if retries are exhausted).
+/// The views it receives were computed by LoadManifestsJunction before it ran, and it returns
+/// them unchanged, so a run it fails is not in <see cref="ManifestDispatchView.FailedCount"/>
+/// (and still counts in <see cref="ManifestDispatchView.HasActiveExecution"/>) for
+/// ReapFailedJobsJunction and DetermineJobsToQueueJunction until the next ManifestManager
+/// cycle: dead-lettering or re-queueing its manifest happens one cycle later.
 /// </remarks>
 internal class ReapStaleInProgressMetadataJunction(
     IDataContext dataContext,
