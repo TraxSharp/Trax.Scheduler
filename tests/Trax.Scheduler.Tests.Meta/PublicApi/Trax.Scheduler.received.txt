@@ -115,6 +115,7 @@ namespace Trax.Scheduler.Configuration
         public System.TimeSpan DefaultMisfireThreshold { get; }
         public System.TimeSpan DefaultRetryDelay { get; set; }
         public int DependentPriorityBoost { get; }
+        public System.TimeSpan FailureCountWindow { get; }
         public bool JobDispatcherEnabled { get; }
         public System.TimeSpan JobDispatcherPollingInterval { get; set; }
         public bool ManifestManagerEnabled { get; set; }
@@ -150,6 +151,7 @@ namespace Trax.Scheduler.Configuration
         public Trax.Scheduler.Configuration.SchedulerConfigurationBuilder DependentPriorityBoost(int boost) { }
         public Trax.Scheduler.Configuration.SchedulerConfigurationBuilder ExcludeFromMaxActiveJobs<TTrain>()
             where TTrain :  class { }
+        public Trax.Scheduler.Configuration.SchedulerConfigurationBuilder FailureCountWindow(System.TimeSpan window) { }
         public Trax.Scheduler.Configuration.SchedulerConfigurationBuilder Include<TTrain>(string externalId, Trax.Effect.Models.Manifest.IManifestProperties input, System.Action<Trax.Scheduler.Configuration.ScheduleOptions>? options = null)
             where TTrain :  class { }
         public Trax.Scheduler.Configuration.SchedulerConfigurationBuilder Include<TTrain, TInput, TOutput>(string externalId, TInput input, System.Action<Trax.Scheduler.Configuration.ScheduleOptions>? options = null)
@@ -562,6 +564,7 @@ namespace Trax.Scheduler.Services.Operations
         public System.TimeSpan DefaultJobTimeout { get; init; }
         public int DefaultMaxRetries { get; init; }
         public System.TimeSpan DefaultRetryDelay { get; init; }
+        public System.TimeSpan FailureCountWindow { get; init; }
         public bool JobDispatcherEnabled { get; init; }
         public System.TimeSpan JobDispatcherPollingInterval { get; init; }
         public int? LocalWorkerCount { get; init; }
@@ -644,6 +647,7 @@ namespace Trax.Scheduler.Services.Operations
         public System.TimeSpan? DefaultJobTimeout { get; init; }
         public int? DefaultMaxRetries { get; init; }
         public System.TimeSpan? DefaultRetryDelay { get; init; }
+        public System.TimeSpan? FailureCountWindow { get; init; }
         public bool? JobDispatcherEnabled { get; init; }
         public System.TimeSpan? JobDispatcherPollingInterval { get; init; }
         public int? LocalWorkerCount { get; init; }

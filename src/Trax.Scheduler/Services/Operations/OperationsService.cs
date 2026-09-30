@@ -1424,7 +1424,10 @@ public class OperationsService : IOperationsService
             LocalWorkerCount: _localWorkerOptions?.WorkerCount,
             MetadataCleanupInterval: cfg.MetadataCleanup?.CleanupInterval,
             MetadataCleanupRetention: cfg.MetadataCleanup?.RetentionPeriod
-        );
+        )
+        {
+            FailureCountWindow = cfg.FailureCountWindow,
+        };
     }
 
     /// <inheritdoc />
@@ -1487,6 +1490,11 @@ public class OperationsService : IOperationsService
         if (input.DefaultMaxRetries is { } v5 && cfg.DefaultMaxRetries != v5)
         {
             cfg.DefaultMaxRetries = v5;
+            changed++;
+        }
+        if (input.FailureCountWindow is { } window && cfg.FailureCountWindow != window)
+        {
+            cfg.FailureCountWindow = window;
             changed++;
         }
         if (input.DefaultRetryDelay is { } v6 && cfg.DefaultRetryDelay != v6)
@@ -1637,6 +1645,10 @@ public class OperationsService : IOperationsService
             SchedulerConfigLimits.NotNegative(
                 input.DefaultMaxRetries,
                 nameof(input.DefaultMaxRetries)
+            ),
+            SchedulerConfigLimits.PositiveDuration(
+                input.FailureCountWindow,
+                nameof(input.FailureCountWindow)
             ),
             SchedulerConfigLimits.NonNegativeDuration(
                 input.DefaultRetryDelay,

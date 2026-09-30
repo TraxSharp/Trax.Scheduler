@@ -64,10 +64,20 @@ public class ScheduleOptions
     }
 
     /// <summary>
-    /// Sets the maximum retry attempts before dead-lettering.
+    /// Sets how many times a failed run is retried before the manifest is dead-lettered.
     /// </summary>
+    /// <remarks>
+    /// The count is of retries after the first run, so a manifest runs at most
+    /// <paramref name="retries"/> + 1 times in a row before it is dead-lettered: <c>MaxRetries(0)</c>
+    /// runs once and dead-letters on the first failure, and the default of 3 allows four attempts.
+    /// Failures count within <see cref="SchedulerConfiguration.FailureCountWindow"/> and after the
+    /// manifest's latest resolved dead letter.
+    /// </remarks>
+    /// <param name="retries">The number of retries after the first run (default: 3).</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="retries"/> is negative.</exception>
     public ScheduleOptions MaxRetries(int retries)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(retries);
         _maxRetries = retries;
         return this;
     }

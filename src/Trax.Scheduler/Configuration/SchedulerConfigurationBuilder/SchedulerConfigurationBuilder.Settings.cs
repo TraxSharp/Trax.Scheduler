@@ -4,6 +4,7 @@ using Trax.Effect.Extensions;
 using Trax.Effect.Models.WorkQueue;
 using Trax.Mediator.Services.RunExecutor;
 using Trax.Scheduler.Services.JobSubmitter;
+using Trax.Scheduler.Services.Operations;
 using Trax.Scheduler.Services.RunExecutor;
 using Trax.Scheduler.Trains.JobRunner;
 
@@ -213,6 +214,28 @@ public partial class SchedulerConfigurationBuilder
     public SchedulerConfigurationBuilder MaxRetryDelay(TimeSpan maxDelay)
     {
         _configuration.MaxRetryDelay = maxDelay;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets how far back a manifest's failed runs are counted toward its retry backoff and its
+    /// dead letter.
+    /// </summary>
+    /// <remarks>
+    /// A failure older than the window no longer delays the next run or counts toward
+    /// <c>MaxRetries</c>. See <see cref="SchedulerConfiguration.FailureCountWindow"/>.
+    /// </remarks>
+    /// <param name="window">The failure count window (default: 24 hours)</param>
+    /// <returns>The builder for method chaining</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="window"/> is not between one second and ten years.
+    /// </exception>
+    public SchedulerConfigurationBuilder FailureCountWindow(TimeSpan window)
+    {
+        if (SchedulerConfigLimits.PositiveDuration(window, nameof(window)) is { } problem)
+            throw new ArgumentOutOfRangeException(nameof(window), window, problem);
+
+        _configuration.FailureCountWindow = window;
         return this;
     }
 
