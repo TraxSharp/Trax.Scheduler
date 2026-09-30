@@ -224,4 +224,32 @@ public class DisabledManifestStaysStoppedTests : TestSetup
             .Should()
             .BeTrue("an operator asked for this run by name");
     }
+
+    [TestCase(true, TestName = "A trigger on a disabled manifest runs (group-fair load)")]
+    [TestCase(false, TestName = "A trigger on a disabled manifest runs (load all queued)")]
+    public async Task A_trigger_on_a_disabled_manifest_runs(bool groupFair)
+    {
+        await using var fx = await SchedulerE2EFixture.CreateAsync(s =>
+        {
+            s.MaxQueuedJobsPerCycle(groupFair ? 100 : null);
+            s.Schedule<ISchedulerTestTrain>(
+                "paused-trigger",
+                new SchedulerTestInput { Value = "x" },
+                Every.Minutes(5)
+            );
+        });
+        await fx.MaterializePendingManifestsAsync();
+        var manifest = await fx
+            .DataContext.Manifests.AsNoTracking()
+            .FirstAsync(m => m.ExternalId == "paused-trigger");
+
+        await fx.Scheduler.DisableAsync("paused-trigger");
+        await fx.Scheduler.TriggerAsync("paused-trigger");
+
+        await fx.RunJobDispatcherAsync();
+
+        (await fx.DataContext.Metadatas.AsNoTracking().AnyAsync(m => m.ManifestId == manifest.Id))
+            .Should()
+            .BeTrue("an operator asked for this run by name");
+    }
 }

@@ -382,23 +382,21 @@ public class TraxScheduler(
 
         var manifest = await GetManifestByExternalIdAsync(context, externalId, ct);
 
-        var entry = await TryQueueManifestAsync(context, manifest, scheduledAt: null, ct);
-        if (entry is null)
-        {
-            logger.LogInformation(
-                "Manifest {ExternalId} already has a queued entry; the trigger queued nothing more",
-                externalId
-            );
-            return;
-        }
-
+        var outcome = await TriggerManifestAsync(context, manifest, scheduledAt: null, ct);
         changeSignal?.Notify(ChangeDomain.WorkQueue);
 
-        logger.LogInformation(
-            "Queued manifest {ExternalId} for execution (WorkQueueId: {WorkQueueId})",
-            externalId,
-            entry.Id
-        );
+        if (outcome.Created)
+            logger.LogInformation(
+                "Queued manifest {ExternalId} for execution (WorkQueueId: {WorkQueueId})",
+                externalId,
+                outcome.WorkQueueId
+            );
+        else
+            logger.LogInformation(
+                "Manifest {ExternalId} already has a queued entry (WorkQueueId: {WorkQueueId}); the trigger released it and queued nothing more",
+                externalId,
+                outcome.WorkQueueId
+            );
     }
 
     /// <inheritdoc />
@@ -412,43 +410,47 @@ public class TraxScheduler(
 
         var manifest = await GetManifestByExternalIdAsync(context, externalId, ct);
 
-        var entry = await TryQueueManifestAsync(context, manifest, DateTime.UtcNow + delay, ct);
-        if (entry is null)
-        {
-            logger.LogInformation(
-                "Manifest {ExternalId} already has a queued entry; the delayed trigger queued nothing more",
-                externalId
-            );
-            return;
-        }
-
+        var scheduledAt = DateTime.UtcNow + delay;
+        var outcome = await TriggerManifestAsync(context, manifest, scheduledAt, ct);
         changeSignal?.Notify(ChangeDomain.WorkQueue);
 
-        logger.LogInformation(
-            "Queued delayed manifest {ExternalId} for execution at {ScheduledAt} (WorkQueueId: {WorkQueueId})",
-            externalId,
-            entry.ScheduledAt,
-            entry.Id
-        );
+        if (outcome.Created)
+            logger.LogInformation(
+                "Queued delayed manifest {ExternalId} for execution at {ScheduledAt} (WorkQueueId: {WorkQueueId})",
+                externalId,
+                scheduledAt,
+                outcome.WorkQueueId
+            );
+        else
+            logger.LogInformation(
+                "Manifest {ExternalId} already has a queued entry (WorkQueueId: {WorkQueueId}); the delayed trigger released it and queued nothing more",
+                externalId,
+                outcome.WorkQueueId
+            );
     }
 
+    /// <summary>What a trigger did: queued a new entry, or found the manifest's queued one.</summary>
+    private readonly record struct TriggerOutcome(long WorkQueueId, bool Created);
+
     /// <summary>
-    /// Queues one entry for <paramref name="manifest"/>, unless it already has a queued one: the
-    /// database holds at most one per manifest (<c>ix_work_queue_unique_queued_manifest</c>), and
-    /// the entry already there runs the manifest. Returns the new entry, or null when it queued
-    /// nothing. The check and the insert are two statements, so an entry the ManifestManager or
-    /// another trigger queues between them is recognised by the insert's failure and treated the
-    /// same way; any other failed save is thrown.
+    /// Queues one entry for <paramref name="manifest"/>, marked as asked for by name
+    /// (<see cref="WorkQueue.IsExplicitTrigger"/>) so it runs even while the manifest is disabled.
+    /// The database holds at most one queued entry per manifest
+    /// (<c>ix_work_queue_unique_queued_manifest</c>), so when one is already there nothing more is
+    /// queued and that entry is marked instead: the trigger asked for a run, and the entry already
+    /// queued is that run. The check and the insert are two statements, so an entry the
+    /// ManifestManager or another trigger queues between them is recognised by the insert's
+    /// failure and treated the same way; any other failed save is thrown.
     /// </summary>
-    private static async Task<WorkQueue?> TryQueueManifestAsync(
+    private static async Task<TriggerOutcome> TriggerManifestAsync(
         IDataContext context,
         Manifest manifest,
         DateTime? scheduledAt,
         CancellationToken ct
     )
     {
-        if (await HasQueuedEntryAsync(context, manifest.Id, ct))
-            return null;
+        if (await ReleaseQueuedEntryAsync(context, manifest.Id, ct) is { } queuedId)
+            return new TriggerOutcome(queuedId, Created: false);
 
         var entry = WorkQueue.Create(
             new CreateWorkQueue
@@ -459,6 +461,7 @@ public class TraxScheduler(
                 ManifestId = manifest.Id,
                 Priority = manifest.Priority,
                 ScheduledAt = scheduledAt,
+                ExplicitTrigger = true,
             }
         );
         context.WorkQueues.Add(entry);
@@ -466,29 +469,57 @@ public class TraxScheduler(
         try
         {
             await context.SaveChanges(ct);
-            return entry;
+            return new TriggerOutcome(entry.Id, Created: true);
         }
         catch (DbUpdateException)
         {
             // Untracked either way, so a later save on this context does not retry it.
             context.Reset();
 
-            if (await HasQueuedEntryAsync(context, manifest.Id, ct))
-                return null;
+            if (await ReleaseQueuedEntryAsync(context, manifest.Id, ct) is { } racedId)
+                return new TriggerOutcome(racedId, Created: false);
 
             throw;
         }
     }
 
-    private static Task<bool> HasQueuedEntryAsync(
+    /// <summary>
+    /// Marks the manifest's queued entry, if it has one, as asked for by name, and returns its id.
+    /// Null when the manifest has no queued entry.
+    /// </summary>
+    /// <remarks>
+    /// The update is conditional on the entry still being queued, so an entry the dispatcher claims
+    /// in the meantime is left as it is: it is already running, which is what the trigger asked
+    /// for.
+    /// </remarks>
+    private static async Task<long?> ReleaseQueuedEntryAsync(
         IDataContext context,
         long manifestId,
         CancellationToken ct
-    ) =>
-        context.WorkQueues.AnyAsync(
-            w => w.ManifestId == manifestId && w.Status == WorkQueueStatus.Queued,
-            ct
+    )
+    {
+        var queuedId = await context
+            .WorkQueues.AsNoTracking()
+            .Where(w => w.ManifestId == manifestId && w.Status == WorkQueueStatus.Queued)
+            .Select(w => (long?)w.Id)
+            .FirstOrDefaultAsync(ct);
+
+        if (queuedId is not { } id)
+            return null;
+
+        var unmarked = context.WorkQueues.Where(w =>
+            w.Id == id && w.Status == WorkQueueStatus.Queued && !w.IsExplicitTrigger
         );
+        if (context.SupportsSetUpdates())
+            await unmarked.ExecuteUpdateAsync(
+                s => s.SetProperty(w => w.IsExplicitTrigger, true),
+                ct
+            );
+        else
+            await context.UpdateEachAsync(unmarked, w => w.IsExplicitTrigger = true, ct);
+
+        return id;
+    }
 
     /// <inheritdoc />
     public Task<Manifest> ScheduleOnceAsync<TTrain, TInput, TOutput>(
@@ -565,7 +596,7 @@ public class TraxScheduler(
         // than failing the whole group on the unique index.
         var queued = 0;
         foreach (var manifest in manifests)
-            if (await TryQueueManifestAsync(context, manifest, scheduledAt: null, ct) is not null)
+            if ((await TriggerManifestAsync(context, manifest, scheduledAt: null, ct)).Created)
                 queued++;
 
         if (queued > 0)
@@ -1329,6 +1360,8 @@ public class TraxScheduler(
                 ManifestId = manifest.Id,
                 Priority = manifest.Priority,
                 DeadLetterId = deadLetter.Id,
+                // An operator asked for this run by name, so it runs while the manifest is disabled.
+                ExplicitTrigger = true,
             }
         );
     }

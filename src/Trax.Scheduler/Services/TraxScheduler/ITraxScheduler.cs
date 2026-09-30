@@ -171,8 +171,11 @@ public interface ITraxScheduler
     /// <param name="ct">Cancellation token.</param>
     /// <remarks>
     /// This creates a new execution independent of the regular schedule.
-    /// The job's normal schedule continues unaffected. A manifest holds at most one queued work
-    /// queue entry, so when it already has one, that entry runs it and nothing more is queued.
+    /// The job's normal schedule continues unaffected. The run is one someone asked for by name,
+    /// so it runs even while the manifest is disabled (a disabled manifest group still holds it).
+    /// A manifest holds at most one queued work queue entry, so when it already has one, nothing
+    /// more is queued and that entry is marked as asked for by name instead, which releases it if
+    /// the manifest is disabled.
     /// </remarks>
     /// <exception cref="InvalidOperationException">
     /// Thrown when no manifest with the specified ExternalId exists.
@@ -189,8 +192,10 @@ public interface ITraxScheduler
     /// <remarks>
     /// Creates a WorkQueue entry with <c>ScheduledAt = DateTime.UtcNow + delay</c>.
     /// The JobDispatcher will skip the entry until <c>ScheduledAt &lt;= now</c>.
-    /// The manifest's normal schedule continues unaffected. When the manifest already has a
-    /// queued entry, nothing more is queued and that entry keeps its own time.
+    /// The manifest's normal schedule continues unaffected. Like the immediate trigger, the run
+    /// is one someone asked for by name and runs even while the manifest is disabled. When the
+    /// manifest already has a queued entry, nothing more is queued, that entry keeps its own time,
+    /// and it is marked as asked for by name.
     /// </remarks>
     /// <exception cref="InvalidOperationException">
     /// Thrown when no manifest with the specified ExternalId exists.
@@ -253,7 +258,8 @@ public interface ITraxScheduler
     /// </returns>
     /// <remarks>
     /// Only enabled manifests with non-dependent schedule types (None, Cron, Interval, OnDemand)
-    /// are queued. Dependent and DormantDependent manifests are skipped because they rely on
+    /// are queued, each entry marked as asked for by name the way <see cref="TriggerAsync(string, CancellationToken)"/>
+    /// marks one, so disabling a manifest after the group trigger does not hold its run. Dependent and DormantDependent manifests are skipped because they rely on
     /// parent completion and may lack standalone inputs.
     /// </remarks>
     Task<int> TriggerGroupAsync(long groupId, CancellationToken ct = default);

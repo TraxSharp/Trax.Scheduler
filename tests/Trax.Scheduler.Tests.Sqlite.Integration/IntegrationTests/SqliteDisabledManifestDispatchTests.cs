@@ -8,6 +8,7 @@ using Trax.Effect.Models.Manifest.DTOs;
 using Trax.Effect.Models.WorkQueue;
 using Trax.Effect.Models.WorkQueue.DTOs;
 using Trax.Scheduler.Configuration;
+using Trax.Scheduler.Services.TraxScheduler;
 using Trax.Scheduler.Tests.Sqlite.Integration.Fakes.Trains;
 using Trax.Scheduler.Tests.Sqlite.Integration.Fixtures;
 using Trax.Scheduler.Trains.JobDispatcher.Junctions;
@@ -15,8 +16,9 @@ using Trax.Scheduler.Trains.JobDispatcher.Junctions;
 namespace Trax.Scheduler.Tests.Sqlite.Integration.IntegrationTests;
 
 /// <summary>
-/// A disabled manifest pauses its scheduled work, and the dispatch query is what decides it, so
-/// the held entries take no place in a group's share of a cycle.
+/// A disabled manifest pauses its scheduled work, and the dispatch query is what decides it: an
+/// entry someone asked for by name still runs, and the held entries take no place in a group's
+/// share of a cycle.
 /// </summary>
 [TestFixture]
 public class SqliteDisabledManifestDispatchTests : TestSetup
@@ -57,6 +59,70 @@ public class SqliteDisabledManifestDispatchTests : TestSetup
         {
             config.MaxQueuedJobsPerCycle = original;
         }
+    }
+
+    [TestCase(true, TestName = "A trigger on a disabled manifest is loaded (group-fair load)")]
+    [TestCase(false, TestName = "A trigger on a disabled manifest is loaded (load all queued)")]
+    public async Task A_trigger_on_a_disabled_manifest_is_loaded_for_dispatch(bool groupFair)
+    {
+        var config = Scope.ServiceProvider.GetRequiredService<SchedulerConfiguration>();
+        var original = config.MaxQueuedJobsPerCycle;
+        config.MaxQueuedJobsPerCycle = groupFair ? 100 : null;
+        try
+        {
+            var group = await CreateAndSaveManifestGroup(
+                DataContext,
+                name: $"g-{Guid.NewGuid():N}"
+            );
+            var disabled = await SaveManifestAsync("off", isEnabled: false, group.Id);
+
+            await Scope
+                .ServiceProvider.GetRequiredService<ITraxScheduler>()
+                .TriggerAsync(disabled.ExternalId);
+            DataContext.Reset();
+
+            var entry = await DataContext
+                .WorkQueues.AsNoTracking()
+                .SingleAsync(q =>
+                    q.ManifestId == disabled.Id && q.Status == WorkQueueStatus.Queued
+                );
+            entry.IsExplicitTrigger.Should().BeTrue();
+
+            (await LoadQueuedAsync())
+                .Select(e => e.ManifestId)
+                .Should()
+                .Contain(disabled.Id, "an operator asked for this run by name");
+        }
+        finally
+        {
+            config.MaxQueuedJobsPerCycle = original;
+        }
+    }
+
+    [Test]
+    public async Task A_trigger_releases_the_entry_a_disabled_manifest_already_holds()
+    {
+        var group = await CreateAndSaveManifestGroup(DataContext, name: $"g-{Guid.NewGuid():N}");
+        var disabled = await SaveManifestAsync("off", isEnabled: false, group.Id);
+        await QueueScheduledEntryAsync(disabled.Id);
+        (await LoadQueuedAsync()).Select(e => e.ManifestId).Should().NotContain(disabled.Id);
+
+        await Scope
+            .ServiceProvider.GetRequiredService<ITraxScheduler>()
+            .TriggerAsync(disabled.ExternalId);
+        DataContext.Reset();
+
+        (
+            await DataContext.WorkQueues.CountAsync(q =>
+                q.ManifestId == disabled.Id && q.Status == WorkQueueStatus.Queued
+            )
+        )
+            .Should()
+            .Be(1, "the held entry is the run the trigger asked for");
+        (await LoadQueuedAsync())
+            .Select(e => e.ManifestId)
+            .Should()
+            .Contain(disabled.Id, "the trigger released the held entry");
     }
 
     private Task<List<WorkQueue>> LoadQueuedAsync() =>
