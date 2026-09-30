@@ -23,8 +23,8 @@ internal static class TrainRegistryExtensions
         if (!registry.InputTypeToTrain.ContainsKey(inputType))
         {
             throw new InvalidOperationException(
-                $"Train for input type '{inputType.Name}' is not registered in the TrainRegistry. "
-                    + $"Ensure the train assembly is included in AddEffectTrainBus()."
+                $"No train implements IServiceTrain<{inputType.Name}, TOut>. Add the train's "
+                    + "assembly to AddMediator(m => m.ScanAssemblies(typeof(MyTrain).Assembly))."
             );
         }
     }
