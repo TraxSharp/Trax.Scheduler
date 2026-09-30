@@ -1,4 +1,3 @@
-using System.Text;
 using FluentAssertions;
 using LanguageExt;
 using Microsoft.EntityFrameworkCore;
@@ -6,7 +5,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Trax.Core.Junction;
 using Trax.Effect.Models.Manifest;
 using Trax.Effect.Services.ServiceTrain;
-using Trax.Mediator.Configuration;
 using Trax.Scheduler.Services.JobSubmitter;
 using Trax.Scheduler.Services.Operations;
 using Trax.Scheduler.Tests.Integration.Fixtures;
@@ -64,19 +62,9 @@ public class RunInputStoredSizeTests
             services => services.AddScoped<IJobSubmitter, PostgresJobSubmitter>()
         );
 
-        // One row of 500 strings, then 2,000 references to that same row.
-        var json = new StringBuilder(
-            """{"$id":"1","rows":{"$id":"2","$values":[{"$id":"3","$values":["""
-        );
-        json.AppendJoin(',', Enumerable.Range(0, 500).Select(i => $"\"value-{i:D4}\""));
-        json.Append("]}");
-        for (var i = 0; i < 2000; i++)
-            json.Append(""",{"$ref":"3"}""");
-        json.Append("]}}");
-        var inputJson = json.ToString();
-
-        var cap = new MediatorConfiguration().MaxInputJsonBytes;
-        Encoding.UTF8.GetByteCount(inputJson).Should().BeLessThan(cap);
+        // A single reference: enough to show the metadata is refused, not honoured.
+        const string inputJson =
+            """{"$id":"1","rows":{"$id":"2","$values":[{"$id":"3","$values":["a"]},{"$ref":"3"}]}}""";
 
         var ops = fx.Services.GetRequiredService<IOperationsService>();
         var result = await ops.RunTrainAsync(
