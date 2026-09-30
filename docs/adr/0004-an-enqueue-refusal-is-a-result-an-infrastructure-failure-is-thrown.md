@@ -70,8 +70,10 @@ through was written by that dependency for its own operator, not for the caller.
 
 `OperationsService.RunTrainAsync` (central 0022) applies it to a run. An unknown train and
 invalid or oversized input are failed results, with the same messages `QueueTrainAsync` gives.
-Nothing a train does can refuse a run, because a run has no `OnQueue` hook and no subject key,
-so every other failure is thrown: a job submitter that fails (after the run's metadata row is
+A run applies the per-record checks a queue applies (central 0037), so the train's `OnQueue`
+hook can refuse it, and that refusal is split and shown exactly as an enqueue's is, as
+`"The run was refused…"`; a subject-keyed train run outside a trusted scope is a failed result
+too. Every other failure is thrown: a job submitter that fails (after the run's metadata row is
 marked `Failed`, as the job dispatcher does), a database failure writing the row, and the
 missing-enforcer `TrainAuthorizationNotConfiguredException`. A run reads its input and checks
 its authorization through the mediator's `PrepareAsync`, so both answers are the mediator's.
@@ -128,6 +130,7 @@ contract, and Trax.Api's error filter tests pin it.
 
 ## Changelog
 
+- **2026-09-30**: A run's `OnQueue` refusal follows the enqueue's rule (central 0037).
 - **2026-09-30**: A refusal shows its exception's message only for a plain `TrainException`,
   `QueuedWorkCancelledException` and `QueueHookTimeoutException`; any other type is a refusal
   with the fixed `"The enqueue was refused."`, logged at Warning. The same rule as central

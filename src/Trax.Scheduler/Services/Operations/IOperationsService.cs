@@ -62,8 +62,17 @@ public interface IOperationsService
     /// whatever their case, a property given twice refused, JSON reference metadata not honoured,
     /// the input size cap, and a blank input standing for an empty object. The stored form the
     /// submitter writes for the worker is then held to the cap a queued input's stored form is
-    /// held to, <c>TrainInputReader.StoredInputGrowthFactor</c> times <c>MaxInputJsonBytes</c>. A
-    /// run has no <c>OnQueue</c> hook and no subject key, so nothing a train does can refuse it.
+    /// held to, <c>TrainInputReader.StoredInputGrowthFactor</c> times <c>MaxInputJsonBytes</c>.
+    /// <para>
+    /// A run then applies the per-record checks a queue applies (<c>docs/0037</c>). The train's
+    /// <c>OnQueue</c> hook, when it overrides one, runs on the run's input before the metadata row
+    /// is saved, as it runs for an enqueue: <c>TrainInput</c> reads the input, the hook's
+    /// <c>metadata.ExternalId</c> is the one the run executes under, writes on the enqueue context
+    /// are saved with the run's row, and <c>MaxQueueHookDuration</c> bounds it. It runs inside a
+    /// trusted scope too. A train that overrides <c>QueueSubjectKey</c> is refused outside a
+    /// trusted scope, because a run bypasses the subject lock the queue holds for it; the message
+    /// says to queue it instead.
+    /// </para>
     /// </remarks>
     /// <returns>
     /// <c>OperationResult(true, Id: metadataId, Count: 1, ...)</c> once the job is submitted; the
@@ -73,8 +82,12 @@ public interface IOperationsService
     /// failing train): the run owns its outcome, which its row records, and the message says the
     /// outcome is pending on the run. <c>OperationResult(false, ...)</c> with a populated
     /// <c>Message</c> for a missing <c>TrainName</c>, an unknown train, invalid or oversized
-    /// <c>InputJson</c>, or an input whose stored form is over its cap; no metadata row is written
-    /// for any of these.
+    /// <c>InputJson</c>, an input whose stored form is over its cap, a subject-keyed train outside
+    /// a trusted scope, or a refusal by the <c>OnQueue</c> hook; no metadata row is written for any
+    /// of these. A refusal's message follows <see cref="QueueTrainAsync"/>'s rule with "run" for
+    /// "enqueue": <c>"The run was refused: {exception message}"</c> for a plain
+    /// <c>TrainException</c> or a <c>QueueHookTimeoutException</c>, the fixed
+    /// <c>"The run was refused."</c> for any other type.
     /// </returns>
     /// <exception cref="UnauthorizedAccessException">
     /// The caller may not run the train. It propagates rather than becoming a failed result, and
@@ -90,8 +103,8 @@ public interface IOperationsService
     /// The job submitter failed and no runner started the run. The run's metadata row is marked
     /// <c>Failed</c> with that exception, as the job dispatcher does for a failed dispatch, and the
     /// exception is logged and rethrown: the train was accepted and the server could not start
-    /// it, which is not a refusal (scheduler/0004). A database failure writing the row propagates
-    /// the same way.
+    /// it, which is not a refusal (scheduler/0004). A database failure writing the row, or one
+    /// anywhere in the chain of what the <c>OnQueue</c> hook threw, propagates the same way.
     /// </exception>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="ct"/> was cancelled before the run's metadata row was written. Once the row

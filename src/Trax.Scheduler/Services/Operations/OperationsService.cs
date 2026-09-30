@@ -21,6 +21,7 @@ using Trax.Mediator.Configuration;
 using Trax.Mediator.Exceptions;
 using Trax.Mediator.Services.TrainDiscovery;
 using Trax.Mediator.Services.TrainExecution;
+using Trax.Mediator.Services.TrustedExecution;
 using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Extensions;
 using Trax.Scheduler.Services.CancellationRegistry;
@@ -249,12 +250,14 @@ public class OperationsService : IOperationsService
         // TrainAuthorizationNotConfiguredException, are not caught: neither is an answer about
         // this run.
         object runInput;
+        TrainRegistration prepared;
 
         try
         {
-            var prepared = await _trainExecution.PrepareAsync(trainName, input.InputJson, ct);
-            runInput = prepared.Input;
-            CheckStoredInputSize(services, prepared.Registration, runInput);
+            var preparation = await _trainExecution.PrepareAsync(trainName, input.InputJson, ct);
+            prepared = preparation.Registration;
+            runInput = preparation.Input;
+            CheckStoredInputSize(services, prepared, runInput);
         }
         catch (TrainNotFoundException)
         {
@@ -275,6 +278,19 @@ public class OperationsService : IOperationsService
             return new OperationResult(false, Message: ex.Message);
         }
 
+        // A subject-keyed train serializes its work through the queue (docs/0019), which a run
+        // started now bypasses, so only a trusted caller may bypass it (docs/0037).
+        if (
+            prepared.HasQueueSubjectKey
+            && services.GetService<ITrustedExecutionScope>() is not { IsTrusted: true }
+        )
+            return new OperationResult(
+                false,
+                Message: $"{trainName} declares QueueSubjectKey, so its work for one subject runs "
+                    + "one at a time through the work queue, and it is run now only inside a "
+                    + "trusted scope. Queue it instead."
+            );
+
         // The row the run reports on. Input stays null here, as the job dispatcher leaves it:
         // the run's own effects record the input when the train starts.
         var metadata = Metadata.Create(
@@ -289,6 +305,14 @@ public class OperationsService : IOperationsService
         using (var db = await _dataContextFactory.CreateDbContextAsync(ct))
         {
             await db.Track(metadata);
+
+            // The per-record checks a queue applies (docs/0037): the train's OnQueue hook runs
+            // on this input, under the run's ExternalId, before the row is saved, and its writes
+            // on the enqueue context are saved with it. A refusal writes nothing.
+            var refusal = await RunQueueHookAsync(services, prepared, runInput, metadata, db, ct);
+            if (refusal is not null)
+                return refusal;
+
             await db.SaveChanges(ct);
         }
 
@@ -346,6 +370,55 @@ public class OperationsService : IOperationsService
             Count: 1,
             Message: $"Run {metadata.Id} of {trainName} submitted."
         );
+    }
+
+    /// <summary>
+    /// Runs the train's <c>OnQueue</c> hook for a run and answers as <see cref="QueueTrainAsync"/>
+    /// answers for the same exception: null when the hook accepted, a refusal result when it
+    /// refused, and a thrown exception for an infrastructure failure, an authorization failure or
+    /// a cancellation (scheduler/0004).
+    /// </summary>
+    private async Task<OperationResult?> RunQueueHookAsync(
+        IServiceProvider services,
+        TrainRegistration registration,
+        object runInput,
+        Metadata metadata,
+        IDataContext db,
+        CancellationToken ct
+    )
+    {
+        if (!RunQueueHook.Declared(registration))
+            return null;
+
+        try
+        {
+            await RunQueueHook.InvokeAsync(
+                services,
+                registration,
+                runInput,
+                metadata.ExternalId,
+                db,
+                ct
+            );
+            return null;
+        }
+        catch (Exception ex)
+            when (ex is not UnauthorizedAccessException and not OperationCanceledException
+                && IsInfrastructureFailure(ex)
+            )
+        {
+            _logger?.LogError(
+                ex,
+                "Running {TrainName} failed on infrastructure in its OnQueue hook, not on a refusal",
+                metadata.Name
+            );
+            throw;
+        }
+        catch (Exception ex)
+            when (ex is not UnauthorizedAccessException and not OperationCanceledException)
+        {
+            return Refused("The run was refused", ex, metadata.Name);
+        }
     }
 
     /// <summary>

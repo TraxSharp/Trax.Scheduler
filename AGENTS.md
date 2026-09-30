@@ -20,7 +20,7 @@ if your work contradicts one, say so rather than silently overriding it.
 | `INonceStore`, `UseInMemoryNonceStore()`, or the `runner_nonce` table | [0009](./docs/adr/0009-a-runner-shares-its-accepted-nonces-through-the-database.md), a signing runner shares accepted nonces through the database unless the host opts into memory; central `docs/0009` for why the table ships in Trax.Effect, and `docs/0036` for why its model does too and the store reaches it through `IDataContext` rather than SQL |
 | SQL, or anything provider-shaped | [0002](./docs/adr/0002-a-database-provider-is-interchangeable.md), the difference belongs behind `ISqlDialect` |
 | `OperationsService`, or anywhere that builds a work queue row | central `docs/0017`, a caller's enqueue goes through the mediator; only the allow-listed system and admin paths build their own |
-| a dashboard or API action, or `OperationsService.RunTrainAsync` | central `docs/0022`, the dashboard and the GraphQL API call one operations-service method per action; neither surface carries its own copy of the logic |
+| a dashboard or API action, or `OperationsService.RunTrainAsync` | central `docs/0022`, the dashboard and the GraphQL API call one operations-service method per action; neither surface carries its own copy of the logic; and central `docs/0037`, a run applies the per-record checks a queue applies (`OnQueue`, and a subject-keyed train only inside a trusted scope) |
 | what `OperationsService.QueueTrainAsync` returns when the enqueue fails | [0004](./docs/adr/0004-an-enqueue-refusal-is-a-result-an-infrastructure-failure-is-thrown.md), a refusal is a failed result; a database or network failure is logged and thrown, never returned with its message |
 | `UpdateSchedulerConfigAsync`, `SchedulerSettings`, or how a saved setting reaches a scheduler | [0010](./docs/adr/0010-a-settings-save-writes-only-what-it-names-and-every-scheduler-applies-it.md), a save names only what it sets in the row's `overrides`, every other setting keeps its code value, and every running scheduler re-reads the row |
 | an `ExecuteUpdate` or `ExecuteDelete` in `OperationsService`, `ExecutionCancellation` or a `TraxScheduler` operation | [0007](./docs/adr/0007-the-operations-surface-runs-on-inmemory.md), check `SupportsSetUpdates()` and fall back to per-row on InMemory |
@@ -33,7 +33,7 @@ if your work contradicts one, say so rather than silently overriding it.
 | `RemoteRunResponse.PublicMessage`, `RemoteRunException`, or what a remote failure shows a client | central `docs/0028`, the runner offers only a plain `TrainException`'s message, and every remote failure is rebuilt as a `RemoteRunException` carrying it |
 
 Decisions binding more than one repo live in the central corpus at `Trax.Docs/adr/`, whose
-index lists them by repo. Twenty-six name `scheduler`. Besides the workspace-wide conventions and
+index lists them by repo. Twenty-seven name `scheduler`. Besides the workspace-wide conventions and
 `0016` to `0020` and `0022` (routed above), `0007` (the canonical train name is the
 interface FullName) is the one this repo touches most, since it is the string stored in
 `work_queue.train_name` and the one a remote run puts on the wire. The wire is lenient about
