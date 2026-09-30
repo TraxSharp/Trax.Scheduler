@@ -346,6 +346,128 @@ public class TraxLambdaFunctionTests
         fn.Handler.RunCalls.Should().HaveCount(1);
     }
 
+    [TestCase("/trax/execute")]
+    [TestCase("/trax/run")]
+    public async Task ConfigureRoutes_Unsigned_RequestFromAnotherMachine_Is401(string path)
+    {
+        var fn = new TestFunction(o => o.AllowUnsignedRequests());
+        using var host = await CreateRouteHost(fn, IPAddress.Parse("10.0.0.5"));
+        var client = host.GetTestClient();
+
+        var response = await client.PostAsync(path, new StringContent(RunPayload()));
+
+        response
+            .StatusCode.Should()
+            .Be(
+                HttpStatusCode.Unauthorized,
+                "without a signing key the local routes serve only this machine; unsigned is a "
+                    + "posture for the Lambda invocation entry point (see docs/adr/0006-a-runner-requires-an-authorization-posture.md)"
+            );
+        fn.Handler.RunCalls.Should().BeEmpty();
+        fn.Handler.ExecuteCalls.Should().BeEmpty();
+    }
+
+    [Test]
+    public async Task ConfigureRoutes_Unsigned_RequestFromThisMachineOverIPv6_Runs()
+    {
+        var fn = new TestFunction(o => o.AllowUnsignedRequests());
+        using var host = await CreateRouteHost(fn, IPAddress.IPv6Loopback);
+        var client = host.GetTestClient();
+
+        var response = await client.PostAsync("/trax/run", new StringContent(RunPayload()));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        fn.Handler.RunCalls.Should().HaveCount(1);
+    }
+
+    [Test]
+    public async Task ConfigureRoutes_SigningKey_SignedRequestFromAnotherMachine_Runs()
+    {
+        var fn = new TestFunction(o => o.SigningKey = Key);
+        using var host = await CreateRouteHost(fn, IPAddress.Parse("10.0.0.5"));
+        var client = host.GetTestClient();
+        var payload = RunPayload();
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/trax/run")
+        {
+            Content = new StringContent(payload),
+        };
+        request.Headers.Add(
+            RunnerRequestSignature.HeaderName,
+            RunnerRequestSignature.Create(
+                Key,
+                RunnerRequestPurpose.Run,
+                System.Text.Encoding.UTF8.GetBytes(payload)
+            )
+        );
+        var response = await client.SendAsync(request);
+
+        response
+            .StatusCode.Should()
+            .Be(HttpStatusCode.OK, "a signed request is checked by its key");
+    }
+
+    [TestCase("/trax/execute")]
+    [TestCase("/trax/run")]
+    public async Task ConfigureRoutes_SigningKey_UnsignedRequest_Is401WithoutTheBodyBeingRead(
+        string path
+    )
+    {
+        var fn = new TestFunction(o => o.SigningKey = Key);
+        using var host = await CreateRouteHost(fn);
+        var client = host.GetTestClient();
+        var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = new StringContent(RunPayload()),
+        };
+        request.Headers.Add(UnreadableBodyHeader, "1");
+
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
+    public async Task ConfigureRoutes_ABodyOverTheLimit_Is413()
+    {
+        var fn = new TestFunction(o =>
+        {
+            o.AllowUnsignedRequests();
+            o.MaxRequestBodyBytes = 64;
+        });
+        using var host = await CreateRouteHost(fn);
+        var client = host.GetTestClient();
+
+        var response = await client.PostAsync(
+            "/trax/run",
+            new StringContent(new string(' ', 128) + RunPayload())
+        );
+
+        response.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+        fn.Handler.RunCalls.Should().BeEmpty();
+    }
+
+    private sealed class ThrowingStream : MemoryStream
+    {
+        public override int Read(byte[] buffer, int offset, int count) =>
+            throw new InvalidOperationException("The request body was read.");
+
+        public override int Read(Span<byte> buffer) =>
+            throw new InvalidOperationException("The request body was read.");
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default
+        ) => throw new InvalidOperationException("The request body was read.");
+
+        public override Task<int> ReadAsync(
+            byte[] buffer,
+            int offset,
+            int count,
+            CancellationToken cancellationToken
+        ) => throw new InvalidOperationException("The request body was read.");
+    }
+
     #endregion
 
     #region FunctionHandler — Unknown Type
@@ -525,7 +647,13 @@ public class TraxLambdaFunctionTests
     private static TestLambdaContext CreateContext(TimeSpan remaining) =>
         new() { RemainingTime = remaining };
 
-    private static async Task<IHost> CreateRouteHost(TestFunction fn)
+    private const string UnreadableBodyHeader = "X-Test-Unreadable-Body";
+
+    /// <summary>
+    /// Hosts the local routes. Requests come from <paramref name="caller"/>, this machine unless a
+    /// test says otherwise, and a request marked for it gets a body that throws if it is read.
+    /// </summary>
+    private static async Task<IHost> CreateRouteHost(TestFunction fn, IPAddress? caller = null)
     {
         var builder = new HostBuilder().ConfigureWebHost(webHost =>
         {
@@ -533,6 +661,15 @@ public class TraxLambdaFunctionTests
             webHost.ConfigureServices(services => services.AddRouting());
             webHost.Configure(app =>
             {
+                app.Use(
+                    (context, next) =>
+                    {
+                        context.Connection.RemoteIpAddress = caller ?? IPAddress.Loopback;
+                        if (context.Request.Headers.ContainsKey(UnreadableBodyHeader))
+                            context.Request.Body = new ThrowingStream();
+                        return next(context);
+                    }
+                );
                 app.UseRouting();
                 app.UseEndpoints(routes => fn.ExposeConfigureRoutes(routes));
             });

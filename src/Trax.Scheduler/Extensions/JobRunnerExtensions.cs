@@ -34,21 +34,23 @@ public static class JobRunnerExtensions
 {
     /// <summary>
     /// Registers the minimal DI services needed to run <see cref="JobRunnerTrain"/>,
-    /// including <see cref="ITraxRequestHandler"/> for hosting-agnostic request handling,
+    /// including the <see cref="ITraxRequestHandler"/> the runner entry points call,
     /// with no runner posture configured.
     /// </summary>
     /// <remarks>
     /// Enough for a host that needs <see cref="ITraxScheduler"/> without mapping a runner endpoint.
     /// A host that maps <see cref="UseTraxJobRunner"/> or <see cref="UseTraxRunEndpoint"/>, or runs
     /// an SQS or Lambda runner, calls the overload that configures <see cref="TraxJobRunnerOptions"/>;
-    /// without a posture those entry points refuse to start.
+    /// without a posture those entry points refuse to start. The registered
+    /// <see cref="ITraxRequestHandler"/> verifies nothing itself, so a host does not call it from
+    /// an entry point of its own.
     /// </remarks>
     public static IServiceCollection AddTraxJobRunner(this IServiceCollection services) =>
         services.AddTraxJobRunner(_ => { });
 
     /// <summary>
     /// Registers the minimal DI services needed to run <see cref="JobRunnerTrain"/>,
-    /// including <see cref="ITraxRequestHandler"/> for hosting-agnostic request handling,
+    /// including the <see cref="ITraxRequestHandler"/> the runner entry points call,
     /// and the posture every runner entry point enforces.
     /// </summary>
     /// <remarks>
@@ -148,10 +150,13 @@ public static class JobRunnerExtensions
     /// <remarks>
     /// Delegates to <see cref="ITraxRequestHandler.ExecuteJobAsync"/> for the actual execution.
     /// Enforces the posture configured by <c>AddTraxJobRunner(runner => ...)</c>, and throws
-    /// while mapping when there is none: a signed request is checked before its body is read as
-    /// an envelope, and an <see cref="TraxJobRunnerOptions.AuthorizationPolicy"/> is applied to
-    /// the endpoint. Returns a <see cref="RemoteJobResponse"/> with structured error fields on
-    /// failure; the detail stays in this process's log.
+    /// while mapping when there is none. With a signing key, a request whose
+    /// <c>Trax-Signature</c> header is missing, malformed or stale is refused with 401 before its
+    /// body is read, and the body is verified before it is parsed as an envelope. A body over
+    /// <see cref="TraxJobRunnerOptions.MaxRequestBodyBytes"/> is refused with 413. An
+    /// <see cref="TraxJobRunnerOptions.AuthorizationPolicy"/> is applied to the endpoint. Refusals
+    /// are logged as a warning at most once a minute. Returns a <see cref="RemoteJobResponse"/>
+    /// with structured error fields on failure; the detail stays in this process's log.
     /// </remarks>
     public static RouteHandlerBuilder UseTraxJobRunner(
         this IEndpointRouteBuilder endpoints,
@@ -173,8 +178,7 @@ public static class JobRunnerExtensions
                     var (request, refused) = await ReadEnvelopeAsync<RemoteJobRequest>(
                         httpRequest,
                         verifier,
-                        RunnerRequestPurpose.Execute,
-                        logger
+                        RunnerRequestPurpose.Execute
                     );
                     if (request is null)
                         return refused!;
@@ -233,8 +237,7 @@ public static class JobRunnerExtensions
                     var (request, refused) = await ReadEnvelopeAsync<RemoteRunRequest>(
                         httpRequest,
                         verifier,
-                        RunnerRequestPurpose.Run,
-                        logger
+                        RunnerRequestPurpose.Run
                     );
                     if (request is null)
                         return refused!;
@@ -315,14 +318,16 @@ public static class JobRunnerExtensions
 
     /// <summary>
     /// Reads the request body as <typeparamref name="T"/>, or returns the response that refuses
-    /// it: 415 for a body that is not JSON, 401 for one whose signature the posture refuses, 400
-    /// for one that does not parse, repeats a property (in any case), or is <c>null</c>.
+    /// it: 415 for a body that is not JSON, 401 for a missing, malformed or stale signature
+    /// header before the body is read, 413 for a body over
+    /// <see cref="TraxJobRunnerOptions.MaxRequestBodyBytes"/>, 401 for a signature the body does
+    /// not match, 400 for one that does not parse, repeats a property (in any case), or is
+    /// <c>null</c>.
     /// </summary>
     private static async Task<(T? Envelope, IResult? Refused)> ReadEnvelopeAsync<T>(
         HttpRequest request,
         RunnerRequestVerifier verifier,
-        RunnerRequestPurpose purpose,
-        ILogger logger
+        RunnerRequestPurpose purpose
     )
         where T : class
     {
@@ -330,26 +335,9 @@ public static class JobRunnerExtensions
             return (null, Results.StatusCode(StatusCodes.Status415UnsupportedMediaType));
 
         // The signature covers the exact bytes, so they are read once and both checked and parsed.
-        using var buffer = new MemoryStream();
-        await request.Body.CopyToAsync(buffer, request.HttpContext.RequestAborted);
-        var body = buffer.GetBuffer().AsMemory(0, (int)buffer.Length);
-
-        var verdict = await verifier.VerifyAsync(
-            purpose,
-            body,
-            request.Headers[RunnerRequestSignature.HeaderName].ToString(),
-            requireFresh: true,
-            request.HttpContext.RequestAborted
-        );
-        if (verdict != RunnerRequestVerdict.Accepted)
-        {
-            logger.LogWarning(
-                "Refused a Trax runner request to {Path}: signature {Verdict}",
-                request.Path,
-                verdict
-            );
-            return (null, Results.StatusCode(StatusCodes.Status401Unauthorized));
-        }
+        var (body, refusedStatus) = await verifier.ReadVerifiedBodyAsync(request, purpose);
+        if (refusedStatus is { } status)
+            return (null, Results.StatusCode(status));
 
         try
         {

@@ -260,10 +260,12 @@ namespace Trax.Scheduler.Configuration
     }
     public sealed class TraxJobRunnerOptions
     {
+        public const long DefaultMaxRequestBodyBytes = 8388608;
         public TraxJobRunnerOptions() { }
         public string? AuthorizationPolicy { get; set; }
         public bool InMemoryNonceStore { get; }
         public System.TimeSpan MaxClockSkew { get; set; }
+        public long MaxRequestBodyBytes { get; set; }
         public byte[]? SigningKey { get; set; }
         public bool UnsignedRequestsAllowed { get; }
         public Trax.Scheduler.Configuration.TraxJobRunnerOptions AllowUnsignedRequests() { }
@@ -722,7 +724,14 @@ namespace Trax.Scheduler.Services.RequestSigning
     public sealed class RunnerRequestVerifier
     {
         public RunnerRequestVerifier(Trax.Scheduler.Configuration.TraxJobRunnerOptions options, Microsoft.Extensions.Logging.ILogger<Trax.Scheduler.Services.RequestSigning.RunnerRequestVerifier> logger, Trax.Scheduler.Services.RequestSigning.INonceStore? nonces = null, System.TimeProvider? time = null) { }
+        public bool RequiresSignature { get; }
+        public Trax.Scheduler.Services.RequestSigning.RunnerRequestVerdict CheckHeader(string? signature, bool requireFresh) { }
         public void EnsurePosture(string entryPoint) { }
+        [return: System.Runtime.CompilerServices.TupleElementNames(new string[] {
+                "Body",
+                "RefusedStatusCode"})]
+        public System.Threading.Tasks.Task<System.ValueTuple<System.ReadOnlyMemory<byte>, int?>> ReadVerifiedBodyAsync(Microsoft.AspNetCore.Http.HttpRequest request, Trax.Scheduler.Services.RequestSigning.RunnerRequestPurpose purpose) { }
+        public void ReportRefusal(string entryPoint, string reason) { }
         public System.Threading.Tasks.ValueTask<Trax.Scheduler.Services.RequestSigning.RunnerRequestVerdict> VerifyAsync(Trax.Scheduler.Services.RequestSigning.RunnerRequestPurpose purpose, System.ReadOnlyMemory<byte> body, string? signature, bool requireFresh, System.Threading.CancellationToken cancellationToken = default) { }
     }
 }

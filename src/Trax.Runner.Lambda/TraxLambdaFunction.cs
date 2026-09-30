@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using Amazon.Lambda.Core;
@@ -245,6 +246,14 @@ public abstract class TraxLambdaFunction
     /// incoming request bodies into <see cref="LambdaEnvelope"/> payloads and execute
     /// them through the same handler logic as the Lambda entry point.
     /// </summary>
+    /// <remarks>
+    /// The routes take their own posture. With a signing key, every request must carry a valid
+    /// <c>Trax-Signature</c> header, checked before its body is read, from wherever it comes.
+    /// Without one (<c>AllowUnsignedRequests()</c>, a posture meant for the Lambda invocation entry
+    /// point, which only the scheduler's IAM role can reach), the routes serve only requests from
+    /// this machine's loopback address and refuse any other with 401, whatever address the server
+    /// listens on. A body larger than <c>MaxRequestBodyBytes</c> is refused with 413.
+    /// </remarks>
     /// <example>
     /// <code>
     /// // Program.cs
@@ -267,86 +276,77 @@ public abstract class TraxLambdaFunction
     /// </summary>
     internal void ConfigureRoutes(IEndpointRouteBuilder routes)
     {
-        routes.MapPost(
+        MapLocalRoute(
+            routes,
             "/trax/execute",
-            async (HttpContext ctx) =>
-            {
-                using var reader = new StreamReader(ctx.Request.Body);
-                var body = await reader.ReadToEndAsync();
-
-                using var scope = _serviceProvider.Value.CreateScope();
-                var handler = scope.ServiceProvider.GetRequiredService<ITraxRequestHandler>();
-                var logger = scope.ServiceProvider.GetRequiredService<
-                    ILogger<TraxLambdaFunction>
-                >();
-
-                var verdict = await RequireVerifier(scope.ServiceProvider)
-                    .VerifyAsync(
-                        RunnerRequestPurpose.Execute,
-                        Encoding.UTF8.GetBytes(body),
-                        ctx.Request.Headers[RunnerRequestSignature.HeaderName].ToString(),
-                        requireFresh: true,
-                        ctx.RequestAborted
-                    );
-                if (verdict != RunnerRequestVerdict.Accepted)
-                {
-                    logger.LogWarning(
-                        "Refused a request to {Path}: signature {Verdict}",
-                        ctx.Request.Path,
-                        verdict
-                    );
-                    ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                    return;
-                }
-                var result = await HandleExecute(body, handler, logger, ctx.RequestAborted);
-
-                ctx.Response.ContentType = "application/json";
-                await ctx.Response.WriteAsync(
-                    JsonSerializer.Serialize(result, RemoteRunJson.Write)
-                );
-            }
+            RunnerRequestPurpose.Execute,
+            async (body, handler, logger, ct) => await HandleExecute(body, handler, logger, ct)
         );
-
-        routes.MapPost(
+        MapLocalRoute(
+            routes,
             "/trax/run",
-            async (HttpContext ctx) =>
-            {
-                using var reader = new StreamReader(ctx.Request.Body);
-                var body = await reader.ReadToEndAsync();
-
-                using var scope = _serviceProvider.Value.CreateScope();
-                var handler = scope.ServiceProvider.GetRequiredService<ITraxRequestHandler>();
-                var logger = scope.ServiceProvider.GetRequiredService<
-                    ILogger<TraxLambdaFunction>
-                >();
-
-                var verdict = await RequireVerifier(scope.ServiceProvider)
-                    .VerifyAsync(
-                        RunnerRequestPurpose.Run,
-                        Encoding.UTF8.GetBytes(body),
-                        ctx.Request.Headers[RunnerRequestSignature.HeaderName].ToString(),
-                        requireFresh: true,
-                        ctx.RequestAborted
-                    );
-                if (verdict != RunnerRequestVerdict.Accepted)
-                {
-                    logger.LogWarning(
-                        "Refused a request to {Path}: signature {Verdict}",
-                        ctx.Request.Path,
-                        verdict
-                    );
-                    ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                    return;
-                }
-                var result = await HandleRun(body, handler, logger, ctx.RequestAborted);
-
-                ctx.Response.ContentType = "application/json";
-                await ctx.Response.WriteAsync(
-                    JsonSerializer.Serialize(result, RemoteRunJson.Write)
-                );
-            }
+            RunnerRequestPurpose.Run,
+            async (body, handler, logger, ct) => await HandleRun(body, handler, logger, ct)
         );
     }
+
+    private void MapLocalRoute(
+        IEndpointRouteBuilder routes,
+        string route,
+        RunnerRequestPurpose purpose,
+        Func<string, ITraxRequestHandler, ILogger, CancellationToken, Task<object>> handle
+    ) =>
+        routes.MapPost(
+            route,
+            async (HttpContext ctx) =>
+            {
+                using var scope = _serviceProvider.Value.CreateScope();
+                var verifier = RequireVerifier(scope.ServiceProvider);
+
+                // Unsigned is a posture for the Lambda invocation entry point. Over HTTP it is
+                // honoured only for a caller on this machine.
+                if (!verifier.RequiresSignature && !IsFromThisMachine(ctx))
+                {
+                    verifier.ReportRefusal(
+                        ctx.Request.Path,
+                        "unsigned request from another machine; the local routes accept unsigned "
+                            + "requests only from loopback"
+                    );
+                    ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    return;
+                }
+
+                var (body, refusedStatus) = await verifier.ReadVerifiedBodyAsync(
+                    ctx.Request,
+                    purpose
+                );
+                if (refusedStatus is { } status)
+                {
+                    ctx.Response.StatusCode = status;
+                    return;
+                }
+
+                var handler = scope.ServiceProvider.GetRequiredService<ITraxRequestHandler>();
+                var logger = scope.ServiceProvider.GetRequiredService<
+                    ILogger<TraxLambdaFunction>
+                >();
+                var result = await handle(
+                    Encoding.UTF8.GetString(body.Span),
+                    handler,
+                    logger,
+                    ctx.RequestAborted
+                );
+
+                ctx.Response.ContentType = "application/json";
+                await ctx.Response.WriteAsync(
+                    JsonSerializer.Serialize(result, result.GetType(), RemoteRunJson.Write)
+                );
+            }
+        );
+
+    private static bool IsFromThisMachine(HttpContext ctx) =>
+        ctx.Connection.RemoteIpAddress is { } caller
+        && IPAddress.IsLoopback(caller.IsIPv4MappedToIPv6 ? caller.MapToIPv4() : caller);
 
     // recordCancelledIn: when given, a job whose token is cancelled before it starts has its
     // Pending run recorded Cancelled through this provider's data context. The Lambda entry point
