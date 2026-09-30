@@ -51,9 +51,16 @@ public class ManifestOptions
     /// <remarks>
     /// Each retry creates a new Metadata record. After this many failed attempts,
     /// the job is moved to the dead letter queue for manual intervention.
-    /// Defaults to 3.
+    /// Left unset, the manifest takes the scheduler's <c>DefaultMaxRetries</c> (3 unless
+    /// configured). Inside a <c>configureEach</c> callback it already reads the batch's value.
     /// </remarks>
-    public int MaxRetries { get; set; } = 3;
+    public int MaxRetries
+    {
+        get => _maxRetries ?? 3;
+        set => _maxRetries = value;
+    }
+
+    internal int? _maxRetries;
 
     /// <summary>
     /// Gets or sets the timeout for job execution.
@@ -88,7 +95,7 @@ public class ManifestOptions
 
     /// <summary>
     /// Gets or sets the per-manifest misfire policy override.
-    /// Null means use the global default from SchedulerConfiguration.
+    /// Null means use the global default, <c>SchedulerConfiguration.DefaultMisfirePolicy</c>.
     /// </summary>
     public MisfirePolicy? MisfirePolicy { get; set; }
 
@@ -117,4 +124,22 @@ public class ManifestOptions
     /// Interval schedule types. Null means no variance (deterministic scheduling).
     /// </remarks>
     public TimeSpan? Variance { get; set; }
+
+    /// <summary>
+    /// A copy of these options with its own exclusion list, so a change to one item's options
+    /// in a batch cannot reach another's. Copies every field, stated or not.
+    /// </summary>
+    internal ManifestOptions Copy() =>
+        new()
+        {
+            _isEnabled = _isEnabled,
+            _maxRetries = _maxRetries,
+            Timeout = Timeout,
+            Priority = Priority,
+            IsDormant = IsDormant,
+            MisfirePolicy = MisfirePolicy,
+            MisfireThreshold = MisfireThreshold,
+            Exclusions = [.. Exclusions],
+            Variance = Variance,
+        };
 }

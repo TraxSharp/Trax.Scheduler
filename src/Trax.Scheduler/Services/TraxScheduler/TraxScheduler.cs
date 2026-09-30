@@ -20,15 +20,45 @@ namespace Trax.Scheduler.Services.TraxScheduler;
 /// <summary>
 /// Implementation of <see cref="ITraxScheduler"/> that provides type-safe manifest scheduling.
 /// </summary>
+/// <param name="dataContextFactory">Creates the data context each operation uses.</param>
+/// <param name="trainRegistry">Validates that a scheduled train is registered.</param>
+/// <param name="cancellationRegistry">Cancels runs in this process.</param>
+/// <param name="logger">The scheduler's logger.</param>
+/// <param name="configuration">
+/// The scheduler configuration, whose <c>DefaultMaxRetries</c> and <c>DefaultMisfirePolicy</c> a
+/// manifest takes when its options state neither. Null keeps the built-in defaults.
+/// </param>
+/// <param name="changeSignal">Optional; always resolved via DI in a host.</param>
 public class TraxScheduler(
     IDataContextProviderFactory dataContextFactory,
     ITrainRegistry trainRegistry,
     ICancellationRegistry cancellationRegistry,
     ILogger<TraxScheduler> logger,
-    // Optional so direct construction in tests stays simple; always resolved via DI in a host.
+    SchedulerConfiguration? configuration,
     ITraxChangeSignal? changeSignal = null
 ) : ITraxScheduler
 {
+    /// <summary>
+    /// The constructor as it shipped before the configuration parameter, kept so code built
+    /// against it still binds. A scheduler built this way applies the built-in defaults rather
+    /// than the configured <c>DefaultMaxRetries</c> and <c>DefaultMisfirePolicy</c>.
+    /// </summary>
+    public TraxScheduler(
+        IDataContextProviderFactory dataContextFactory,
+        ITrainRegistry trainRegistry,
+        ICancellationRegistry cancellationRegistry,
+        ILogger<TraxScheduler> logger,
+        ITraxChangeSignal? changeSignal = null
+    )
+        : this(
+            dataContextFactory,
+            trainRegistry,
+            cancellationRegistry,
+            logger,
+            configuration: null,
+            changeSignal
+        ) { }
+
     /// <inheritdoc />
     public async Task<Manifest> ScheduleAsync<TTrain, TInput, TOutput>(
         string externalId,
@@ -103,7 +133,7 @@ public class TraxScheduler(
             foreach (var source in sourceList)
             {
                 var (externalId, input) = map(source);
-                var itemOptions = CreateItemOptions(resolved.ManifestOptions);
+                var itemOptions = resolved.ManifestOptions.Copy();
                 configureEach?.Invoke(source, itemOptions);
 
                 var manifest = await context.UpsertManifestAsync<TTrain, TInput, TOutput>(
@@ -250,7 +280,7 @@ public class TraxScheduler(
                             + "Ensure parent manifests are scheduled before their dependents."
                     );
 
-                var itemOptions = CreateItemOptions(resolved.ManifestOptions);
+                var itemOptions = resolved.ManifestOptions.Copy();
                 configureEach?.Invoke(source, itemOptions);
 
                 var manifest = await context.UpsertDependentManifestAsync<TTrain, TInput, TOutput>(
@@ -692,7 +722,7 @@ public class TraxScheduler(
             foreach (var source in sourceList)
             {
                 var (externalId, input) = map(source);
-                var itemOptions = CreateItemOptions(resolved.ManifestOptions);
+                var itemOptions = resolved.ManifestOptions.Copy();
                 configureEach?.Invoke(source, itemOptions);
 
                 var manifest = await context.UpsertManifestAsync(
@@ -785,7 +815,7 @@ public class TraxScheduler(
                             + "Ensure parent manifests are scheduled before their dependents."
                     );
 
-                var itemOptions = CreateItemOptions(resolved.ManifestOptions);
+                var itemOptions = resolved.ManifestOptions.Copy();
                 configureEach?.Invoke(source, itemOptions);
 
                 var manifest = await context.UpsertDependentManifestAsync(
@@ -1227,12 +1257,17 @@ public class TraxScheduler(
         dataContextFactory.Create() as IDataContext
         ?? throw new InvalidOperationException("Failed to create data context");
 
-    private static ResolvedOptions ResolveOptions(Action<ScheduleOptions>? options)
+    private ResolvedOptions ResolveOptions(Action<ScheduleOptions>? options)
     {
         var opts = new ScheduleOptions();
         options?.Invoke(opts);
 
         var manifestOptions = opts.ToManifestOptions();
+
+        // The scheduler-wide defaults, for a manifest whose options state neither. Resolved here,
+        // before a batch copies the options per item, so configureEach reads the resolved value.
+        manifestOptions._maxRetries ??= configuration?.DefaultMaxRetries;
+        manifestOptions.MisfirePolicy ??= configuration?.DefaultMisfirePolicy;
 
         // A group of the manifest's own (no group name) has no other members to disagree with,
         // so the manifest's stated priority is the group's too.
@@ -1252,18 +1287,6 @@ public class TraxScheduler(
             PrunePrefix: opts._prunePrefix
         );
     }
-
-    private static ManifestOptions CreateItemOptions(ManifestOptions baseOptions) =>
-        new()
-        {
-            Priority = baseOptions.Priority,
-            IsEnabled = baseOptions.IsEnabled,
-            MaxRetries = baseOptions.MaxRetries,
-            Timeout = baseOptions.Timeout,
-            IsDormant = baseOptions.IsDormant,
-            Exclusions = baseOptions.Exclusions,
-            Variance = baseOptions.Variance,
-        };
 
     private static async Task<Manifest> GetManifestByExternalIdAsync(
         IDataContext context,

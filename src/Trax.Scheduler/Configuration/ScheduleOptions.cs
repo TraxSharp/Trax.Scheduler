@@ -12,7 +12,9 @@ namespace Trax.Scheduler.Configuration;
 /// Every host start schedules its manifests again. The schedule, the input and the train always
 /// come from code. <see cref="Enabled"/> and the group settings are written only when the options
 /// state them, so a manifest or group an operator disabled or retuned at runtime keeps that state
-/// across restarts unless the code says otherwise.
+/// across restarts unless the code says otherwise. <see cref="MaxRetries"/> and
+/// <see cref="OnMisfire"/> fall back to the scheduler's <c>DefaultMaxRetries</c> and
+/// <c>DefaultMisfirePolicy</c> when not stated.
 /// </remarks>
 /// <example>
 /// <code>
@@ -34,7 +36,7 @@ public class ScheduleOptions
     // Nullable where "not stated" differs from any value: see the class remarks.
     internal int? _priority;
     internal bool? _isEnabled;
-    internal int _maxRetries = 3;
+    internal int? _maxRetries;
     internal TimeSpan? _timeout;
     internal bool _isDormant;
     internal MisfirePolicy? _misfirePolicy;
@@ -75,7 +77,8 @@ public class ScheduleOptions
     }
 
     /// <summary>
-    /// Sets the maximum retry attempts before dead-lettering.
+    /// Sets the maximum retry attempts before dead-lettering. Unstated, the manifest takes the
+    /// scheduler's <c>DefaultMaxRetries</c>.
     /// </summary>
     public ScheduleOptions MaxRetries(int retries)
     {
@@ -113,7 +116,8 @@ public class ScheduleOptions
     /// </summary>
     /// <remarks>
     /// Determines behavior when a scheduled run is missed (e.g., scheduler was down).
-    /// Only meaningful for Cron and Interval schedule types.
+    /// Only meaningful for Cron and Interval schedule types. Unstated, the manifest takes the
+    /// scheduler's <c>DefaultMisfirePolicy</c>.
     /// </remarks>
     public ScheduleOptions OnMisfire(MisfirePolicy policy)
     {
@@ -216,12 +220,12 @@ public class ScheduleOptions
         {
             Priority = _priority ?? 0,
             _isEnabled = _isEnabled,
-            MaxRetries = _maxRetries,
+            _maxRetries = _maxRetries,
             Timeout = _timeout,
             IsDormant = _isDormant,
             MisfirePolicy = _misfirePolicy,
             MisfireThreshold = _misfireThreshold,
-            Exclusions = _exclusions,
+            Exclusions = [.. _exclusions],
             Variance = _variance,
         };
 }
