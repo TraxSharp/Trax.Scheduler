@@ -17,6 +17,12 @@ namespace Trax.Scheduler.Trains.ManifestManager.Junctions;
 /// this junction will mark the metadata as Failed so it doesn't stay orphaned in Pending state
 /// forever and count against MaxActiveJobs capacity.
 ///
+/// A run whose job still has a row in <c>trax.background_job</c> is not reaped: it was delivered
+/// to the local worker pool and is waiting for a free worker, or is being run by one. Failing it
+/// would record a failure that did not happen, and the worker that reaches it would then find it
+/// no longer Pending and not run it. A job whose worker died is recovered by the worker pool
+/// itself, after <see cref="LocalWorkerOptions.VisibilityTimeout"/>.
+///
 /// This junction runs before ReapFailedJobsJunction so that newly-failed metadata is visible to
 /// the reaper in the same ManifestManager cycle (enabling dead-lettering if retries are exhausted).
 /// </remarks>
@@ -35,6 +41,7 @@ internal class ReapStalePendingMetadataJunction(
                 m.TrainState == TrainState.Pending
                 && m.StartTime < cutoff
                 && !config.ExcludedTrainTypeNames.Contains(m.Name)
+                && !dataContext.BackgroundJobs.Any(j => j.MetadataId == m.Id)
             )
             .Select(m => new
             {
@@ -70,7 +77,11 @@ internal class ReapStalePendingMetadataJunction(
         var now = DateTime.UtcNow;
 
         await dataContext
-            .Metadatas.Where(m => staleIds.Contains(m.Id) && m.TrainState == TrainState.Pending)
+            .Metadatas.Where(m =>
+                staleIds.Contains(m.Id)
+                && m.TrainState == TrainState.Pending
+                && !dataContext.BackgroundJobs.Any(j => j.MetadataId == m.Id)
+            )
             .ExecuteUpdateAsync(
                 s =>
                     s.SetProperty(m => m.TrainState, TrainState.Failed)
