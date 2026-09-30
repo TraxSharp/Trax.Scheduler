@@ -65,7 +65,8 @@ public partial class SchedulerConfigurationBuilder
     /// <c>AddTraxSchedulerLiveness()</c> health check reports unhealthy.
     /// </summary>
     /// <param name="threshold">
-    /// The staleness threshold (default: max(JobDispatcherPollingInterval * 10, 30s)).
+    /// The staleness threshold (default: max(JobDispatcherPollingInterval * 10, 30s)). Must be
+    /// between one second and ten years; the scheduler refuses to build otherwise.
     /// </param>
     /// <returns>The builder for method chaining</returns>
     public SchedulerConfigurationBuilder SchedulerLivenessThreshold(TimeSpan threshold)
@@ -109,7 +110,10 @@ public partial class SchedulerConfigurationBuilder
     /// <summary>
     /// Sets the maximum number of active jobs (Pending + InProgress) allowed across all manifests.
     /// </summary>
-    /// <param name="maxJobs">The maximum active jobs (default: 10, null = unlimited)</param>
+    /// <param name="maxJobs">
+    /// The maximum active jobs (default: 10, null = unlimited). Must be at least 1 when set; the
+    /// scheduler refuses to build otherwise.
+    /// </param>
     /// <returns>The builder for method chaining</returns>
     /// <remarks>
     /// When the total number of active jobs reaches this limit, the JobDispatcher dispatches no
@@ -204,7 +208,10 @@ public partial class SchedulerConfigurationBuilder
     /// <summary>
     /// Sets the default delay between retry attempts.
     /// </summary>
-    /// <param name="delay">The retry delay (default: 5 minutes)</param>
+    /// <param name="delay">
+    /// The retry delay (default: 5 minutes). Must be between zero and ten years; the scheduler
+    /// refuses to build otherwise.
+    /// </param>
     /// <returns>The builder for method chaining</returns>
     public SchedulerConfigurationBuilder DefaultRetryDelay(TimeSpan delay)
     {
@@ -215,7 +222,10 @@ public partial class SchedulerConfigurationBuilder
     /// <summary>
     /// Sets the multiplier applied to retry delay on each subsequent retry.
     /// </summary>
-    /// <param name="multiplier">The backoff multiplier (default: 2.0)</param>
+    /// <param name="multiplier">
+    /// The backoff multiplier (default: 2.0). Must be a finite number of at least 1; the scheduler
+    /// refuses to build otherwise.
+    /// </param>
     /// <returns>The builder for method chaining</returns>
     public SchedulerConfigurationBuilder RetryBackoffMultiplier(double multiplier)
     {
@@ -226,7 +236,10 @@ public partial class SchedulerConfigurationBuilder
     /// <summary>
     /// Sets the maximum retry delay to prevent unbounded backoff growth.
     /// </summary>
-    /// <param name="maxDelay">The maximum delay (default: 1 hour)</param>
+    /// <param name="maxDelay">
+    /// The maximum delay (default: 1 hour). Must be between zero and ten years; the scheduler
+    /// refuses to build otherwise.
+    /// </param>
     /// <returns>The builder for method chaining</returns>
     public SchedulerConfigurationBuilder MaxRetryDelay(TimeSpan maxDelay)
     {
@@ -267,7 +280,10 @@ public partial class SchedulerConfigurationBuilder
     /// whose manifest sets no Timeout of its own. A train nested inside a run shares that run's
     /// timeout; a run a scheduler did not dispatch is not bounded by it.
     /// </summary>
-    /// <param name="timeout">The job timeout (default: 20 minutes)</param>
+    /// <param name="timeout">
+    /// The job timeout (default: 20 minutes). Must be between one second and ten years; the
+    /// scheduler refuses to build otherwise.
+    /// </param>
     /// <returns>The builder for method chaining</returns>
     public SchedulerConfigurationBuilder DefaultJobTimeout(TimeSpan timeout)
     {
@@ -306,7 +322,10 @@ public partial class SchedulerConfigurationBuilder
     /// <summary>
     /// Sets the timeout after which a Pending job that was never picked up is automatically failed.
     /// </summary>
-    /// <param name="timeout">The stale pending timeout (default: 20 minutes)</param>
+    /// <param name="timeout">
+    /// The stale pending timeout (default: 20 minutes). Must be between one second and ten years;
+    /// the scheduler refuses to build otherwise.
+    /// </param>
     /// <returns>The builder for method chaining</returns>
     public SchedulerConfigurationBuilder StalePendingTimeout(TimeSpan timeout)
     {
@@ -319,7 +338,10 @@ public partial class SchedulerConfigurationBuilder
     /// A run whose own timeout is longer (its manifest's Timeout, or a longer
     /// <see cref="DefaultJobTimeout"/>) is kept until that timeout has passed as well.
     /// </summary>
-    /// <param name="timeout">The stale in-progress timeout (default: 60 minutes)</param>
+    /// <param name="timeout">
+    /// The stale in-progress timeout (default: 60 minutes). Must be between one second and ten
+    /// years; the scheduler refuses to build otherwise.
+    /// </param>
     /// <returns>The builder for method chaining</returns>
     public SchedulerConfigurationBuilder StaleInProgressTimeout(TimeSpan timeout)
     {
@@ -331,7 +353,10 @@ public partial class SchedulerConfigurationBuilder
     /// Sets how long a work queue entry may stay unconfirmed, in the middle of a two-phase
     /// enqueue, before it is resolved.
     /// </summary>
-    /// <param name="timeout">The stale staged entry timeout (default: 10 minutes)</param>
+    /// <param name="timeout">
+    /// The stale staged entry timeout (default: 10 minutes). Must be between one second and ten
+    /// years; the scheduler refuses to build otherwise.
+    /// </param>
     /// <returns>The builder for method chaining</returns>
     public SchedulerConfigurationBuilder StaleStagedEntryTimeout(TimeSpan timeout)
     {
@@ -374,7 +399,10 @@ public partial class SchedulerConfigurationBuilder
     /// <summary>
     /// Sets the default misfire threshold — the grace period before misfire policies take effect.
     /// </summary>
-    /// <param name="threshold">The misfire threshold (default: 60 seconds)</param>
+    /// <param name="threshold">
+    /// The misfire threshold (default: 60 seconds). Must be between zero and ten years; the
+    /// scheduler refuses to build otherwise.
+    /// </param>
     /// <returns>The builder for method chaining</returns>
     public SchedulerConfigurationBuilder DefaultMisfireThreshold(TimeSpan threshold)
     {

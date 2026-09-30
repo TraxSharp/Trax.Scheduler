@@ -483,6 +483,74 @@ public class SchedulerBuilderValidationTests
             .NotThrow();
     }
 
+    private static readonly TestCaseData[] OtherSettingsOutOfRange =
+    [
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(b => b.MaxActiveJobs(0)),
+            nameof(SchedulerConfigurationBuilder.MaxActiveJobs)
+        ).SetName("MaxActiveJobs zero"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(
+                b => b.DefaultRetryDelay(TimeSpan.FromSeconds(-1))
+            ),
+            nameof(SchedulerConfigurationBuilder.DefaultRetryDelay)
+        ).SetName("DefaultRetryDelay negative"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(b => b.RetryBackoffMultiplier(0.5)),
+            nameof(SchedulerConfigurationBuilder.RetryBackoffMultiplier)
+        ).SetName("RetryBackoffMultiplier below 1"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(b => b.RetryBackoffMultiplier(double.NaN)),
+            nameof(SchedulerConfigurationBuilder.RetryBackoffMultiplier)
+        ).SetName("RetryBackoffMultiplier NaN"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(b => b.MaxRetryDelay(TimeSpan.FromSeconds(-1))),
+            nameof(SchedulerConfigurationBuilder.MaxRetryDelay)
+        ).SetName("MaxRetryDelay negative"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(b => b.DefaultJobTimeout(TimeSpan.Zero)),
+            nameof(SchedulerConfigurationBuilder.DefaultJobTimeout)
+        ).SetName("DefaultJobTimeout zero"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(b => b.StalePendingTimeout(TimeSpan.Zero)),
+            nameof(SchedulerConfigurationBuilder.StalePendingTimeout)
+        ).SetName("StalePendingTimeout zero"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(
+                b => b.StaleInProgressTimeout(TimeSpan.FromMinutes(-1))
+            ),
+            nameof(SchedulerConfigurationBuilder.StaleInProgressTimeout)
+        ).SetName("StaleInProgressTimeout negative"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(b => b.StaleStagedEntryTimeout(TimeSpan.Zero)),
+            nameof(SchedulerConfigurationBuilder.StaleStagedEntryTimeout)
+        ).SetName("StaleStagedEntryTimeout zero"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(
+                b => b.DefaultMisfireThreshold(TimeSpan.FromSeconds(-1))
+            ),
+            nameof(SchedulerConfigurationBuilder.DefaultMisfireThreshold)
+        ).SetName("DefaultMisfireThreshold negative"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(
+                b => b.SchedulerLivenessThreshold(TimeSpan.Zero)
+            ),
+            nameof(SchedulerConfigurationBuilder.SchedulerLivenessThreshold)
+        ).SetName("SchedulerLivenessThreshold zero"),
+    ];
+
+    [TestCaseSource(nameof(OtherSettingsOutOfRange))]
+    public void A_retry_timeout_or_limit_out_of_range_is_refused_at_build(
+        Action<SchedulerConfigurationBuilder> configure,
+        string method
+    )
+    {
+        Building(configure)
+            .Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage($"*{method} must*");
+    }
+
     [Test]
     public void Polling_intervals_at_their_limits_build()
     {

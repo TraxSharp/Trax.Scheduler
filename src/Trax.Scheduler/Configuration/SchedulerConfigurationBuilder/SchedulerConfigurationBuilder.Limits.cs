@@ -30,6 +30,43 @@ public partial class SchedulerConfigurationBuilder
                 _configuration.DeadLetterRetentionPeriod,
                 nameof(DeadLetterRetentionPeriod)
             ),
+            SchedulerConfigLimits.AtLeastOne(_configuration.MaxActiveJobs, nameof(MaxActiveJobs)),
+            SchedulerConfigLimits.NonNegativeDuration(
+                _configuration.DefaultRetryDelay,
+                nameof(DefaultRetryDelay)
+            ),
+            SchedulerConfigLimits.BackoffMultiplier(
+                _configuration.RetryBackoffMultiplier,
+                nameof(RetryBackoffMultiplier)
+            ),
+            SchedulerConfigLimits.NonNegativeDuration(
+                _configuration.MaxRetryDelay,
+                nameof(MaxRetryDelay)
+            ),
+            SchedulerConfigLimits.PositiveDuration(
+                _configuration.DefaultJobTimeout,
+                nameof(DefaultJobTimeout)
+            ),
+            SchedulerConfigLimits.PositiveDuration(
+                _configuration.StalePendingTimeout,
+                nameof(StalePendingTimeout)
+            ),
+            SchedulerConfigLimits.PositiveDuration(
+                _configuration.StaleInProgressTimeout,
+                nameof(StaleInProgressTimeout)
+            ),
+            SchedulerConfigLimits.PositiveDuration(
+                _configuration.StaleStagedEntryTimeout,
+                nameof(StaleStagedEntryTimeout)
+            ),
+            SchedulerConfigLimits.NonNegativeDuration(
+                _configuration.DefaultMisfireThreshold,
+                nameof(DefaultMisfireThreshold)
+            ),
+            SchedulerConfigLimits.PositiveDuration(
+                _configuration.SchedulerLivenessThreshold,
+                nameof(SchedulerLivenessThreshold)
+            ),
         }
             .Concat(MetadataCleanupProblems(_configuration.MetadataCleanup))
             .Concat(_localWorkerOptions.Problems(nameof(ConfigureLocalWorkers)))
