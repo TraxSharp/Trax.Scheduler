@@ -42,6 +42,10 @@ internal class SchedulerConfigBootstrapHostedService : IHostedService, IDisposab
     private bool _refreshFailing;
     private CancellationTokenSource? _stopping;
     private Task? _refreshLoop;
+    private int _completedRefreshes;
+
+    /// <summary>How many refreshes after startup have finished; lets tests wait for one.</summary>
+    internal int CompletedRefreshes => Volatile.Read(ref _completedRefreshes);
 
     /// <summary>Created by the host through DI.</summary>
     /// <param name="services">Root provider; a scope is created from it for each read.</param>
@@ -121,6 +125,7 @@ internal class SchedulerConfigBootstrapHostedService : IHostedService, IDisposab
             {
                 await RefreshAsync(startup: false, stoppingToken);
                 _refreshFailing = false;
+                Interlocked.Increment(ref _completedRefreshes);
             }
             catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
             {
@@ -164,14 +169,15 @@ internal class SchedulerConfigBootstrapHostedService : IHostedService, IDisposab
                 _logger.LogInformation(
                     "No persisted scheduler config found; using builder defaults."
                 );
-            else
+            else if (_rowApplied)
             {
-                // Idempotent: only a setting that differs from the configured value is written.
+                // Only a row that was applied and then deleted returns the settings to the
+                // configured values. With no row ever applied there is nothing to undo, and
+                // resetting here would revert every runtime change on each refresh.
                 Apply(null, target);
-                if (_rowApplied)
-                    _logger.LogInformation(
-                        "The persisted scheduler config was removed; the configured settings apply again."
-                    );
+                _logger.LogInformation(
+                    "The persisted scheduler config was removed; the configured settings apply again."
+                );
             }
             _rowApplied = false;
             return;

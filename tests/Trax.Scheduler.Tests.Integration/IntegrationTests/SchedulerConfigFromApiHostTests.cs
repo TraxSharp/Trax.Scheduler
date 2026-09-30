@@ -192,6 +192,11 @@ public class SchedulerConfigFromApiHostTests
                 .BeTrue();
             running.Configuration.MaxActiveJobs.Should().Be(7);
 
+            // A refresh has to have seen the row: removing one this host never read has nothing
+            // to undo.
+            var seen = settings.CompletedRefreshes;
+            await WaitFor(() => settings.CompletedRefreshes > seen, "a refresh reads the row");
+
             await DeleteConfigRow();
 
             await WaitFor(
@@ -201,6 +206,36 @@ public class SchedulerConfigFromApiHostTests
                 "with no stored settings the configured ones apply"
             );
             running.Configuration.StalePendingTimeout.Should().Be(TimeSpan.FromMinutes(5));
+        }
+        finally
+        {
+            await settings.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Test]
+    public async Task With_no_stored_row_a_runtime_change_survives_the_refresh()
+    {
+        await using var running = await Scheduler();
+        running.Configuration.SettingsRefreshInterval = TimeSpan.FromMilliseconds(100);
+        var settings = SettingsService(running);
+        await settings.StartAsync(CancellationToken.None);
+        try
+        {
+            running.Configuration.DefaultRetryDelay = TimeSpan.FromSeconds(2);
+            var after = settings.CompletedRefreshes;
+
+            await WaitFor(
+                () => settings.CompletedRefreshes >= after + 2,
+                "two refreshes finish after the change"
+            );
+
+            running
+                .Configuration.DefaultRetryDelay.Should()
+                .Be(
+                    TimeSpan.FromSeconds(2),
+                    "with no row ever applied, a refresh has nothing to undo"
+                );
         }
         finally
         {
