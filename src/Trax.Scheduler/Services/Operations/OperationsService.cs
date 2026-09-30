@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Trax.Effect.Data.Services.DataContext;
 using Trax.Effect.Data.Services.IDataContextFactory;
+using Trax.Effect.Data.Services.SqlDialect;
 using Trax.Effect.Enums;
 using Trax.Effect.Models.Metadata;
 using Trax.Effect.Models.Metadata.DTOs;
@@ -1449,6 +1450,52 @@ public class OperationsService : IOperationsService
                 Message: "Scheduler config: no changes."
             );
 
+        int changes;
+        try
+        {
+            changes = await SaveSchedulerConfigPatchAsync(patch, target, ct);
+        }
+        catch (DbUpdateException ex)
+            when (_services?.GetService<ISqlDialect>() is { } dialect
+                && dialect.IsUniqueViolation(ex)
+            )
+        {
+            // Another host made the first save between this one's read and its insert. Its row
+            // now exists, so read it and apply the patch to it, as any later save does.
+            changes = await SaveSchedulerConfigPatchAsync(patch, target, ct);
+        }
+
+        // This host applies the patch at once; every scheduler host, this one included, also
+        // picks the saved row up on its next settings refresh.
+        foreach (var (setting, value) in patch)
+            if (!Equals(setting.ReadLive(target), value))
+                setting.WriteLive(target, value);
+
+        // No-op patches skip the DB write entirely so `updated_at` only moves on real changes.
+        if (changes > 0)
+            _changeSignal?.Notify(ChangeDomain.SchedulerConfig);
+
+        return new OperationResult(
+            true,
+            Id: SchedulerConfig.SingletonId,
+            Count: changes,
+            Message: changes == 0
+                ? "Scheduler config: no changes."
+                : $"Scheduler config: {changes} field(s) updated."
+        );
+    }
+
+    /// <summary>
+    /// Reads the stored row, names in it each setting of <paramref name="patch"/> that changes
+    /// what the scheduler runs with, and saves it, creating the row on the first save. Returns
+    /// how many settings changed; none writes nothing.
+    /// </summary>
+    private async Task<int> SaveSchedulerConfigPatchAsync(
+        IReadOnlyList<(ISchedulerSetting Setting, object? Value)> patch,
+        SchedulerSettingsTarget target,
+        CancellationToken ct
+    )
+    {
         // Read the stored row and name only the settings the patch sets in its overrides; every
         // other setting keeps the value each scheduler host configures in code. A save used to
         // write every field of the saving host's configuration, so a save from an API-only host
@@ -1464,55 +1511,38 @@ public class OperationsService : IOperationsService
             .Where(p => IsSchedulerConfigChange(row, p.Setting, p.Value, target))
             .ToList();
 
-        if (changes.Count > 0)
+        if (changes.Count == 0)
+            return 0;
+
+        if (row is null)
         {
-            if (row is null)
-            {
-                // We use DbSet.Add directly (rather than db.Track) because Track infers
-                // Added/Modified from `Id > 0`, which would misclassify the singleton row
-                // (Id is fixed at 1) as an update on first persist.
-                row = new SchedulerConfig { Id = SchedulerConfig.SingletonId, Overrides = "{}" };
+            // We use DbSet.Add directly (rather than db.Track) because Track infers
+            // Added/Modified from `Id > 0`, which would misclassify the singleton row
+            // (Id is fixed at 1) as an update on first persist.
+            row = new SchedulerConfig { Id = SchedulerConfig.SingletonId, Overrides = "{}" };
 
-                // Only the overrides decide what applies. The columns are also kept for a host
-                // still on a version that reads them, and a scheduler host fills them with the
-                // values it runs with, as a save always did.
-                if (_schedulerConfiguration.IsSchedulerHost)
-                    foreach (var setting in SchedulerSettings.All.Where(s => s.AppliesTo(target)))
-                    {
-                        setting.WriteRow(row, setting.ReadLive(target));
-                        row.RemoveOverride(setting.Name);
-                    }
+            // Only the overrides decide what applies. The columns are also kept for a host
+            // still on a version that reads them, and a scheduler host fills them with the
+            // values it runs with, as a save always did.
+            if (_schedulerConfiguration.IsSchedulerHost)
+                foreach (var setting in SchedulerSettings.All.Where(s => s.AppliesTo(target)))
+                {
+                    setting.WriteRow(row, setting.ReadLive(target));
+                    row.RemoveOverride(setting.Name);
+                }
 
-                db.SchedulerConfigs.Add(row);
-            }
-            else
-                SchedulerSettings.UpgradeLegacyRow(row);
-
-            foreach (var (setting, value) in changes)
-                setting.WriteRow(row, value);
-            row.UpdatedAt = DateTime.UtcNow;
-
-            await db.SaveChanges(ct);
+            db.SchedulerConfigs.Add(row);
         }
+        else
+            SchedulerSettings.UpgradeLegacyRow(row);
 
-        // This host applies the patch at once; every scheduler host, this one included, also
-        // picks the saved row up on its next settings refresh.
-        foreach (var (setting, value) in patch)
-            if (!Equals(setting.ReadLive(target), value))
-                setting.WriteLive(target, value);
+        foreach (var (setting, value) in changes)
+            setting.WriteRow(row, value);
+        row.UpdatedAt = DateTime.UtcNow;
 
-        // No-op patches skip the DB write entirely so `updated_at` only moves on real changes.
-        if (changes.Count > 0)
-            _changeSignal?.Notify(ChangeDomain.SchedulerConfig);
+        await db.SaveChanges(ct);
 
-        return new OperationResult(
-            true,
-            Id: SchedulerConfig.SingletonId,
-            Count: changes.Count,
-            Message: changes.Count == 0
-                ? "Scheduler config: no changes."
-                : $"Scheduler config: {changes.Count} field(s) updated."
-        );
+        return changes.Count;
     }
 
     /// <summary>

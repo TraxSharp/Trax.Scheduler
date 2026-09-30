@@ -565,6 +565,47 @@ public class SchedulerConfigFromApiHostTests
     }
 
     [Test]
+    public async Task Two_hosts_making_the_first_save_at_once_both_succeed()
+    {
+        await using var apiHost = ApiHost();
+
+        // Another host's first save has inserted the row but not committed it yet.
+        await using var other = new NpgsqlConnection(TestPostgres.ConnectionString);
+        await other.OpenAsync();
+        await using var transaction = await other.BeginTransactionAsync();
+        await using (
+            var insert = new NpgsqlCommand(
+                "INSERT INTO trax.scheduler_config (id, overrides, max_active_jobs, updated_at) "
+                    + "VALUES (1, '{\"MaxActiveJobs\": 7}', 7, now())",
+                other,
+                transaction
+            )
+        )
+            await insert.ExecuteNonQueryAsync();
+
+        // This save reads no row, so it inserts one, and its insert waits on the other's.
+        var save = Save(apiHost, new UpdateSchedulerConfigInput(DefaultMaxRetries: 6));
+        await using var probe = new NpgsqlConnection(TestPostgres.ConnectionString);
+        await probe.OpenAsync();
+        await WaitFor(
+            () => SessionsWaitingOnALock(probe) > 0,
+            "the second first-save's insert waits on the first one's"
+        );
+        await transaction.CommitAsync();
+
+        var result = await save;
+
+        result.Success.Should().BeTrue("the row now exists, so the save applies to it");
+        var factory = apiHost.GetRequiredService<IDataContextProviderFactory>();
+        using var db = await factory.CreateDbContextAsync(CancellationToken.None);
+        var row = await db.SchedulerConfigs.AsNoTracking().SingleAsync();
+        row.TryGetOverride<int?>("MaxActiveJobs", out var maxActiveJobs).Should().BeTrue();
+        maxActiveJobs.Should().Be(7, "the other host's save stands");
+        row.TryGetOverride<int>("DefaultMaxRetries", out var retries).Should().BeTrue();
+        retries.Should().Be(6);
+    }
+
+    [Test]
     public async Task A_scheduler_whose_first_settings_read_fails_still_applies_a_later_save()
     {
         await using var apiHost = ApiHost();
