@@ -63,10 +63,14 @@ public interface IOperationsService
     /// </remarks>
     /// <returns>
     /// <c>OperationResult(true, Id: metadataId, Count: 1, ...)</c> once the job is submitted; the
-    /// id is the run's metadata id, not a work queue id. <c>OperationResult(false, ...)</c> with
-    /// a populated <c>Message</c> for a missing <c>TrainName</c>, an unknown train, invalid or
-    /// oversized <c>InputJson</c>, or an input whose stored form is over its cap; no metadata row
-    /// is written for any of these.
+    /// id is the run's metadata id, not a work queue id. Also a success when the submitter threw
+    /// after a runner had already started the run (a remote runner that answered with the train's
+    /// error, a call that timed out while the run went on, or an in-process submitter that ran a
+    /// failing train): the run owns its outcome, which its row records, and the message says the
+    /// outcome is pending on the run. <c>OperationResult(false, ...)</c> with a populated
+    /// <c>Message</c> for a missing <c>TrainName</c>, an unknown train, invalid or oversized
+    /// <c>InputJson</c>, or an input whose stored form is over its cap; no metadata row is written
+    /// for any of these.
     /// </returns>
     /// <exception cref="UnauthorizedAccessException">
     /// The caller may not run the train. It propagates rather than becoming a failed result, and
@@ -79,14 +83,16 @@ public interface IOperationsService
     /// than reported as a refusal.
     /// </exception>
     /// <exception cref="Exception">
-    /// The job submitter failed. The run's metadata row is marked <c>Failed</c> with that
-    /// exception, as the job dispatcher does for a failed dispatch, and the exception is logged
-    /// and rethrown: the train was accepted and the server could not start it, which is not a
-    /// refusal (scheduler/0004). A database failure writing the row propagates the same way.
+    /// The job submitter failed and no runner started the run. The run's metadata row is marked
+    /// <c>Failed</c> with that exception, as the job dispatcher does for a failed dispatch, and the
+    /// exception is logged and rethrown: the train was accepted and the server could not start
+    /// it, which is not a refusal (scheduler/0004). A database failure writing the row propagates
+    /// the same way.
     /// </exception>
     /// <exception cref="OperationCanceledException">
-    /// <paramref name="ct"/> was cancelled. It is passed to the submitter, and a run it cancels
-    /// before submission is marked <c>Failed</c>.
+    /// <paramref name="ct"/> was cancelled before the run's metadata row was written. Once the row
+    /// is written the submit does not take <paramref name="ct"/>, so a caller that goes away does
+    /// not cancel the run it asked for.
     /// </exception>
     Task<OperationResult> RunTrainAsync(RunTrainInput input, CancellationToken ct) =>
         throw new NotSupportedException(

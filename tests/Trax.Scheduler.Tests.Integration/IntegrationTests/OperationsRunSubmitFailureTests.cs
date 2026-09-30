@@ -74,13 +74,14 @@ public class OperationsRunSubmitFailureTests
         using var scope = _provider.CreateScope();
         var operations = scope.ServiceProvider.GetRequiredService<IOperationsService>();
 
-        var act = async () =>
-            await operations.RunTrainAsync(
-                new RunTrainInput(typeof(ISchedulerTestTrain).FullName!, """{"value":"x"}"""),
-                CancellationToken.None
-            );
+        var result = await operations.RunTrainAsync(
+            new RunTrainInput(typeof(ISchedulerTestTrain).FullName!, """{"value":"x"}"""),
+            CancellationToken.None
+        );
 
-        await act.Should().ThrowAsync<InvalidOperationException>();
+        result
+            .Success.Should()
+            .BeTrue("the runner has the run, so the submit is reported as done, not as an error");
 
         var runner = StartsTheRunThenThrows.Runner;
         runner.Should().NotBeNull("the submitter started the run");

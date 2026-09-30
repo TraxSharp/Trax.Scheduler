@@ -247,13 +247,68 @@ public class OperationsServiceRunTests
     }
 
     [Test]
-    public async Task The_callers_token_reaches_the_submitter()
+    public async Task A_caller_that_goes_away_after_the_run_is_written_does_not_cancel_its_submit()
     {
         using var cts = new CancellationTokenSource();
+        var submitCancelled = true;
+        _submitter
+            .EnqueueAsync(Arg.Any<long>(), Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                // The request is aborted while the job is being handed over.
+                cts.Cancel();
+                submitCancelled = call.ArgAt<CancellationToken>(2).IsCancellationRequested;
+                return Task.FromResult("job-1");
+            });
 
-        await Run(typeof(IProbeTrain), "{}", cts.Token);
+        var result = await Run(typeof(IProbeTrain), "{}", cts.Token);
 
-        await _submitter.Received(1).EnqueueAsync(Arg.Any<long>(), Arg.Any<object>(), cts.Token);
+        result.Success.Should().BeTrue(result.Message);
+        submitCancelled
+            .Should()
+            .BeFalse("once the row is written the run is the server's, not the request's");
+        (await Runs()).Should().ContainSingle().Which.TrainState.Should().Be(TrainState.Pending);
+    }
+
+    [Test]
+    public async Task A_caller_cancelled_before_the_run_is_written_submits_nothing()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = async () => await Run(typeof(IProbeTrain), "{}", cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        _submitter.ReceivedCalls().Should().BeEmpty();
+    }
+
+    [Test]
+    public async Task A_submit_that_fails_after_a_runner_started_the_run_is_a_success()
+    {
+        _submitter
+            .EnqueueAsync(Arg.Any<long>(), Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns<Task<string>>(async call =>
+            {
+                // A remote runner claimed the run, then the call to it failed or timed out.
+                var id = call.ArgAt<long>(0);
+                using var context = (IDataContext)
+                    _provider.GetRequiredService<IDataContextProviderFactory>().Create();
+                var row = await context.Metadatas.FirstAsync(m => m.Id == id);
+                row.TrainState = TrainState.InProgress;
+                await context.SaveChanges(CancellationToken.None);
+                throw new TimeoutException("the runner did not answer in time");
+            });
+
+        var result = await Run(typeof(IProbeTrain), "{}");
+
+        result
+            .Success.Should()
+            .BeTrue("the run was submitted; retrying would start a second concurrent run");
+        result.Message.Should().Contain("pending");
+        var run = (await Runs()).Should().ContainSingle().Subject;
+        result.Id.Should().Be(run.Id);
+        run.TrainState.Should().Be(TrainState.InProgress, "the runner owns its outcome");
+        _logger.Errors.Should().BeEmpty();
     }
 
     [Test]

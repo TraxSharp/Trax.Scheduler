@@ -291,23 +291,51 @@ public class OperationsService : IOperationsService
             await db.SaveChanges(ct);
         }
 
+        // The row exists now, so the run is the server's to see through: the submit is not tied
+        // to the caller's request. A client that navigates away would otherwise abort the submit,
+        // and a runner that takes the request's cancellation would cancel the run with it. The
+        // submitter's own timeouts bound the call.
         try
         {
-            await ResolveSubmitter(services, trainName).EnqueueAsync(metadata.Id, runInput, ct);
+            await ResolveSubmitter(services, trainName)
+                .EnqueueAsync(metadata.Id, runInput, CancellationToken.None);
         }
         catch (Exception ex)
         {
-            // No job exists to move the row out of Pending, so fail it now with the submitter's
-            // exception, as the job dispatcher does when a dispatch fails, rather than leave it
-            // for the stale-pending reaper to fail later for the wrong reason. The failure is the
-            // server's, not a refusal, so it is thrown (scheduler/0004).
+            // A submitter that throws may still have delivered the job: a runner that ran it and
+            // answered with an error, or is still running it when the call times out, has moved
+            // the row out of Pending and owns its outcome. Only a row still Pending is a job no
+            // runner started; it is failed now with the submitter's exception, as the job
+            // dispatcher does when a dispatch fails, and the failure is the server's, not a
+            // refusal, so it is thrown (scheduler/0004).
+            var failed = await FailUnsubmittedRunAsync(metadata.Id, ex);
+
+            if (failed == 0)
+            {
+                _logger?.LogWarning(
+                    ex,
+                    "The submitter reported a failure for a run of {TrainName} (metadata "
+                        + "{MetadataId}), but a runner has already started it; the run records "
+                        + "its own outcome",
+                    trainName,
+                    metadata.Id
+                );
+
+                return new OperationResult(
+                    true,
+                    Id: metadata.Id,
+                    Count: 1,
+                    Message: $"Run {metadata.Id} of {trainName} submitted; its outcome is pending "
+                        + "on the run."
+                );
+            }
+
             _logger?.LogError(
                 ex,
                 "Submitting a run of {TrainName} (metadata {MetadataId}) failed",
                 trainName,
                 metadata.Id
             );
-            await FailUnsubmittedRunAsync(metadata.Id, ex);
             throw;
         }
 
@@ -377,7 +405,11 @@ public class OperationsService : IOperationsService
     /// only while it is still <c>Pending</c>. Reading it first and saving afterwards could land
     /// after the runner's claim and record <c>Failed</c> over a run that is in progress.
     /// </remarks>
-    private async Task FailUnsubmittedRunAsync(long metadataId, Exception submitFailure)
+    /// <returns>
+    /// The rows failed: 1 when the run was still <c>Pending</c>, 0 when a runner already owns it,
+    /// and <see langword="null"/> when the write itself failed.
+    /// </returns>
+    private async Task<int?> FailUnsubmittedRunAsync(long metadataId, Exception submitFailure)
     {
         try
         {
@@ -398,7 +430,7 @@ public class OperationsService : IOperationsService
             var endTime = DateTime.UtcNow;
 
             if (db.SupportsSetUpdates())
-                await pending.ExecuteUpdateAsync(
+                return await pending.ExecuteUpdateAsync(
                     u =>
                         u.SetProperty(m => m.TrainState, TrainState.Failed)
                             .SetProperty(m => m.EndTime, endTime)
@@ -409,17 +441,17 @@ public class OperationsService : IOperationsService
                             .SetProperty(m => m.FailureClass, failure.FailureClass),
                     CancellationToken.None
                 );
-            else
-                await db.UpdateEachAsync(
-                    pending,
-                    m =>
-                    {
-                        m.TrainState = TrainState.Failed;
-                        m.EndTime = endTime;
-                        m.AddException(submitFailure);
-                    },
-                    CancellationToken.None
-                );
+
+            return await db.UpdateEachAsync(
+                pending,
+                m =>
+                {
+                    m.TrainState = TrainState.Failed;
+                    m.EndTime = endTime;
+                    m.AddException(submitFailure);
+                },
+                CancellationToken.None
+            );
         }
         catch (Exception ex)
         {
@@ -428,6 +460,7 @@ public class OperationsService : IOperationsService
                 "Could not mark unsubmitted run {MetadataId} failed; the stale-pending reaper will",
                 metadataId
             );
+            return null;
         }
     }
 
