@@ -55,12 +55,14 @@ public class ManifestOptions
     /// takes the scheduler's <c>DefaultMaxRetries</c> (3, four attempts, unless configured);
     /// inside a <c>configureEach</c> callback it already reads the batch's value. Failures count
     /// within <see cref="SchedulerConfiguration.FailureCountWindow"/> and after the manifest's
-    /// latest resolved dead letter, or within <see cref="FailureWindow"/> when it is set.
+    /// latest resolved dead letter, or within <see cref="FailureWindow"/> when it is set. Written
+    /// to an existing manifest only when set: left unset, a re-seed keeps the manifest's current
+    /// value, including one an operator changed at runtime.
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">The value set is negative.</exception>
     public int MaxRetries
     {
-        get => _maxRetries ?? 3;
+        get => _maxRetries ?? _defaultMaxRetries ?? 3;
         set
         {
             ArgumentOutOfRangeException.ThrowIfNegative(value);
@@ -68,7 +70,11 @@ public class ManifestOptions
         }
     }
 
+    /// <summary>The retries the code states, or null when it states none.</summary>
     internal int? _maxRetries;
+
+    /// <summary>The scheduler's <c>DefaultMaxRetries</c>, which a new manifest takes when none is stated.</summary>
+    internal int? _defaultMaxRetries;
 
     /// <summary>
     /// Gets or sets the timeout for job execution.
@@ -76,9 +82,22 @@ public class ManifestOptions
     /// <remarks>
     /// If a job is in "InProgress" state for longer than this duration,
     /// it may be considered stuck and subject to recovery logic.
-    /// Null uses the global default from SchedulerConfiguration.
+    /// Null uses the global default from SchedulerConfiguration. Written to an existing manifest
+    /// only when set (setting null states "use the global default"): left unset, a re-seed keeps
+    /// the manifest's current value.
     /// </remarks>
-    public TimeSpan? Timeout { get; set; }
+    public TimeSpan? Timeout
+    {
+        get => _timeout;
+        set
+        {
+            _timeout = value;
+            _timeoutStated = true;
+        }
+    }
+
+    internal TimeSpan? _timeout;
+    internal bool _timeoutStated;
 
     /// <summary>
     /// Gets or sets the default dispatch priority for this manifest's work queue entries.
@@ -87,8 +106,16 @@ public class ManifestOptions
     /// Range: 0 (lowest) to 31 (highest). Higher-priority entries are dispatched first
     /// by the JobDispatcher. For dependent manifests, a configurable boost is applied
     /// on top of this value (see <see cref="SchedulerConfiguration.DependentPriorityBoost"/>).
+    /// A new manifest takes 0 when none is set. Written to an existing manifest only when set:
+    /// left unset, a re-seed keeps the manifest's current value.
     /// </remarks>
-    public int Priority { get; set; }
+    public int Priority
+    {
+        get => _priority ?? 0;
+        set => _priority = value;
+    }
+
+    internal int? _priority;
 
     /// <summary>
     /// Gets or sets whether this dependent manifest is dormant.
@@ -180,8 +207,10 @@ public class ManifestOptions
         {
             _isEnabled = _isEnabled,
             _maxRetries = _maxRetries,
-            Timeout = Timeout,
-            Priority = Priority,
+            _defaultMaxRetries = _defaultMaxRetries,
+            _timeout = _timeout,
+            _timeoutStated = _timeoutStated,
+            _priority = _priority,
             IsDormant = IsDormant,
             MisfirePolicy = MisfirePolicy,
             MisfireThreshold = MisfireThreshold,

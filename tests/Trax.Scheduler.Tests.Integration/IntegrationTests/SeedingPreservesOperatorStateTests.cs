@@ -160,6 +160,99 @@ public class SeedingPreservesOperatorStateTests
         string externalId
     ) => fx.DataContext.Manifests.AsNoTracking().FirstAsync(m => m.ExternalId == externalId);
 
+    [Test]
+    public async Task Runtime_edits_to_retries_timeout_and_priority_survive_a_re_seed_that_states_none()
+    {
+        await using var fx = await SchedulerE2EFixture.CreateAsync(_ => { });
+
+        await ScheduleAsync(fx, "ops-tuned");
+        await EditAsync(fx, "ops-tuned", maxRetries: 9, timeoutSeconds: 600, priority: 17);
+
+        await ScheduleAsync(fx, "ops-tuned");
+
+        var manifest = await fx
+            .DataContext.Manifests.AsNoTracking()
+            .FirstAsync(m => m.ExternalId == "ops-tuned");
+        const string because =
+            "the code states none of them, so the operator's values stand. See docs/adr/0011-a-re-seed-writes-only-the-settings-the-code-states.md.";
+        manifest.MaxRetries.Should().Be(9, because);
+        manifest.TimeoutSeconds.Should().Be(600, because);
+        manifest.Priority.Should().Be(17, because);
+    }
+
+    [Test]
+    public async Task Retries_timeout_and_priority_the_code_states_are_written_on_a_re_seed()
+    {
+        await using var fx = await SchedulerE2EFixture.CreateAsync(_ => { });
+        Action<Configuration.ScheduleOptions> stated = o =>
+            o.MaxRetries(2).Timeout(TimeSpan.FromMinutes(1)).Priority(4);
+
+        await ScheduleAsync(fx, "code-tuned", stated);
+        await EditAsync(fx, "code-tuned", maxRetries: 9, timeoutSeconds: 600, priority: 17);
+
+        await ScheduleAsync(fx, "code-tuned", stated);
+
+        var manifest = await fx
+            .DataContext.Manifests.AsNoTracking()
+            .FirstAsync(m => m.ExternalId == "code-tuned");
+        const string because =
+            "the code states each of them, and code wins. See docs/adr/0011-a-re-seed-writes-only-the-settings-the-code-states.md.";
+        manifest.MaxRetries.Should().Be(2, because);
+        manifest.TimeoutSeconds.Should().Be(60, because);
+        manifest.Priority.Should().Be(4, because);
+    }
+
+    [Test]
+    public async Task A_batch_item_writes_only_what_its_configure_each_states_on_a_re_seed()
+    {
+        await using var fx = await SchedulerE2EFixture.CreateAsync(_ => { });
+        Task Seed() =>
+            fx.Scheduler.ScheduleManyAsync<ISchedulerTestTrain, SchedulerTestInput, Unit, string>(
+                ["batch-a", "batch-b"],
+                id => (id, new SchedulerTestInput { Value = id }),
+                Every.Minutes(5),
+                configureEach: (id, o) =>
+                {
+                    if (id == "batch-a")
+                        o.MaxRetries = 1;
+                }
+            );
+
+        await Seed();
+        await EditAsync(fx, "batch-a", maxRetries: 9, timeoutSeconds: 600, priority: 17);
+        await EditAsync(fx, "batch-b", maxRetries: 9, timeoutSeconds: 600, priority: 17);
+
+        await Seed();
+
+        var manifests = await fx
+            .DataContext.Manifests.AsNoTracking()
+            .Where(m => m.ExternalId == "batch-a" || m.ExternalId == "batch-b")
+            .ToDictionaryAsync(m => m.ExternalId);
+        manifests["batch-a"].MaxRetries.Should().Be(1, "configureEach states it for batch-a");
+        manifests["batch-a"].Priority.Should().Be(17, "nothing states batch-a's priority");
+        manifests["batch-b"].MaxRetries.Should().Be(9, "nothing states batch-b's retries");
+        manifests["batch-b"].TimeoutSeconds.Should().Be(600);
+    }
+
+    /// <summary>An operator's runtime edit, as an update-manifest action writes it.</summary>
+    private static async Task EditAsync(
+        SchedulerE2EFixture fx,
+        string externalId,
+        int maxRetries,
+        int timeoutSeconds,
+        int priority
+    )
+    {
+        await fx
+            .DataContext.Manifests.Where(m => m.ExternalId == externalId)
+            .ExecuteUpdateAsync(s =>
+                s.SetProperty(m => m.MaxRetries, maxRetries)
+                    .SetProperty(m => m.TimeoutSeconds, timeoutSeconds)
+                    .SetProperty(m => m.Priority, priority)
+            );
+        fx.DataContext.Reset();
+    }
+
     private static Task<Effect.Models.Manifest.Manifest> ScheduleAsync(
         SchedulerE2EFixture fx,
         string externalId,

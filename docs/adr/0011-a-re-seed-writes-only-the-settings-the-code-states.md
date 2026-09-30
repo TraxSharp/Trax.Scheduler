@@ -8,13 +8,14 @@ status: accepted
 
 Every host start schedules its manifests again. The schedule, the input and the train always
 come from code. The settings an operator can also change at runtime (a manifest's enabled flag,
-a group's priority, limit and enabled flag) are written only when the scheduling options state
-them; an unstated one keeps whatever the database holds. Two members of one group that state
+retries, timeout and priority, and a group's priority, limit and enabled flag) are written only
+when the scheduling options state them; an unstated one keeps whatever the database holds. Two members of one group that state
 different values for the same group setting fail the build.
 
 ## Status
 
-**Accepted.**
+**Accepted.** Amended 2026-09-30: a manifest's retries, timeout and priority are written only
+when stated too.
 
 ## Why this is written down
 
@@ -47,15 +48,22 @@ initial priority and after that only an explicit group priority changes it. A sc
 queued at its manifest's priority, so a manifest's priority still orders work inside a shared
 group.
 
-**Settings nobody edits at runtime are unaffected.** `MaxRetries`, the timeout, the misfire
-options, exclusions and variance are written at every start, with the scheduler-wide defaults
-where the options set none. Moving one of them to the operator's side is a change to this ADR,
-not a local edit.
+**A manifest's retries, timeout and priority moved to the operator's side** once an edit path
+for them existed (an update-manifest action writes `MaxRetries`). Left unstated, a new manifest
+still takes the scheduler's `DefaultMaxRetries`, no timeout and priority 0, but an existing one
+keeps its value, so changing `DefaultMaxRetries` no longer rewrites manifests that already
+exist; stating `MaxRetries` in code does. Setting a batch item's `Timeout` to null in
+`configureEach` states "no timeout" and clears it.
+
+**Settings nobody edits at runtime are unaffected.** The misfire options, exclusions and
+variance are written at every start, with the scheduler-wide defaults where the options set
+none. Moving one of them to the operator's side is a change to this ADR, not a local edit.
 
 ## Exemplars
 
-- `SeedingPreservesOperatorStateTests` disables a manifest and edits a group at runtime,
-  seeds again, and asserts the edits survive, and that a stated value still wins.
+- `SeedingPreservesOperatorStateTests` disables a manifest, edits its retries, timeout and
+  priority, and edits a group at runtime, seeds again, and asserts the edits survive, and that a
+  stated value still wins.
 - `SeedingBuildValidationTests` pins the build failure for two members stating different group
   settings, and that agreeing or silent members build.
 - [Scheduling Options](/docs/scheduler/scheduling-options#what-a-restart-rewrites) is the rule
@@ -66,5 +74,8 @@ state-only. A dashboard action that edits a new manifest or group field has to b
 the same treatment in `DataContextExtensions`, and that is caught in review.
 
 ## Changelog
+
+- **2026-09-30**: A manifest's `MaxRetries`, timeout and priority are written on a re-seed only
+  when the code states them, as its enabled flag is; they left "Settings nobody edits at runtime".
 
 - **2026-09-30**: Recorded, with the change that made re-seeding write only stated settings.

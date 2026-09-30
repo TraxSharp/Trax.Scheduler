@@ -1505,7 +1505,7 @@ public class TraxScheduler(
 
         // The scheduler-wide defaults, for a manifest whose options state neither. Resolved here,
         // before a batch copies the options per item, so configureEach reads the resolved value.
-        manifestOptions._maxRetries ??= configuration?.DefaultMaxRetries;
+        manifestOptions._defaultMaxRetries = configuration?.DefaultMaxRetries;
         manifestOptions.MisfirePolicy ??= configuration?.DefaultMisfirePolicy;
 
         // A group of the manifest's own (no group name) or a named batch's own group has no other

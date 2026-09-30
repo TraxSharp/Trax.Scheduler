@@ -131,12 +131,8 @@ internal static class DataContextExtensions
             existing.SetProperties(input);
             if (options._isEnabled is { } isEnabled)
                 existing.IsEnabled = isEnabled;
-            existing.MaxRetries = options.MaxRetries;
-            existing.TimeoutSeconds = options.Timeout.HasValue
-                ? (int)options.Timeout.Value.TotalSeconds
-                : null;
+            ApplyStatedSettings(existing, options);
             existing.ManifestGroupId = manifestGroupId;
-            existing.Priority = options.Priority;
             ApplySchedule(existing, schedule);
             ApplyVariance(existing, schedule, options);
             ApplyMisfireOptions(existing, options);
@@ -229,12 +225,8 @@ internal static class DataContextExtensions
             existing.SetProperties(input);
             if (options._isEnabled is { } isEnabled)
                 existing.IsEnabled = isEnabled;
-            existing.MaxRetries = options.MaxRetries;
-            existing.TimeoutSeconds = options.Timeout.HasValue
-                ? (int)options.Timeout.Value.TotalSeconds
-                : null;
+            ApplyStatedSettings(existing, options);
             existing.ManifestGroupId = manifestGroupId;
-            existing.Priority = options.Priority;
             existing.ScheduleType = scheduleType;
             existing.DependsOnManifestId = dependsOnManifestId;
             existing.CronExpression = null;
@@ -324,12 +316,8 @@ internal static class DataContextExtensions
             existing.SetProperties(input);
             if (options._isEnabled is { } isEnabled)
                 existing.IsEnabled = isEnabled;
-            existing.MaxRetries = options.MaxRetries;
-            existing.TimeoutSeconds = options.Timeout.HasValue
-                ? (int)options.Timeout.Value.TotalSeconds
-                : null;
+            ApplyStatedSettings(existing, options);
             existing.ManifestGroupId = manifestGroupId;
-            existing.Priority = options.Priority;
             existing.ScheduleType = ScheduleType.Once;
             existing.ScheduledAt = scheduledAt;
             existing.CronExpression = null;
@@ -363,6 +351,23 @@ internal static class DataContextExtensions
         context.Manifests.Add(manifest);
 
         return manifest;
+    }
+
+    /// <summary>
+    /// Writes the retries, timeout and priority to an existing manifest, each only when the code
+    /// states it. An operator can change any of them at runtime, and an unstated one keeps
+    /// whatever the database holds (scheduler/0011).
+    /// </summary>
+    private static void ApplyStatedSettings(Manifest existing, ManifestOptions options)
+    {
+        if (options._maxRetries is { } maxRetries)
+            existing.MaxRetries = maxRetries;
+        if (options._timeoutStated)
+            existing.TimeoutSeconds = options.Timeout.HasValue
+                ? (int)options.Timeout.Value.TotalSeconds
+                : null;
+        if (options._priority is { } priority)
+            existing.Priority = priority;
     }
 
     /// <summary>

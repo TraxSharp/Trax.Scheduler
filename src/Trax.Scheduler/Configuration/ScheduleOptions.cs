@@ -10,11 +10,12 @@ namespace Trax.Scheduler.Configuration;
 /// </summary>
 /// <remarks>
 /// Every host start schedules its manifests again. The schedule, the input and the train always
-/// come from code. <see cref="Enabled"/> and the group settings are written only when the options
-/// state them, so a manifest or group an operator disabled or retuned at runtime keeps that state
-/// across restarts unless the code says otherwise. <see cref="MaxRetries"/> and
-/// <see cref="OnMisfire"/> fall back to the scheduler's <c>DefaultMaxRetries</c> and
-/// <c>DefaultMisfirePolicy</c> when not stated.
+/// come from code. <see cref="Enabled"/>, <see cref="MaxRetries"/>, <see cref="Timeout"/>,
+/// <see cref="Priority"/> and the group settings are written only when the options state them, so
+/// a manifest or group an operator disabled or retuned at runtime keeps that state across restarts
+/// unless the code says otherwise. A new manifest takes the scheduler's <c>DefaultMaxRetries</c>
+/// when <see cref="MaxRetries"/> is not stated, and <see cref="OnMisfire"/> falls back to
+/// <c>DefaultMisfirePolicy</c>.
 /// </remarks>
 /// <example>
 /// <code>
@@ -62,6 +63,10 @@ public class ScheduleOptions
     /// Sets the dispatch priority for this manifest (0-31).
     /// Higher values are dispatched first.
     /// </summary>
+    /// <remarks>
+    /// Stated, it is written on every seed. Left unstated, a new manifest takes 0 and an existing
+    /// one keeps whatever it is, including a runtime change.
+    /// </remarks>
     public ScheduleOptions Priority(int priority)
     {
         _priority = priority;
@@ -83,7 +88,8 @@ public class ScheduleOptions
 
     /// <summary>
     /// Sets how many times a failed run is retried before the manifest is dead-lettered. Unstated,
-    /// the manifest takes the scheduler's <c>DefaultMaxRetries</c>.
+    /// a new manifest takes the scheduler's <c>DefaultMaxRetries</c> and an existing one keeps
+    /// whatever it is, including a runtime change.
     /// </summary>
     /// <remarks>
     /// The count is of retries after the first run, so a manifest runs at most
@@ -105,6 +111,10 @@ public class ScheduleOptions
     /// <summary>
     /// Sets the timeout for job execution.
     /// </summary>
+    /// <remarks>
+    /// Stated, it is written on every seed. Left unstated, a new manifest has no timeout of its
+    /// own and an existing one keeps whatever it is, including a runtime change.
+    /// </remarks>
     public ScheduleOptions Timeout(TimeSpan timeout)
     {
         _timeout = timeout;
@@ -266,10 +276,11 @@ public class ScheduleOptions
     internal ManifestOptions ToManifestOptions() =>
         new()
         {
-            Priority = _priority ?? 0,
+            _priority = _priority,
             _isEnabled = _isEnabled,
             _maxRetries = _maxRetries,
-            Timeout = _timeout,
+            _timeout = _timeout,
+            _timeoutStated = _timeout is not null,
             IsDormant = _isDormant,
             MisfirePolicy = _misfirePolicy,
             MisfireThreshold = _misfireThreshold,
