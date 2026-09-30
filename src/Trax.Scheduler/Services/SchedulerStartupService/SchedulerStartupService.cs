@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Trax.Effect.Data.Services.DataContext;
+using Trax.Effect.Data.Services.SqlDialect;
 using Trax.Effect.Enums;
 using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Services.ManifestPruning;
@@ -233,14 +234,15 @@ internal class SchedulerStartupService(
         }
     }
 
-    internal static bool IsTransient(Exception ex) =>
-        ex is TimeoutException
-        || ex.GetType().FullName?.StartsWith("Npgsql.") == true
-        || (
-            ex is InvalidOperationException
-            && ex.InnerException is not null
-            && IsTransient(ex.InnerException)
-        );
+    /// <summary>
+    /// Whether a seeding failure is worth retrying, as the provider's SQL dialect classifies it:
+    /// a lost or refused connection, a timeout, a deadlock or serialization failure, or (Sqlite) a
+    /// busy or locked database. Any other failure, a constraint violation included, is thrown at
+    /// once. A host with no dialect (InMemory) retries nothing, since it has no database to wait
+    /// for.
+    /// </summary>
+    internal bool IsTransient(Exception ex) =>
+        serviceProvider.GetService<ISqlDialect>()?.IsTransient(ex) ?? false;
 
     /// <summary>
     /// Maximum number of orphaned manifests to delete per batch. Keeps the SQL IN(...)
