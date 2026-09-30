@@ -61,11 +61,13 @@ not to record. The format is
 
 ## Guards
 
-`tests/Trax.Scheduler.Tests.Meta/` holds fourteen convention guards. Thirteen are the
+`tests/Trax.Scheduler.Tests.Meta/` holds fifteen convention guards. Thirteen are the
 workspace-wide conventions shared with the other repos. The fourteenth,
 `WorkQueueCreationSitesTests`, also runs in Trax.Api and Trax.Dashboard with a different
 allow-list in each; here it permits only the ManifestManager's enqueue, dormant dependents, and
-`TraxScheduler`'s manifest trigger and dead-letter requeue (`docs/0017`). The guards this repo's own ADRs name live with the suites they
+`TraxScheduler`'s manifest trigger and dead-letter requeue (`docs/0017`). The fifteenth,
+`TestProjectsAreNotPackedTests`, keeps every project under `tests/` unpackable, since the helper
+library `Trax.Scheduler.Tests.ArrayLogger` once reached nuget.org. The guards this repo's own ADRs name live with the suites they
 belong to rather than in `Tests.Meta`: `RemoteRunContractTests`, `HttpRunExecutorTests` and
 `LambdaRunExecutorTests` for the wire contract, `ProviderConsistencyTests` and
 `SqliteSchedulerBuilderTests` for the provider swap.
