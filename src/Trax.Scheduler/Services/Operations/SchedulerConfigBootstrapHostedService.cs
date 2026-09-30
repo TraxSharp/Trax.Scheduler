@@ -63,7 +63,9 @@ internal class SchedulerConfigBootstrapHostedService : IHostedService, IDisposab
     /// <summary>
     /// Captures the configured values, applies the persisted row once, then starts the refresh
     /// that keeps applying it. Never throws: a missing row, a missing table or a database error is
-    /// logged and leaves the configured values in place.
+    /// logged and leaves the configured values in place. The refresh starts even when the first
+    /// read fails, so a row that becomes readable later (the database was briefly unreachable, or
+    /// the table was not migrated yet) is still applied without a restart.
     /// </summary>
     /// <param name="cancellationToken">Cancels the startup read.</param>
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -72,7 +74,6 @@ internal class SchedulerConfigBootstrapHostedService : IHostedService, IDisposab
         try
         {
             configuration = _services.GetRequiredService<SchedulerConfiguration>();
-            await RefreshAsync(startup: true, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -81,6 +82,20 @@ internal class SchedulerConfigBootstrapHostedService : IHostedService, IDisposab
                 "Failed to apply persisted scheduler config; using builder defaults."
             );
             return;
+        }
+
+        try
+        {
+            await RefreshAsync(startup: true, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to apply persisted scheduler config; using builder defaults until it can be read."
+            );
+            // The refresh logs once per outage; this was the first failure of this one.
+            _refreshFailing = true;
         }
 
         if (configuration.SettingsRefreshInterval <= TimeSpan.Zero || _refreshLoop is not null)

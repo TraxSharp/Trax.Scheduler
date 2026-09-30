@@ -477,6 +477,69 @@ public class SchedulerConfigFromApiHostTests
         await transaction.RollbackAsync();
     }
 
+    [Test]
+    public async Task A_scheduler_whose_first_settings_read_fails_still_applies_a_later_save()
+    {
+        await using var apiHost = ApiHost();
+        var configuration = new SchedulerConfiguration
+        {
+            SettingsRefreshInterval = TimeSpan.FromMilliseconds(100),
+        };
+        var factory = new FailsOnceDataContextFactory(
+            apiHost.GetRequiredService<IDataContextProviderFactory>()
+        );
+        await using var host = new ServiceCollection()
+            .AddSingleton(configuration)
+            .AddSingleton<IDataContextProviderFactory>(factory)
+            .BuildServiceProvider();
+        var settings = new SchedulerConfigBootstrapHostedService(
+            host,
+            Microsoft
+                .Extensions
+                .Logging
+                .Abstractions
+                .NullLogger<SchedulerConfigBootstrapHostedService>
+                .Instance
+        );
+
+        // The first read fails (the database is briefly unreachable at startup).
+        await settings.StartAsync(CancellationToken.None);
+        try
+        {
+            factory.Failed.Should().BeTrue();
+
+            (await Save(apiHost, new UpdateSchedulerConfigInput(JobDispatcherEnabled: false)))
+                .Success.Should()
+                .BeTrue();
+
+            await WaitFor(
+                () => !configuration.JobDispatcherEnabled,
+                "the refresh runs even when the startup read failed, so a later save arrives"
+            );
+        }
+        finally
+        {
+            await settings.StopAsync(CancellationToken.None);
+        }
+    }
+
+    private sealed class FailsOnceDataContextFactory(IDataContextProviderFactory inner)
+        : IDataContextProviderFactory
+    {
+        private int _calls;
+
+        public bool Failed => Volatile.Read(ref _calls) > 0;
+
+        public Task<Trax.Effect.Data.Services.DataContext.IDataContext> CreateDbContextAsync(
+            CancellationToken cancellationToken
+        ) =>
+            Interlocked.Increment(ref _calls) == 1
+                ? throw new InvalidOperationException("the database is not reachable yet")
+                : inner.CreateDbContextAsync(cancellationToken);
+
+        public Trax.Effect.Services.EffectProvider.IEffectProvider Create() => inner.Create();
+    }
+
     private static long SessionsWaitingOnALock(NpgsqlConnection connection)
     {
         using var command = new NpgsqlCommand(
