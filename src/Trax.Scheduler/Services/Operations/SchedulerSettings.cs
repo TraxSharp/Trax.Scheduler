@@ -175,15 +175,16 @@ internal static class SchedulerSettings
             (v, n) => Check(SchedulerConfigLimits.NotNegative, v, n)
         ),
         // Live-only: the row has no column for it yet, so a change applies to the host that
-        // received it until that host restarts.
+        // received it until that host restarts. With no stored value there is nothing for a
+        // check to screen (a patch is validated by the operations service), so it has none;
+        // give it PositiveDuration when it gains a column.
         new SchedulerSetting<TimeSpan>(
             nameof(UpdateSchedulerConfigInput.FailureCountWindow),
             null,
             null,
             t => t.Configuration.FailureCountWindow,
             (t, v) => t.Configuration.FailureCountWindow = v,
-            i => Patch(i.FailureCountWindow),
-            (v, n) => Check(SchedulerConfigLimits.PositiveDuration, v, n)
+            i => Patch(i.FailureCountWindow)
         ),
         new SchedulerSetting<TimeSpan>(
             nameof(SchedulerConfig.DefaultRetryDelay),

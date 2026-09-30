@@ -172,6 +172,6 @@ public partial class SchedulerConfigurationBuilder
 
     private static string Describe<T>(T value) => value is null ? "none" : value.ToString()!;
 
-    private static string Capitalise(string text) =>
-        text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
+    // Only ever given a batch's description ("batch '…'", "the batch starting '…'"), never empty.
+    private static string Capitalise(string text) => char.ToUpperInvariant(text[0]) + text[1..];
 }

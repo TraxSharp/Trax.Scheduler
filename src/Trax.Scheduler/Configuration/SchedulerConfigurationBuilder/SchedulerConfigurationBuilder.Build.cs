@@ -185,14 +185,10 @@ public partial class SchedulerConfigurationBuilder
         if (_routedSubmitterRegistrations.Count == 0)
             return;
 
-        RoutedSubmitterRegistration? first = null;
-
         foreach (var registration in _routedSubmitterRegistrations)
         {
             // Register the submitter with its dependencies (HttpClient, options, etc.)
             registration.Register(_parentBuilder.ServiceCollection);
-
-            first ??= registration;
 
             // Add explicit ForTrain routes, to this registration rather than to its type: two
             // registrations of one submitter type each submit to their own endpoint.
@@ -212,10 +208,7 @@ public partial class SchedulerConfigurationBuilder
         }
 
         // [TraxRemote] trains go to the first routed registration, of whatever kind
-        if (first is not null)
-        {
-            _routingConfiguration.SetAttributeDefaultSubmitter(first);
-        }
+        _routingConfiguration.SetAttributeDefaultSubmitter(_routedSubmitterRegistrations[0]);
     }
 
     /// <summary>
