@@ -51,6 +51,14 @@ internal class DispatchJobsJunction(
     /// </summary>
     private static readonly TimeSpan FailureRecordingTimeout = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// How many claims may find an entry's input type unregistered before the entry is settled as
+    /// a failed run. Each claim counts as a dispatch attempt and pushes the entry back by the
+    /// dispatch backoff (5 s doubling, capped at 5 min), so the entry waits about 20 minutes, the
+    /// default stale-pending timeout, for a host that registers the type.
+    /// </summary>
+    internal const int UnknownInputTypeMaxSkips = 10;
+
     public override async Task<Unit> Run(List<WorkQueue> entries)
     {
         var dispatchStartTime = DateTime.UtcNow;
@@ -177,22 +185,40 @@ internal class DispatchJobsJunction(
         object? deserializedInput = null;
         if (claimed is { Input: not null, InputTypeName: not null })
         {
+            // Resolved among the registered trains' inputs only.
+            var inputType = RegisteredInputTypes.Find(trainRegistry, claimed.InputTypeName);
+
+            if (inputType is null)
+            {
+                // Not an input of any train registered on this host. Another host may know it (a
+                // rolling deploy, or hosts scanning different assemblies), so the entry is left
+                // for one that does, and settled only once it has gone unread for long enough.
+                if (claimed.DispatchAttempts + 1 < UnknownInputTypeMaxSkips)
+                {
+                    await DeferUnknownInputTypeAsync(dataContext, claimed);
+                    return false;
+                }
+
+                await RecordUnreadableInputAsync(
+                    dataContext,
+                    claimed,
+                    new TrainException(
+                        $"'{claimed.InputTypeName}' is not the input of any registered train on "
+                            + $"any host that claimed it in {UnknownInputTypeMaxSkips} attempts."
+                    )
+                );
+                return false;
+            }
+
             try
             {
-                // Resolved among the registered trains' inputs only.
-                var inputType =
-                    RegisteredInputTypes.Find(trainRegistry, claimed.InputTypeName)
-                    ?? throw new TrainException(
-                        $"'{claimed.InputTypeName}' is not the input of any registered train."
-                    );
                 deserializedInput = JsonSerializer.Deserialize(
                     claimed.Input,
                     inputType,
                     TraxJsonSerializationOptions.ManifestProperties
                 );
             }
-            catch (Exception ex)
-                when (ex is TrainException or JsonException or NotSupportedException)
+            catch (Exception ex) when (ex is JsonException or NotSupportedException)
             {
                 await RecordUnreadableInputAsync(dataContext, claimed, ex);
                 return false;
@@ -222,25 +248,7 @@ internal class DispatchJobsJunction(
         await dataContext.SaveChanges(CancellationToken);
 
         // Link retry metadata on the dead letter if this WorkQueue was from a requeue
-        if (claimed.DeadLetterId is not null)
-        {
-            var deadLetter = await dataContext.DeadLetters.FirstOrDefaultAsync(
-                d => d.Id == claimed.DeadLetterId,
-                CancellationToken
-            );
-
-            if (deadLetter is not null)
-            {
-                deadLetter.LinkRetryMetadata(metadata.Id);
-                await dataContext.SaveChanges(CancellationToken);
-
-                logger.LogDebug(
-                    "Linked retry metadata {MetadataId} to dead letter {DeadLetterId}",
-                    metadata.Id,
-                    claimed.DeadLetterId
-                );
-            }
-        }
+        await LinkDeadLetterRetryAsync(dataContext, claimed, metadata.Id);
 
         // Commit the claim transaction before enqueuing. The Metadata and WorkQueue
         // updates must be visible to the job submitter — InMemoryJobSubmitter executes
@@ -295,16 +303,44 @@ internal class DispatchJobsJunction(
     }
 
     /// <summary>
+    /// Returns an entry whose input type this host does not register to the queue, inside the
+    /// claim transaction: counts the attempt and pushes its <c>ScheduledAt</c> back by the
+    /// dispatch backoff. No run is recorded, so nothing counts toward the manifest's retries.
+    /// </summary>
+    private async Task DeferUnknownInputTypeAsync(IDataContext dataContext, WorkQueue claimed)
+    {
+        var attempts = claimed.DispatchAttempts + 1;
+        var backoff = DispatchFailure.Backoff(attempts);
+
+        claimed.DispatchAttempts = attempts;
+        claimed.ScheduledAt = DateTime.UtcNow + backoff;
+        await dataContext.SaveChanges(CancellationToken);
+        await dataContext.CommitTransaction();
+
+        logger.LogWarning(
+            "Work queue entry {WorkQueueId} (train: {TrainName}) has input type {InputType}, which "
+                + "no train registered on this host takes; left it queued for a host that does "
+                + "(attempt {Attempt} of {MaxAttempts}, next in {Backoff})",
+            claimed.Id,
+            claimed.TrainName,
+            claimed.InputTypeName,
+            attempts,
+            UnknownInputTypeMaxSkips,
+            backoff
+        );
+    }
+
+    /// <summary>
     /// Settles an entry whose stored input cannot be read, inside the claim transaction: records a
-    /// Failed run for it with the reason and marks the entry Dispatched to that run.
+    /// Failed run for it with the reason and marks the entry Dispatched to that run. An entry from
+    /// a dead-letter retry has the failed run linked as the dead letter's retry run.
     /// </summary>
     /// <remarks>
-    /// The input of an entry is fixed when it is queued, so an input this host cannot read (its
-    /// type was renamed or removed, or its JSON no longer fits the type) will not be readable on
-    /// any later cycle either. Left Queued, the entry stayed at the head of its subject and kept
-    /// its manifest from scheduling, and failed again every cycle. Settled, it is a failure of its
-    /// manifest like any other, so retries and dead-lettering apply, and the next entry for its
-    /// subject can be dispatched.
+    /// JSON that no longer fits its type will not be readable on any later cycle or any other
+    /// host, so it is settled at once. An input type no host has registered after
+    /// <see cref="UnknownInputTypeMaxSkips"/> claims is settled the same way. Left Queued, the
+    /// entry kept its manifest from scheduling and failed again every cycle. Settled, it is a
+    /// failure of its manifest like any other, so retries and dead-lettering apply.
     /// </remarks>
     private async Task RecordUnreadableInputAsync(
         IDataContext dataContext,
@@ -337,6 +373,7 @@ internal class DispatchJobsJunction(
         claimed.MetadataId = metadata.Id;
         claimed.DispatchedAt = DateTime.UtcNow;
         await dataContext.SaveChanges(CancellationToken);
+        await LinkDeadLetterRetryAsync(dataContext, claimed, metadata.Id);
         await dataContext.CommitTransaction();
 
         logger.LogError(
@@ -347,6 +384,37 @@ internal class DispatchJobsJunction(
             claimed.TrainName,
             claimed.InputTypeName,
             metadata.Id
+        );
+    }
+
+    /// <summary>
+    /// Records <paramref name="metadataId"/> as the retry run of the dead letter the entry was
+    /// requeued from, if it was.
+    /// </summary>
+    private async Task LinkDeadLetterRetryAsync(
+        IDataContext dataContext,
+        WorkQueue claimed,
+        long metadataId
+    )
+    {
+        if (claimed.DeadLetterId is null)
+            return;
+
+        var deadLetter = await dataContext.DeadLetters.FirstOrDefaultAsync(
+            d => d.Id == claimed.DeadLetterId,
+            CancellationToken
+        );
+
+        if (deadLetter is null)
+            return;
+
+        deadLetter.LinkRetryMetadata(metadataId);
+        await dataContext.SaveChanges(CancellationToken);
+
+        logger.LogDebug(
+            "Linked retry metadata {MetadataId} to dead letter {DeadLetterId}",
+            metadataId,
+            claimed.DeadLetterId
         );
     }
 

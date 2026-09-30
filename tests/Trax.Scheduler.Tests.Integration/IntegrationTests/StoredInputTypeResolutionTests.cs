@@ -58,7 +58,7 @@ public class StoredInputTypeResolutionTests : TestSetup
     }
 
     [Test]
-    public async Task Dispatch_refuses_a_work_queue_row_whose_input_type_no_train_takes()
+    public async Task Dispatch_does_not_read_a_work_queue_row_whose_input_type_no_train_takes()
     {
         var entry = await SaveWorkQueueEntry(typeof(NotATrainInput).FullName!);
 
@@ -67,11 +67,11 @@ public class StoredInputTypeResolutionTests : TestSetup
         DataContext.Reset();
         var row = await DataContext.WorkQueues.FirstAsync(q => q.Id == entry.Id);
         row.Status.Should()
-            .Be(WorkQueueStatus.Dispatched, "an unreadable input is settled, not retried");
-        row.MetadataId.Should().NotBeNull();
-        var run = await DataContext.Metadatas.FirstAsync(m => m.Id == row.MetadataId);
-        run.TrainState.Should().Be(TrainState.Failed, "the refusal is recorded as the entry's run");
-        run.FailureReason.Should().Contain(typeof(NotATrainInput).FullName!);
+            .Be(
+                WorkQueueStatus.Queued,
+                "the entry is left for a host that registers a train taking the type"
+            );
+        row.MetadataId.Should().BeNull("nothing ran");
         NotATrainInput
             .Constructed.Should()
             .Be(
