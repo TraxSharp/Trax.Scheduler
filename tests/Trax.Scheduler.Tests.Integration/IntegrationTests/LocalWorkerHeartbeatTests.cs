@@ -86,6 +86,70 @@ public class LocalWorkerHeartbeatTests : TestSetup
     }
 
     [Test]
+    public async Task Jobs_claimed_in_a_batch_keep_their_claim_while_an_earlier_job_in_it_runs()
+    {
+        // A worker claims a batch and runs it in order. Only the running job's claim used to be
+        // refreshed, so the jobs waiting behind a long one became claimable again once
+        // VisibilityTimeout passed, and another worker took them.
+        var first = Guid.NewGuid().ToString("N");
+        var waiting = new[] { Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N") };
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        DeliveryProbeTrain.Gates[first] = gate;
+        var started = DeliveryProbeTrain.Started.GetOrAdd(
+            first,
+            _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+        );
+
+        await QueueLocalJob(new DeliveryProbeInput { Key = first });
+        var waitingRuns = new List<Metadata>();
+        foreach (var key in waiting)
+            waitingRuns.Add(await QueueLocalJob(new DeliveryProbeInput { Key = key }));
+
+        var registry = new CancellationRegistry();
+        using var stop = new CancellationTokenSource();
+        var batching = NewWorker(registry, batchSize: 3);
+        await batching.StartAsync(stop.Token);
+        LocalWorkerService? other = null;
+
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            var claimedAt = DateTime.UtcNow;
+
+            other = NewWorker(registry, batchSize: 1);
+            await other.StartAsync(stop.Token);
+
+            // negative-wait: the waiting jobs must still be held well after their visibility
+            // timeout has passed, which only elapsed time can show.
+            while (DateTime.UtcNow - claimedAt < VisibilityTimeout * 2.5)
+                await Task.Delay(TimeSpan.FromMilliseconds(100));
+
+            foreach (var key in waiting)
+                DeliveryProbeTrain
+                    .Runs.ContainsKey(key)
+                    .Should()
+                    .BeFalse("the batch's worker still holds the jobs it has not reached");
+
+            gate.TrySetResult();
+            foreach (var run in waitingRuns)
+                await WaitForRunState(run.Id, TrainState.Completed);
+            foreach (var key in waiting)
+                DeliveryProbeTrain.Runs[key].Should().Be(1);
+        }
+        finally
+        {
+            gate.TrySetResult();
+            stop.Cancel();
+            if (other is not null)
+                await other.StopAsync(CancellationToken.None);
+            await batching.StopAsync(CancellationToken.None);
+            DeliveryProbeTrain.Forget(first);
+            foreach (var key in waiting)
+                DeliveryProbeTrain.Forget(key);
+        }
+    }
+
+    [Test]
     public async Task A_claim_refresh_that_fails_is_logged_and_the_job_still_runs_to_completion()
     {
         var key = Guid.NewGuid().ToString("N");
@@ -307,7 +371,7 @@ public class LocalWorkerHeartbeatTests : TestSetup
         ) => _entries.Enqueue((logLevel, formatter(state, exception)));
     }
 
-    private LocalWorkerService NewWorker(ICancellationRegistry registry) =>
+    private LocalWorkerService NewWorker(ICancellationRegistry registry, int batchSize = 1) =>
         new(
             Scope.ServiceProvider,
             new LocalWorkerOptions
@@ -316,6 +380,7 @@ public class LocalWorkerHeartbeatTests : TestSetup
                 PollingInterval = TimeSpan.FromMilliseconds(100),
                 VisibilityTimeout = VisibilityTimeout,
                 ShutdownTimeout = TimeSpan.FromSeconds(5),
+                BatchSize = batchSize,
             },
             registry,
             Scope.ServiceProvider.GetRequiredService<ILogger<LocalWorkerService>>(),

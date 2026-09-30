@@ -42,7 +42,9 @@ public class LocalWorkerOptions
     /// </summary>
     /// <remarks>
     /// Higher values reduce database round-trips when there is a backlog of queued jobs.
-    /// Each claimed job is processed sequentially within the worker task. If a worker crashes
+    /// Each claimed job is processed sequentially within the worker task, and every job in the
+    /// batch keeps its claim until the worker finishes it, however long the jobs ahead of it take,
+    /// so jobs waiting behind a long one are not taken by another worker. If a worker crashes
     /// mid-batch, uncompleted jobs wait for <see cref="VisibilityTimeout"/> before being reclaimed
     /// by another worker. Default of 1 preserves the original one-job-per-poll behavior.
     /// </remarks>
