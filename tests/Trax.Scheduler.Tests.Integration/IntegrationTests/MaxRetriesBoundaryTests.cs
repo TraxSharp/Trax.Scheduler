@@ -16,8 +16,14 @@ namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 /// <summary>
 /// <c>MaxRetries(n)</c> is the number of retries after the first run: a manifest is dead-lettered
 /// on its (n + 1)th counted failure, never before.
+///
+/// <para>Enforces <c>docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md</c>.</para>
 /// </summary>
 [TestFixture]
+[Property(
+    "adr",
+    "docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
+)]
 public class MaxRetriesBoundaryTests : TestSetup
 {
     [TestCase(0, 0, false)]
@@ -46,7 +52,8 @@ public class MaxRetriesBoundaryTests : TestSetup
             .Should()
             .Be(
                 deadLettered ? 1 : 0,
-                $"MaxRetries({maxRetries}) allows {maxRetries + 1} attempts and {failures} failed"
+                $"MaxRetries({maxRetries}) allows {maxRetries + 1} attempts and {failures} failed. See "
+                    + "docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
             );
     }
 

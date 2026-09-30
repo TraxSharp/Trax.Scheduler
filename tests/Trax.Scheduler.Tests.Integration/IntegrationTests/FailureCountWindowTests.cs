@@ -18,8 +18,14 @@ namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 /// A manifest's failed runs count toward its retry backoff and its dead letter only while they
 /// started within <see cref="SchedulerConfiguration.FailureCountWindow"/>, so failures spread
 /// over weeks neither delay every later run nor dead-letter a healthy manifest.
+///
+/// <para>Enforces <c>docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md</c>.</para>
 /// </summary>
 [TestFixture]
+[Property(
+    "adr",
+    "docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
+)]
 public class FailureCountWindowTests : TestSetup
 {
     private SchedulerConfiguration _config = null!;
@@ -49,7 +55,10 @@ public class FailureCountWindowTests : TestSetup
             .SingleAsync(q => q.ManifestId == manifest.Id && q.Status == WorkQueueStatus.Queued);
         entry
             .ScheduledAt.Should()
-            .BeNull("a failure outside the 24 hour window no longer backs off the next run");
+            .BeNull(
+                "a failure outside the 24 hour window no longer backs off the next run. See "
+                    + "docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
+            );
     }
 
     [Test]
@@ -66,7 +75,11 @@ public class FailureCountWindowTests : TestSetup
 
         (await DataContext.DeadLetters.AsNoTracking().CountAsync(d => d.ManifestId == manifest.Id))
             .Should()
-            .Be(0, "each failure is weeks old and was followed by successes");
+            .Be(
+                0,
+                "each failure is weeks old and was followed by successes. See "
+                    + "docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
+            );
         (await DataContext.WorkQueues.AsNoTracking().CountAsync(q => q.ManifestId == manifest.Id))
             .Should()
             .Be(1, "a healthy interval manifest keeps running");

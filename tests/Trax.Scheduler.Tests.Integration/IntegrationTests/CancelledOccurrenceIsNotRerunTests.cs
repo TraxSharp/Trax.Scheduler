@@ -14,10 +14,16 @@ using Trax.Scheduler.Trains.ManifestManager;
 namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 
 /// <summary>
-/// A timed-out or operator-cancelled run "transitions to Cancelled, is not retried and does not
-/// create a dead letter" (scheduling-options, Timeout Enforcement; manifest-management, CancelAsync).
+/// A timed-out or operator-cancelled run is not retried and does not create a dead letter: it
+/// consumes the occurrence it ran for, so the manifest next runs at its next scheduled occurrence.
+///
+/// <para>Enforces <c>docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md</c>.</para>
 /// </summary>
 [TestFixture]
+[Property(
+    "adr",
+    "docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
+)]
 public class CancelledOccurrenceIsNotRerunTests : TestSetup
 {
     [Test]
@@ -56,7 +62,8 @@ public class CancelledOccurrenceIsNotRerunTests : TestSetup
             .Be(
                 0,
                 "this hour's occurrence ran and was cancelled; a cancelled run is not retried, so "
-                    + "the next run is the next hourly occurrence, not the next five-second cycle"
+                    + "the next run is the next hourly occurrence, not the next five-second cycle. See "
+                    + "docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
             );
     }
 
