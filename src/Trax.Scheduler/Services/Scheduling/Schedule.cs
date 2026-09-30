@@ -83,11 +83,14 @@ public record Schedule
     /// <returns>A new Schedule configured for cron-based execution</returns>
     /// <remarks>
     /// The expression is parsed here, so one that cannot fire (an hour of 25, a sixth field of
-    /// garbage) fails at the call that states it rather than being stored. A new cron schedule
-    /// first runs at its first occurrence after it is scheduled, not on the next poll.
+    /// garbage) fails at the call that states it rather than being stored. So does a valid one
+    /// with no occurrence in the next ten years, such as
+    /// <c>0 0 30 2 *</c> (February 30th). A new cron schedule first runs at its first occurrence
+    /// after it is scheduled, not on the next poll.
     /// </remarks>
     /// <exception cref="FormatException">
-    /// <paramref name="expression"/> is not a valid 5-field or 6-field cron expression.
+    /// <paramref name="expression"/> is not a valid 5-field or 6-field cron expression, or it
+    /// never fires within ten years from now.
     /// </exception>
     /// <example>
     /// <code>
@@ -98,10 +101,25 @@ public record Schedule
     public static Schedule FromCron(string expression)
     {
         ArgumentNullException.ThrowIfNull(expression);
-        CronParser.Parse(expression);
+        var parsed = CronParser.Parse(expression);
+
+        var now = DateTime.UtcNow;
+        var next = parsed.GetNextOccurrence(now, TimeZoneInfo.Utc);
+        if (next is null || next > now.AddYears(CronSearchWindowYears))
+            throw new FormatException(
+                $"Cron expression '{expression}' never fires: it has no occurrence in the next "
+                    + $"{CronSearchWindowYears} years. Check the day of the month against the months "
+                    + "it names (February has no 30th, April no 31st)."
+            );
 
         return new() { Type = ScheduleType.Cron, CronExpression = expression };
     }
+
+    /// <summary>
+    /// How far ahead <see cref="FromCron"/> looks for a cron expression's next occurrence before
+    /// refusing it as one that never fires.
+    /// </summary>
+    internal const int CronSearchWindowYears = 10;
 
     /// <summary>
     /// Returns a copy of this schedule with the specified variance (jitter).

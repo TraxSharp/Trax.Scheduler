@@ -36,6 +36,24 @@ public class ScheduleValidationTests
         act.Should().Throw<FormatException>();
     }
 
+    [TestCase("0 0 30 2 *")]
+    [TestCase("0 0 31 4 *")]
+    [TestCase("0 0 31 2,4,6,9,11 *")]
+    public void A_cron_that_can_never_fire_is_refused(string expression)
+    {
+        var act = () => Schedule.FromCron(expression);
+
+        act.Should().Throw<FormatException>().WithMessage("*never*");
+    }
+
+    [Test]
+    public void A_cron_that_fires_only_in_leap_years_is_accepted()
+    {
+        var act = () => Schedule.FromCron("0 0 29 2 *");
+
+        act.Should().NotThrow();
+    }
+
     [Test]
     public void A_raw_expression_is_checked_too()
     {

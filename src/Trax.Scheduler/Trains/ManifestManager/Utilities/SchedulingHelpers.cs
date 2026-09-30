@@ -228,7 +228,8 @@ internal static class SchedulingHelpers
     /// <remarks>
     /// A cron that has never succeeded is due at <see cref="Manifest.NextScheduledRun"/>, which
     /// scheduling it set to its first occurrence. One with neither value, written before that
-    /// was stamped, is due at once. A cancelled run later than the last success replaces it as
+    /// was stamped, is due at once, unless its expression has no occurrence at all (one stored
+    /// without passing <see cref="Schedule.FromCron"/>), which is never due. A cancelled run later than the last success replaces it as
     /// the anchor (see <see cref="ScheduleAnchor"/>), and then the next occurrence after it is due.
     /// </remarks>
     private static bool EvaluateCronSchedule(
@@ -239,9 +240,14 @@ internal static class SchedulingHelpers
         ILogger logger
     )
     {
-        // Never run (no success and no cancelled run) and no first occurrence recorded: due at once.
+        // Never run (no success and no cancelled run) and no first occurrence recorded: due at
+        // once, unless the expression can never fire. Scheduling records no first occurrence for
+        // one of those either, and it must not run once and then never again.
         if (anchor.LastRun is null && anchor.NextScheduledRun is null)
-            return true;
+            return CronParser
+                .TryParse(manifest.CronExpression!)
+                ?.GetNextOccurrence(now, TimeZoneInfo.Utc)
+                is not null;
 
         // Use pre-computed next run time if available (variance-aware, or the first occurrence)
         DateTime nextDueValue;
