@@ -23,6 +23,11 @@ namespace Trax.Scheduler.Trains.JobDispatcher.Junctions;
 ///
 /// <see cref="SchedulerConfiguration.MaxQueuedJobsPerCycle"/> controls the per-group batch limit.
 /// <see cref="ApplyCapacityLimitsJunction"/> handles the actual global and per-group dispatch caps.
+///
+/// An entry whose manifest is disabled is not loaded, so disabling a manifest pauses the work it
+/// already has queued as well as its schedule. The entry stays <c>Queued</c> and is dispatched once
+/// the manifest is re-enabled. A dead-letter requeue is the exception: an operator asked for that
+/// run by name, so it runs whether or not the manifest is enabled.
 /// </remarks>
 internal class LoadQueuedJobsJunction(
     IDataContext dataContext,
@@ -36,8 +41,18 @@ internal class LoadQueuedJobsJunction(
             ? await LoadGroupFair(config.MaxQueuedJobsPerCycle.Value)
             : await LoadAllQueued();
 
-        return FirstPerSubject(entries);
+        return FirstPerSubject(entries.Where(e => !IsPausedByDisabledManifest(e)).ToList());
     }
+
+    /// <summary>
+    /// True for an entry whose manifest is disabled and which is not a dead-letter requeue.
+    /// </summary>
+    /// <remarks>
+    /// The group-fair query lives in the provider's SQL dialect and filters on the group only, so
+    /// this is applied to what either load returns. The all-queued load also filters in the query.
+    /// </remarks>
+    private static bool IsPausedByDisabledManifest(WorkQueue entry) =>
+        entry.Manifest is { IsEnabled: false } && entry.DeadLetterId is null;
 
     /// <summary>
     /// Keeps only the first entry for each subject, in dispatch order.
@@ -70,6 +85,7 @@ internal class LoadQueuedJobsJunction(
             // cannot crowd out work that is actually ready.
             .Where(q => q.ConfirmedAt != null)
             .Where(q => q.ManifestId == null || q.Manifest!.ManifestGroup!.IsEnabled)
+            .Where(q => q.ManifestId == null || q.Manifest!.IsEnabled || q.DeadLetterId != null)
             .Where(q => q.ScheduledAt == null || q.ScheduledAt <= DateTime.UtcNow)
             // Subjects with a run still in flight are not candidates. The claim refuses them
             // anyway; dropping them here keeps a blocked subject from crowding the batch.
