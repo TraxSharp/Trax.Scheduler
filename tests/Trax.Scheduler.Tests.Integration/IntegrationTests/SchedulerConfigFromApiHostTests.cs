@@ -20,11 +20,20 @@ namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 /// (add-trax-graphql: "AddTraxJobRunner() plus services.AddScoped&lt;IOperationsService,
 /// OperationsService&gt;()"), or on any one of several scheduler hosts. A settings change made
 /// there changes only the setting it names, and reaches the running schedulers without a restart.
+///
+/// <para>Enforces <c>docs/adr/0010-a-settings-save-writes-only-what-it-names-and-every-scheduler-applies-it.md</c>.</para>
 /// </summary>
+[Property(
+    "adr",
+    "docs/adr/0010-a-settings-save-writes-only-what-it-names-and-every-scheduler-applies-it.md"
+)]
 [TestFixture]
 [NonParallelizable]
 public class SchedulerConfigFromApiHostTests
 {
+    private const string AdrPath =
+        "docs/adr/0010-a-settings-save-writes-only-what-it-names-and-every-scheduler-applies-it.md";
+
     private static readonly TimeSpan SyncTimeout = TimeSpan.FromSeconds(10);
 
     private static ServiceProvider ApiHost() =>
@@ -74,7 +83,7 @@ public class SchedulerConfigFromApiHostTests
         var deadline = DateTime.UtcNow + SyncTimeout;
         while (!condition() && DateTime.UtcNow < deadline)
             await Task.Delay(50); // determinism: polls the condition, bounded by SyncTimeout
-        condition().Should().BeTrue(because);
+        condition().Should().BeTrue($"{because}. See {AdrPath}.");
     }
 
     [SetUp]
@@ -107,7 +116,10 @@ public class SchedulerConfigFromApiHostTests
         scheduler.Configuration.DefaultMaxRetries.Should().Be(4, "the earlier change stands");
         scheduler
             .Configuration.StalePendingTimeout.Should()
-            .Be(TimeSpan.FromMinutes(5), "nobody changed the stale pending timeout");
+            .Be(
+                TimeSpan.FromMinutes(5),
+                $"nobody changed the stale pending timeout, and a save writes only what it names ({AdrPath})"
+            );
         scheduler
             .Configuration.JobDispatcherPollingInterval.Should()
             .Be(TimeSpan.FromSeconds(10), "nobody changed the dispatcher polling interval");
