@@ -15,6 +15,10 @@ public static class WorkerExtensions
     /// <param name="services">The service collection</param>
     /// <param name="configure">Optional callback to customize worker count, polling interval, and timeouts</param>
     /// <returns>The service collection for continued chaining</returns>
+    /// <exception cref="InvalidOperationException">
+    /// An option is outside its range (see <see cref="LocalWorkerOptions"/>), or the host already
+    /// runs a local worker pool.
+    /// </exception>
     /// <remarks>
     /// This registers the execution pipeline (via <see cref="JobRunnerExtensions.AddTraxJobRunner(IServiceCollection)"/>)
     /// plus <see cref="Services.LocalWorkerService.LocalWorkerService"/> as a hosted service.
@@ -39,6 +43,12 @@ public static class WorkerExtensions
         // Configure worker options
         var options = new LocalWorkerOptions();
         configure?.Invoke(options);
+        var problems = options.Problems(nameof(AddTraxWorker)).ToList();
+        if (problems.Count > 0)
+            throw new InvalidOperationException(
+                "The worker options have values the worker pool cannot run with. "
+                    + string.Join(" ", problems)
+            );
         services.AddSingleton(options);
 
         // Register the worker service that polls background_job

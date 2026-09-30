@@ -268,9 +268,11 @@ internal class LocalWorkerService(
             }
             finally
             {
-                await heartbeatStop.CancelAsync();
-                await heartbeat;
+                // Unregister first, and never let the heartbeat's fate reach the job's: the run
+                // has finished, and a heartbeat fault is not the job's failure.
                 cancellationRegistry.Unregister(metadataId, shutdownCts);
+                await heartbeatStop.CancelAsync();
+                await StopHeartbeatAsync(workerId, jobId, heartbeat);
             }
         }
         catch (Exception ex)
@@ -316,6 +318,45 @@ internal class LocalWorkerService(
         }
     }
 
+    // What a PeriodicTimer accepts is one millisecond to about 49.7 days; the upper bound here
+    // is the scheduler's own ceiling for a timer, well inside it.
+    private static readonly TimeSpan MinHeartbeatInterval = TimeSpan.FromMilliseconds(1);
+
+    /// <summary>
+    /// The heartbeat's interval: a third of <see cref="LocalWorkerOptions.VisibilityTimeout"/>,
+    /// held to what a <see cref="PeriodicTimer"/> accepts, or zero (no heartbeat) when the timeout
+    /// is not positive.
+    /// </summary>
+    internal static TimeSpan HeartbeatInterval(TimeSpan visibilityTimeout)
+    {
+        if (visibilityTimeout <= TimeSpan.Zero)
+            return TimeSpan.Zero;
+
+        var interval = visibilityTimeout / 3;
+        if (interval < MinHeartbeatInterval)
+            return MinHeartbeatInterval;
+        if (interval > Operations.SchedulerConfigLimits.MaxTimerInterval)
+            return Operations.SchedulerConfigLimits.MaxTimerInterval;
+        return interval;
+    }
+
+    private async Task StopHeartbeatAsync(int workerId, long jobId, Task heartbeat)
+    {
+        try
+        {
+            await heartbeat;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Worker {WorkerId}'s claim refresh for job {JobId} ended with an error",
+                workerId,
+                jobId
+            );
+        }
+    }
+
     /// <summary>
     /// Refreshes the job's <c>fetched_at</c> every third of <see cref="LocalWorkerOptions.VisibilityTimeout"/>
     /// until <paramref name="stop"/> fires. A claim is only re-claimable once <c>fetched_at</c> is
@@ -324,7 +365,7 @@ internal class LocalWorkerService(
     /// </summary>
     private async Task HeartbeatAsync(int workerId, long jobId, CancellationToken stop)
     {
-        var interval = options.VisibilityTimeout / 3;
+        var interval = HeartbeatInterval(options.VisibilityTimeout);
         if (interval <= TimeSpan.Zero)
             return;
 

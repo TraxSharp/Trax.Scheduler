@@ -32,6 +32,7 @@ public partial class SchedulerConfigurationBuilder
             ),
         }
             .Concat(MetadataCleanupProblems(_configuration.MetadataCleanup))
+            .Concat(_localWorkerOptions.Problems(nameof(ConfigureLocalWorkers)))
             .OfType<string>()
             .ToList();
 

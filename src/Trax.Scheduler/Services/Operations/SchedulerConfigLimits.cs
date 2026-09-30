@@ -47,6 +47,21 @@ internal static class SchedulerConfigLimits
             ? $"{name} must be between {TimeSpan.Zero} and {MaxDuration}."
             : null;
 
+    /// <summary>
+    /// A wait that may be shorter than a second but must be positive, such as a local worker's
+    /// idle poll: zero would poll the database without pause.
+    /// </summary>
+    internal static string? ShortInterval(TimeSpan? value, string name) =>
+        value is { } v && (v <= TimeSpan.Zero || v > MaxTimerInterval)
+            ? $"{name} must be greater than zero and at most {MaxTimerInterval}."
+            : null;
+
+    /// <summary>A grace period handed to a timer, where zero means none.</summary>
+    internal static string? TimerDelay(TimeSpan? value, string name) =>
+        value is { } v && (v < TimeSpan.Zero || v > MaxTimerInterval)
+            ? $"{name} must be between {TimeSpan.Zero} and {MaxTimerInterval}."
+            : null;
+
     internal static string? AtLeastOne(int? value, string name) =>
         value is < 1 ? $"{name} must be at least 1." : null;
 

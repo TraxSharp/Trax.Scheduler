@@ -191,6 +191,56 @@ public class LocalWorkerHeartbeatTests : TestSetup
         }
     }
 
+    // A third of either is outside what a PeriodicTimer accepts (one millisecond to about 49.7
+    // days). The timer's refusal surfaced from the finally around the run, so a job that had
+    // succeeded was logged as failed and never left the cancellation registry.
+    [TestCase(1, TestName = "A visibility timeout of a millisecond")]
+    [TestCase(150 * 24 * 60 * 60 * 1000L, TestName = "A visibility timeout of 150 days")]
+    public async Task A_visibility_timeout_outside_the_timer_range_completes_the_job_and_unregisters_it(
+        long visibilityTimeoutMs
+    )
+    {
+        var key = Guid.NewGuid().ToString("N");
+        var metadata = await QueueLocalJob(new DeliveryProbeInput { Key = key });
+
+        var logger = new CapturingLogger();
+        var registry = new CancellationRegistry();
+        using var stop = new CancellationTokenSource();
+        var worker = NewWorker(
+            registry,
+            logger,
+            visibilityTimeout: TimeSpan.FromMilliseconds(visibilityTimeoutMs)
+        );
+        try
+        {
+            await worker.StartAsync(stop.Token);
+
+            await WaitForRunState(metadata.Id, TrainState.Completed);
+            (
+                await WaitUntilAsync(
+                    () => logger.Has(LogLevel.Debug, "completed job"),
+                    TimeSpan.FromSeconds(30)
+                )
+            )
+                .Should()
+                .BeTrue();
+            logger
+                .Has(LogLevel.Error, "failed job")
+                .Should()
+                .BeFalse("the job succeeded, whatever became of its heartbeat");
+            registry
+                .TryCancel(metadata.Id)
+                .Should()
+                .BeFalse("a finished job leaves the cancellation registry");
+        }
+        finally
+        {
+            stop.Cancel();
+            await worker.StopAsync(CancellationToken.None);
+            DeliveryProbeTrain.Forget(key);
+        }
+    }
+
     private static async Task ExecuteSqlAsync(string sql)
     {
         await using var connection = new NpgsqlConnection(TestPostgres.ConnectionString);

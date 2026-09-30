@@ -415,6 +415,74 @@ public class SchedulerBuilderValidationTests
             .NotThrow();
     }
 
+    private static readonly TestCaseData[] LocalWorkerOptionsOutOfRange =
+    [
+        new TestCaseData(
+            (Action<LocalWorkerOptions>)(o => o.VisibilityTimeout = TimeSpan.FromMilliseconds(1)),
+            "VisibilityTimeout must be between"
+        ).SetName("VisibilityTimeout of a millisecond"),
+        new TestCaseData(
+            (Action<LocalWorkerOptions>)(o => o.VisibilityTimeout = TimeSpan.FromDays(3651)),
+            "VisibilityTimeout must be between"
+        ).SetName("VisibilityTimeout past ten years"),
+        new TestCaseData(
+            (Action<LocalWorkerOptions>)(o => o.PollingInterval = TimeSpan.Zero),
+            "PollingInterval must be greater than zero"
+        ).SetName("Worker PollingInterval zero"),
+        new TestCaseData(
+            (Action<LocalWorkerOptions>)(o => o.WorkerCount = 0),
+            "WorkerCount must be between 1 and"
+        ).SetName("WorkerCount zero"),
+        new TestCaseData(
+            (Action<LocalWorkerOptions>)(o => o.BatchSize = 0),
+            "BatchSize must be at least 1"
+        ).SetName("BatchSize zero"),
+        new TestCaseData(
+            (Action<LocalWorkerOptions>)(o => o.ShutdownTimeout = TimeSpan.FromSeconds(-1)),
+            "ShutdownTimeout must be between"
+        ).SetName("ShutdownTimeout negative"),
+    ];
+
+    [TestCaseSource(nameof(LocalWorkerOptionsOutOfRange))]
+    public void A_local_worker_option_out_of_range_is_refused_at_build(
+        Action<LocalWorkerOptions> configure,
+        string problem
+    )
+    {
+        Building(b => b.ConfigureLocalWorkers(configure))
+            .Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage($"*ConfigureLocalWorkers: {problem}*");
+    }
+
+    [TestCaseSource(nameof(LocalWorkerOptionsOutOfRange))]
+    public void A_standalone_worker_option_out_of_range_is_refused(
+        Action<LocalWorkerOptions> configure,
+        string problem
+    )
+    {
+        var act = () => new ServiceCollection().AddLogging().AddTraxWorker(configure);
+
+        act.Should().Throw<InvalidOperationException>().WithMessage($"*AddTraxWorker: {problem}*");
+    }
+
+    [Test]
+    public void Local_worker_options_at_their_limits_build()
+    {
+        Building(b =>
+                b.ConfigureLocalWorkers(o =>
+                {
+                    o.WorkerCount = 256;
+                    o.PollingInterval = TimeSpan.FromMilliseconds(100);
+                    o.VisibilityTimeout = TimeSpan.FromSeconds(1);
+                    o.BatchSize = 1;
+                    o.ShutdownTimeout = TimeSpan.Zero;
+                })
+            )
+            .Should()
+            .NotThrow();
+    }
+
     [Test]
     public void Polling_intervals_at_their_limits_build()
     {
