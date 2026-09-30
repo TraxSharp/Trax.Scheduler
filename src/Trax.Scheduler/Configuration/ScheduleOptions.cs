@@ -8,6 +8,14 @@ namespace Trax.Scheduler.Configuration;
 /// Replaces the separate <c>configure</c>, <c>groupId</c>, <c>priority</c>, and <c>prunePrefix</c>
 /// optional parameters with a single <c>Action&lt;ScheduleOptions&gt;</c> callback.
 /// </summary>
+/// <remarks>
+/// Every host start schedules its manifests again. The schedule, the input and the train always
+/// come from code. <see cref="Enabled"/> and the group settings are written only when the options
+/// state them, so a manifest or group an operator disabled or retuned at runtime keeps that state
+/// across restarts unless the code says otherwise. <see cref="MaxRetries"/> and
+/// <see cref="OnMisfire"/> fall back to the scheduler's <c>DefaultMaxRetries</c> and
+/// <c>DefaultMisfirePolicy</c> when not stated.
+/// </remarks>
 /// <example>
 /// <code>
 /// scheduler.Schedule&lt;IMyTrain&gt;(
@@ -25,9 +33,10 @@ namespace Trax.Scheduler.Configuration;
 public class ScheduleOptions
 {
     // Manifest-level state
-    internal int _priority;
-    internal bool _isEnabled = true;
-    internal int _maxRetries = 3;
+    // Nullable where "not stated" differs from any value: see the class remarks.
+    internal int? _priority;
+    internal bool? _isEnabled;
+    internal int? _maxRetries;
     internal TimeSpan? _timeout;
     internal bool _isDormant;
     internal MisfirePolicy? _misfirePolicy;
@@ -41,6 +50,10 @@ public class ScheduleOptions
 
     // Batch-level state
     internal string? _prunePrefix;
+
+    // Set by the named ScheduleMany/IncludeMany/ThenIncludeMany overloads: the batch's prune is
+    // scoped to the batch's own group rather than to every manifest sharing its prefix.
+    internal string? _batchName;
 
     // ── Manifest-level fluent methods ─────────────────────────────────
 
@@ -57,6 +70,10 @@ public class ScheduleOptions
     /// <summary>
     /// Sets whether this manifest is enabled for scheduling.
     /// </summary>
+    /// <remarks>
+    /// Stated, it is written on every seed. Left unstated, a new manifest is enabled and an existing
+    /// one keeps whatever it is, including a runtime disable.
+    /// </remarks>
     public ScheduleOptions Enabled(bool enabled)
     {
         _isEnabled = enabled;
@@ -64,7 +81,8 @@ public class ScheduleOptions
     }
 
     /// <summary>
-    /// Sets how many times a failed run is retried before the manifest is dead-lettered.
+    /// Sets how many times a failed run is retried before the manifest is dead-lettered. Unstated,
+    /// the manifest takes the scheduler's <c>DefaultMaxRetries</c>.
     /// </summary>
     /// <remarks>
     /// The count is of retries after the first run, so a manifest runs at most
@@ -112,7 +130,8 @@ public class ScheduleOptions
     /// </summary>
     /// <remarks>
     /// Determines behavior when a scheduled run is missed (e.g., scheduler was down).
-    /// Only meaningful for Cron and Interval schedule types.
+    /// Only meaningful for Cron and Interval schedule types. Unstated, the manifest takes the
+    /// scheduler's <c>DefaultMisfirePolicy</c>.
     /// </remarks>
     public ScheduleOptions OnMisfire(MisfirePolicy policy)
     {
@@ -197,8 +216,15 @@ public class ScheduleOptions
 
     /// <summary>
     /// Sets the prune prefix for batch scheduling. Manifests whose ExternalId starts with this
-    /// prefix but were not in the current batch will be deleted.
+    /// prefix but were not in the current batch will be deleted, with their finished runs; a
+    /// manifest with a pending or running run is kept until a later prune.
     /// </summary>
+    /// <remarks>
+    /// The named <c>ScheduleMany(name, ...)</c> overloads set this to <c>"{name}-"</c> and prune
+    /// only within the batch's own group. Set directly, the prefix alone decides, so it also
+    /// reaches manifests of another batch whose prefix starts with it; <c>AddScheduler</c> refuses
+    /// two batches declared in the builder whose prunes overlap that way.
+    /// </remarks>
     public ScheduleOptions PrunePrefix(string prefix)
     {
         _prunePrefix = prefix;
@@ -213,14 +239,27 @@ public class ScheduleOptions
     internal ManifestOptions ToManifestOptions() =>
         new()
         {
-            Priority = _priority,
-            IsEnabled = _isEnabled,
-            MaxRetries = _maxRetries,
+            Priority = _priority ?? 0,
+            _isEnabled = _isEnabled,
+            _maxRetries = _maxRetries,
             Timeout = _timeout,
             IsDormant = _isDormant,
             MisfirePolicy = _misfirePolicy,
             MisfireThreshold = _misfireThreshold,
-            Exclusions = _exclusions,
+            Exclusions = [.. _exclusions],
             Variance = _variance,
         };
+
+    /// <summary>
+    /// Makes this a named batch: its manifests share the group <paramref name="name"/>, their
+    /// external IDs start with <c>"{name}-"</c>, and its prune removes only manifests of its own
+    /// group.
+    /// </summary>
+    internal ScheduleOptions NamedBatch(string name)
+    {
+        _groupId = name;
+        _prunePrefix = $"{name}-";
+        _batchName = name;
+        return this;
+    }
 }

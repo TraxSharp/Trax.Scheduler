@@ -53,7 +53,9 @@ internal class CreateWorkQueueEntriesJunction(
 
             try
             {
-                var basePriority = view.ManifestGroup.Priority;
+                // The manifest's own priority, as a trigger or a dead-letter requeue uses. The
+                // dispatcher already orders by the group's priority before the entry's.
+                var basePriority = view.Manifest.Priority;
                 var effectivePriority =
                     view.Manifest.ScheduleType == ScheduleType.Dependent
                         ? basePriority + schedulerConfiguration.DependentPriorityBoost

@@ -33,9 +33,17 @@ public class ManifestOptions
     /// </summary>
     /// <remarks>
     /// When false, the ManifestManager will skip this manifest during polling.
-    /// This allows pausing jobs without deleting them. Defaults to true.
+    /// This allows pausing jobs without deleting them. Defaults to true. Written to an existing
+    /// manifest only when set: left unset, a re-seed keeps the manifest's current state, including
+    /// a runtime disable.
     /// </remarks>
-    public bool IsEnabled { get; set; } = true;
+    public bool IsEnabled
+    {
+        get => _isEnabled ?? true;
+        set => _isEnabled = value;
+    }
+
+    internal bool? _isEnabled;
 
     /// <summary>
     /// Gets or sets how many times a failed run is retried before the manifest is dead-lettered.
@@ -43,20 +51,24 @@ public class ManifestOptions
     /// <remarks>
     /// The count is of retries after the first run: each retry creates a new Metadata record, and
     /// the failure after the last retry moves the manifest to the dead letter queue for manual
-    /// intervention. 0 runs once and dead-letters on the first failure; the default of 3 allows
-    /// four attempts. Failures count within <see cref="SchedulerConfiguration.FailureCountWindow"/>
-    /// and after the manifest's latest resolved dead letter.
+    /// intervention. 0 runs once and dead-letters on the first failure. Left unset, the manifest
+    /// takes the scheduler's <c>DefaultMaxRetries</c> (3, four attempts, unless configured);
+    /// inside a <c>configureEach</c> callback it already reads the batch's value. Failures count
+    /// within <see cref="SchedulerConfiguration.FailureCountWindow"/> and after the manifest's
+    /// latest resolved dead letter.
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">The value set is negative.</exception>
     public int MaxRetries
     {
-        get;
+        get => _maxRetries ?? 3;
         set
         {
             ArgumentOutOfRangeException.ThrowIfNegative(value);
-            field = value;
+            _maxRetries = value;
         }
-    } = 3;
+    }
+
+    internal int? _maxRetries;
 
     /// <summary>
     /// Gets or sets the timeout for job execution.
@@ -91,7 +103,7 @@ public class ManifestOptions
 
     /// <summary>
     /// Gets or sets the per-manifest misfire policy override.
-    /// Null means use the global default from SchedulerConfiguration.
+    /// Null means use the global default, <c>SchedulerConfiguration.DefaultMisfirePolicy</c>.
     /// </summary>
     public MisfirePolicy? MisfirePolicy { get; set; }
 
@@ -120,4 +132,22 @@ public class ManifestOptions
     /// Interval schedule types. Null means no variance (deterministic scheduling).
     /// </remarks>
     public TimeSpan? Variance { get; set; }
+
+    /// <summary>
+    /// A copy of these options with its own exclusion list, so a change to one item's options
+    /// in a batch cannot reach another's. Copies every field, stated or not.
+    /// </summary>
+    internal ManifestOptions Copy() =>
+        new()
+        {
+            _isEnabled = _isEnabled,
+            _maxRetries = _maxRetries,
+            Timeout = Timeout,
+            Priority = Priority,
+            IsDormant = IsDormant,
+            MisfirePolicy = MisfirePolicy,
+            MisfireThreshold = MisfireThreshold,
+            Exclusions = [.. Exclusions],
+            Variance = Variance,
+        };
 }

@@ -14,18 +14,22 @@ namespace Trax.Scheduler.Extensions;
 /// <summary>
 /// Extension methods for <see cref="IDataContext"/> used by the scheduler.
 /// </summary>
+/// <remarks>
+/// Seeding runs at every host start. The schedule, input, train and the options code always owns
+/// are written each time; the manifest's enabled flag and the group's settings, which operators
+/// change at runtime, are written only when the options state them.
+/// </remarks>
 internal static class DataContextExtensions
 {
     /// <summary>
-    /// Ensures a ManifestGroup exists with the given name, creating one if necessary.
+    /// Ensures a ManifestGroup exists with the given name, creating one if necessary. An existing
+    /// group's settings change only where <paramref name="group"/> states them.
     /// </summary>
     /// <returns>The ManifestGroup ID.</returns>
     public static async Task<long> EnsureManifestGroupAsync(
         this IDataContext context,
         string groupName,
-        int priority,
-        int? maxActiveJobs = null,
-        bool isEnabled = true,
+        ManifestGroupSeed group,
         CancellationToken ct = default
     )
     {
@@ -36,26 +40,40 @@ internal static class DataContextExtensions
 
         if (existing != null)
         {
-            existing.Priority = priority;
-            existing.MaxActiveJobs = maxActiveJobs;
-            existing.IsEnabled = isEnabled;
-            existing.UpdatedAt = DateTime.UtcNow;
+            var changed = false;
+            if (group.Priority is { } priority && existing.Priority != priority)
+            {
+                existing.Priority = priority;
+                changed = true;
+            }
+            if (group.MaxActiveJobsStated && existing.MaxActiveJobs != group.MaxActiveJobs)
+            {
+                existing.MaxActiveJobs = group.MaxActiveJobs;
+                changed = true;
+            }
+            if (group.IsEnabled is { } enabled && existing.IsEnabled != enabled)
+            {
+                existing.IsEnabled = enabled;
+                changed = true;
+            }
+            if (changed)
+                existing.UpdatedAt = DateTime.UtcNow;
             return existing.Id;
         }
 
-        var group = new ManifestGroup
+        var created = new ManifestGroup
         {
             Name = groupName,
-            Priority = priority,
-            MaxActiveJobs = maxActiveJobs,
-            IsEnabled = isEnabled,
+            Priority = group.Priority ?? group.PriorityIfNew,
+            MaxActiveJobs = group.MaxActiveJobsStated ? group.MaxActiveJobs : null,
+            IsEnabled = group.IsEnabled ?? true,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,
         };
-        context.ManifestGroups.Add(group);
+        context.ManifestGroups.Add(created);
         await context.SaveChanges(ct);
 
-        return group.Id;
+        return created.Id;
     }
 
     /// <summary>
@@ -68,9 +86,7 @@ internal static class DataContextExtensions
         Schedule schedule,
         ManifestOptions options,
         string groupId,
-        int groupPriority,
-        int? groupMaxActiveJobs = null,
-        bool groupIsEnabled = true,
+        ManifestGroupSeed group,
         CancellationToken ct = default
     )
         where TTrain : IServiceTrain<TInput, TOutput>
@@ -82,9 +98,7 @@ internal static class DataContextExtensions
             schedule,
             options,
             groupId,
-            groupPriority,
-            groupMaxActiveJobs,
-            groupIsEnabled,
+            group,
             ct
         );
 
@@ -99,19 +113,11 @@ internal static class DataContextExtensions
         Schedule schedule,
         ManifestOptions options,
         string groupId,
-        int groupPriority,
-        int? groupMaxActiveJobs = null,
-        bool groupIsEnabled = true,
+        ManifestGroupSeed group,
         CancellationToken ct = default
     )
     {
-        var manifestGroupId = await context.EnsureManifestGroupAsync(
-            groupId,
-            groupPriority,
-            groupMaxActiveJobs,
-            groupIsEnabled,
-            ct
-        );
+        var manifestGroupId = await context.EnsureManifestGroupAsync(groupId, group, ct);
 
         var existing = await context.Manifests.FirstOrDefaultAsync(
             m => m.ExternalId == externalId,
@@ -123,7 +129,8 @@ internal static class DataContextExtensions
             // Update only scheduling-related fields, preserve runtime state
             existing.Name = trainType.FullName!;
             existing.SetProperties(input);
-            existing.IsEnabled = options.IsEnabled;
+            if (options._isEnabled is { } isEnabled)
+                existing.IsEnabled = isEnabled;
             existing.MaxRetries = options.MaxRetries;
             existing.TimeoutSeconds = options.Timeout.HasValue
                 ? (int)options.Timeout.Value.TotalSeconds
@@ -172,9 +179,7 @@ internal static class DataContextExtensions
         long dependsOnManifestId,
         ManifestOptions options,
         string groupId,
-        int groupPriority,
-        int? groupMaxActiveJobs = null,
-        bool groupIsEnabled = true,
+        ManifestGroupSeed group,
         CancellationToken ct = default
     )
         where TTrain : IServiceTrain<TInput, TOutput>
@@ -186,9 +191,7 @@ internal static class DataContextExtensions
             dependsOnManifestId,
             options,
             groupId,
-            groupPriority,
-            groupMaxActiveJobs,
-            groupIsEnabled,
+            group,
             ct
         );
 
@@ -203,19 +206,11 @@ internal static class DataContextExtensions
         long dependsOnManifestId,
         ManifestOptions options,
         string groupId,
-        int groupPriority,
-        int? groupMaxActiveJobs = null,
-        bool groupIsEnabled = true,
+        ManifestGroupSeed group,
         CancellationToken ct = default
     )
     {
-        var manifestGroupId = await context.EnsureManifestGroupAsync(
-            groupId,
-            groupPriority,
-            groupMaxActiveJobs,
-            groupIsEnabled,
-            ct
-        );
+        var manifestGroupId = await context.EnsureManifestGroupAsync(groupId, group, ct);
 
         var existing = await context.Manifests.FirstOrDefaultAsync(
             m => m.ExternalId == externalId,
@@ -230,7 +225,8 @@ internal static class DataContextExtensions
         {
             existing.Name = trainType.FullName!;
             existing.SetProperties(input);
-            existing.IsEnabled = options.IsEnabled;
+            if (options._isEnabled is { } isEnabled)
+                existing.IsEnabled = isEnabled;
             existing.MaxRetries = options.MaxRetries;
             existing.TimeoutSeconds = options.Timeout.HasValue
                 ? (int)options.Timeout.Value.TotalSeconds
@@ -280,9 +276,7 @@ internal static class DataContextExtensions
         DateTime scheduledAt,
         ManifestOptions options,
         string groupId,
-        int groupPriority,
-        int? groupMaxActiveJobs = null,
-        bool groupIsEnabled = true,
+        ManifestGroupSeed group,
         CancellationToken ct = default
     )
         where TTrain : IServiceTrain<TInput, TOutput>
@@ -294,9 +288,7 @@ internal static class DataContextExtensions
             scheduledAt,
             options,
             groupId,
-            groupPriority,
-            groupMaxActiveJobs,
-            groupIsEnabled,
+            group,
             ct
         );
 
@@ -311,19 +303,11 @@ internal static class DataContextExtensions
         DateTime scheduledAt,
         ManifestOptions options,
         string groupId,
-        int groupPriority,
-        int? groupMaxActiveJobs = null,
-        bool groupIsEnabled = true,
+        ManifestGroupSeed group,
         CancellationToken ct = default
     )
     {
-        var manifestGroupId = await context.EnsureManifestGroupAsync(
-            groupId,
-            groupPriority,
-            groupMaxActiveJobs,
-            groupIsEnabled,
-            ct
-        );
+        var manifestGroupId = await context.EnsureManifestGroupAsync(groupId, group, ct);
 
         var existing = await context.Manifests.FirstOrDefaultAsync(
             m => m.ExternalId == externalId,
@@ -334,7 +318,8 @@ internal static class DataContextExtensions
         {
             existing.Name = trainType.FullName!;
             existing.SetProperties(input);
-            existing.IsEnabled = options.IsEnabled;
+            if (options._isEnabled is { } isEnabled)
+                existing.IsEnabled = isEnabled;
             existing.MaxRetries = options.MaxRetries;
             existing.TimeoutSeconds = options.Timeout.HasValue
                 ? (int)options.Timeout.Value.TotalSeconds
@@ -467,3 +452,20 @@ internal static class DataContextExtensions
         manifest.SetExclusions(options.Exclusions);
     }
 }
+
+/// <summary>
+/// The group settings one seeding call states. A null field (or an unstated limit) leaves an
+/// existing group's value alone.
+/// </summary>
+/// <param name="Priority">The group priority the options state, or null.</param>
+/// <param name="MaxActiveJobsStated">Whether the options state the limit; its value may be null (no limit).</param>
+/// <param name="MaxActiveJobs">The stated limit, when <paramref name="MaxActiveJobsStated"/>.</param>
+/// <param name="IsEnabled">The enabled flag the options state, or null.</param>
+/// <param name="PriorityIfNew">The priority a new group takes when none is stated.</param>
+internal readonly record struct ManifestGroupSeed(
+    int? Priority = null,
+    bool MaxActiveJobsStated = false,
+    int? MaxActiveJobs = null,
+    bool? IsEnabled = null,
+    int PriorityIfNew = 0
+);

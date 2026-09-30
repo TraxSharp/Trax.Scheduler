@@ -14,6 +14,7 @@ using Trax.Mediator.Services.TrainRegistry;
 using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Extensions;
 using Trax.Scheduler.Services.CancellationRegistry;
+using Trax.Scheduler.Services.ManifestPruning;
 using Schedule = Trax.Scheduler.Services.Scheduling.Schedule;
 
 namespace Trax.Scheduler.Services.TraxScheduler;
@@ -21,37 +22,58 @@ namespace Trax.Scheduler.Services.TraxScheduler;
 /// <summary>
 /// Implementation of <see cref="ITraxScheduler"/> that provides type-safe manifest scheduling.
 /// </summary>
+/// <param name="dataContextFactory">Creates the data context each operation uses.</param>
+/// <param name="trainRegistry">Validates that a scheduled train is registered.</param>
+/// <param name="trainDiscovery">
+/// Lets scheduling check that the train itself is registered, not only a train taking its input
+/// type: a scheduled run runs the train it names. Null checks the input type only.
+/// </param>
+/// <param name="cancellationRegistry">Cancels runs in this process.</param>
+/// <param name="logger">The scheduler's logger.</param>
+/// <param name="configuration">
+/// The scheduler configuration, whose <c>DefaultMaxRetries</c> and <c>DefaultMisfirePolicy</c> a
+/// manifest takes when its options state neither. Null keeps the built-in defaults.
+/// </param>
+/// <param name="changeSignal">Optional; always resolved via DI in a host.</param>
+/// <remarks>
+/// This is the constructor dependency injection uses: it takes every other constructor's
+/// parameters and more, so the container always picks it.
+/// </remarks>
 public class TraxScheduler(
     IDataContextProviderFactory dataContextFactory,
     ITrainRegistry trainRegistry,
+    ITrainDiscoveryService? trainDiscovery,
     ICancellationRegistry cancellationRegistry,
     ILogger<TraxScheduler> logger,
-    // Optional so direct construction in tests stays simple; always resolved via DI in a host.
+    SchedulerConfiguration? configuration,
     ITraxChangeSignal? changeSignal = null
 ) : ITraxScheduler
 {
-    private readonly ITrainDiscoveryService? _trainDiscovery;
-
     /// <summary>
-    /// The constructor dependency injection uses. The discovery service lets scheduling check
-    /// that the train itself is registered, not only a train taking its input type: a scheduled
-    /// run runs the train it names.
+    /// The constructor as it shipped before the discovery service and configuration parameters,
+    /// kept so code built against it still binds. A scheduler built this way checks only the
+    /// input type when scheduling, and applies the built-in defaults rather than the configured
+    /// <c>DefaultMaxRetries</c> and <c>DefaultMisfirePolicy</c>.
     /// </summary>
     public TraxScheduler(
         IDataContextProviderFactory dataContextFactory,
         ITrainRegistry trainRegistry,
-        ITrainDiscoveryService trainDiscovery,
         ICancellationRegistry cancellationRegistry,
         ILogger<TraxScheduler> logger,
         ITraxChangeSignal? changeSignal = null
     )
-        : this(dataContextFactory, trainRegistry, cancellationRegistry, logger, changeSignal)
-    {
-        _trainDiscovery = trainDiscovery;
-    }
+        : this(
+            dataContextFactory,
+            trainRegistry,
+            trainDiscovery: null,
+            cancellationRegistry,
+            logger,
+            configuration: null,
+            changeSignal
+        ) { }
 
     private void ValidateTrain(Type trainType, Type inputType) =>
-        trainRegistry.ValidateTrainRegistration(_trainDiscovery, trainType, inputType);
+        trainRegistry.ValidateTrainRegistration(trainDiscovery, trainType, inputType);
 
     /// <inheritdoc />
     public async Task<Manifest> ScheduleAsync<TTrain, TInput, TOutput>(
@@ -76,9 +98,7 @@ public class TraxScheduler(
             schedule,
             resolved.ManifestOptions,
             groupId: resolved.GroupId ?? externalId,
-            groupPriority: resolved.GroupPriority,
-            groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-            groupIsEnabled: resolved.GroupEnabled,
+            group: resolved.Group,
             ct: ct
         );
 
@@ -129,7 +149,7 @@ public class TraxScheduler(
             foreach (var source in sourceList)
             {
                 var (externalId, input) = map(source);
-                var itemOptions = CreateItemOptions(resolved.ManifestOptions);
+                var itemOptions = resolved.ManifestOptions.Copy();
                 configureEach?.Invoke(source, itemOptions);
 
                 var manifest = await context.UpsertManifestAsync<TTrain, TInput, TOutput>(
@@ -138,9 +158,7 @@ public class TraxScheduler(
                     schedule,
                     itemOptions,
                     groupId: effectiveGroupId,
-                    groupPriority: resolved.GroupPriority,
-                    groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-                    groupIsEnabled: resolved.GroupEnabled,
+                    group: resolved.Group,
                     ct: ct
                 );
                 results.Add(manifest);
@@ -158,7 +176,12 @@ public class TraxScheduler(
             if (resolved.PrunePrefix is not null)
             {
                 var keepIds = results.Select(m => m.ExternalId).ToHashSet();
-                await PruneSafeAsync(resolved.PrunePrefix, keepIds, ct);
+                await PruneSafeAsync(
+                    resolved.PrunePrefix,
+                    resolved.BatchName is null ? null : effectiveGroupId,
+                    keepIds,
+                    ct
+                );
             }
 
             return results;
@@ -207,9 +230,7 @@ public class TraxScheduler(
             parentManifest.Id,
             resolved.ManifestOptions,
             groupId: resolved.GroupId ?? externalId,
-            groupPriority: resolved.GroupPriority,
-            groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-            groupIsEnabled: resolved.GroupEnabled,
+            group: resolved.Group,
             ct: ct
         );
 
@@ -280,7 +301,7 @@ public class TraxScheduler(
                             + "Ensure parent manifests are scheduled before their dependents."
                     );
 
-                var itemOptions = CreateItemOptions(resolved.ManifestOptions);
+                var itemOptions = resolved.ManifestOptions.Copy();
                 configureEach?.Invoke(source, itemOptions);
 
                 var manifest = await context.UpsertDependentManifestAsync<TTrain, TInput, TOutput>(
@@ -289,9 +310,7 @@ public class TraxScheduler(
                     parentManifest.Id,
                     itemOptions,
                     groupId: effectiveGroupId,
-                    groupPriority: resolved.GroupPriority,
-                    groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-                    groupIsEnabled: resolved.GroupEnabled,
+                    group: resolved.Group,
                     ct: ct
                 );
                 results.Add(manifest);
@@ -309,7 +328,12 @@ public class TraxScheduler(
             if (resolved.PrunePrefix is not null)
             {
                 var keepIds = results.Select(m => m.ExternalId).ToHashSet();
-                await PruneSafeAsync(resolved.PrunePrefix, keepIds, ct);
+                await PruneSafeAsync(
+                    resolved.PrunePrefix,
+                    resolved.BatchName is null ? null : effectiveGroupId,
+                    keepIds,
+                    ct
+                );
             }
 
             return results;
@@ -503,9 +527,7 @@ public class TraxScheduler(
             DateTime.UtcNow + delay,
             resolved.ManifestOptions,
             groupId: resolved.GroupId ?? externalId,
-            groupPriority: resolved.GroupPriority,
-            groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-            groupIsEnabled: resolved.GroupEnabled,
+            group: resolved.Group,
             ct: ct
         );
 
@@ -634,9 +656,7 @@ public class TraxScheduler(
             schedule,
             resolved.ManifestOptions,
             groupId: resolved.GroupId ?? externalId,
-            groupPriority: resolved.GroupPriority,
-            groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-            groupIsEnabled: resolved.GroupEnabled,
+            group: resolved.Group,
             ct: ct
         );
 
@@ -674,9 +694,7 @@ public class TraxScheduler(
             DateTime.UtcNow + delay,
             resolved.ManifestOptions,
             groupId: resolved.GroupId ?? externalId,
-            groupPriority: resolved.GroupPriority,
-            groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-            groupIsEnabled: resolved.GroupEnabled,
+            group: resolved.Group,
             ct: ct
         );
 
@@ -725,9 +743,7 @@ public class TraxScheduler(
             parentManifest.Id,
             resolved.ManifestOptions,
             groupId: resolved.GroupId ?? externalId,
-            groupPriority: resolved.GroupPriority,
-            groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-            groupIsEnabled: resolved.GroupEnabled,
+            group: resolved.Group,
             ct: ct
         );
 
@@ -778,7 +794,7 @@ public class TraxScheduler(
             foreach (var source in sourceList)
             {
                 var (externalId, input) = map(source);
-                var itemOptions = CreateItemOptions(resolved.ManifestOptions);
+                var itemOptions = resolved.ManifestOptions.Copy();
                 configureEach?.Invoke(source, itemOptions);
 
                 var manifest = await context.UpsertManifestAsync(
@@ -788,9 +804,7 @@ public class TraxScheduler(
                     schedule,
                     itemOptions,
                     groupId: effectiveGroupId,
-                    groupPriority: resolved.GroupPriority,
-                    groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-                    groupIsEnabled: resolved.GroupEnabled,
+                    group: resolved.Group,
                     ct: ct
                 );
                 results.Add(manifest);
@@ -808,7 +822,12 @@ public class TraxScheduler(
             if (resolved.PrunePrefix is not null)
             {
                 var keepIds = results.Select(m => m.ExternalId).ToHashSet();
-                await PruneSafeAsync(resolved.PrunePrefix, keepIds, ct);
+                await PruneSafeAsync(
+                    resolved.PrunePrefix,
+                    resolved.BatchName is null ? null : effectiveGroupId,
+                    keepIds,
+                    ct
+                );
             }
 
             return results;
@@ -873,7 +892,7 @@ public class TraxScheduler(
                             + "Ensure parent manifests are scheduled before their dependents."
                     );
 
-                var itemOptions = CreateItemOptions(resolved.ManifestOptions);
+                var itemOptions = resolved.ManifestOptions.Copy();
                 configureEach?.Invoke(source, itemOptions);
 
                 var manifest = await context.UpsertDependentManifestAsync(
@@ -883,9 +902,7 @@ public class TraxScheduler(
                     parentManifest.Id,
                     itemOptions,
                     groupId: effectiveGroupId,
-                    groupPriority: resolved.GroupPriority,
-                    groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-                    groupIsEnabled: resolved.GroupEnabled,
+                    group: resolved.Group,
                     ct: ct
                 );
                 results.Add(manifest);
@@ -903,7 +920,12 @@ public class TraxScheduler(
             if (resolved.PrunePrefix is not null)
             {
                 var keepIds = results.Select(m => m.ExternalId).ToHashSet();
-                await PruneSafeAsync(resolved.PrunePrefix, keepIds, ct);
+                await PruneSafeAsync(
+                    resolved.PrunePrefix,
+                    resolved.BatchName is null ? null : effectiveGroupId,
+                    keepIds,
+                    ct
+                );
             }
 
             return results;
@@ -1317,34 +1339,39 @@ public class TraxScheduler(
         dataContextFactory.Create() as IDataContext
         ?? throw new InvalidOperationException("Failed to create data context");
 
-    private static ResolvedOptions ResolveOptions(Action<ScheduleOptions>? options)
+    private ResolvedOptions ResolveOptions(Action<ScheduleOptions>? options)
     {
         var opts = new ScheduleOptions();
         options?.Invoke(opts);
 
         var manifestOptions = opts.ToManifestOptions();
 
+        // The scheduler-wide defaults, for a manifest whose options state neither. Resolved here,
+        // before a batch copies the options per item, so configureEach reads the resolved value.
+        manifestOptions._maxRetries ??= configuration?.DefaultMaxRetries;
+        manifestOptions.MisfirePolicy ??= configuration?.DefaultMisfirePolicy;
+
+        // A group of the manifest's own (no group name) or a named batch's own group has no other
+        // members to disagree with, so the manifest's stated priority is the group's too.
+        var ownsGroup =
+            opts._groupId is null
+            || (opts._batchName is not null && opts._groupId == opts._batchName);
+        var group = opts._groupOptions;
+
         return new ResolvedOptions(
             ManifestOptions: manifestOptions,
             GroupId: opts._groupId,
-            GroupPriority: opts._groupOptions?._priority ?? manifestOptions.Priority,
-            GroupMaxActiveJobs: opts._groupOptions?._maxActiveJobs,
-            GroupEnabled: opts._groupOptions?._isEnabled ?? true,
-            PrunePrefix: opts._prunePrefix
+            Group: new ManifestGroupSeed(
+                Priority: group?._priority ?? (ownsGroup ? opts._priority : null),
+                MaxActiveJobsStated: group?._maxActiveJobsStated ?? false,
+                MaxActiveJobs: group?._maxActiveJobs,
+                IsEnabled: group?._isEnabled,
+                PriorityIfNew: manifestOptions.Priority
+            ),
+            PrunePrefix: opts._prunePrefix,
+            BatchName: opts._batchName
         );
     }
-
-    private static ManifestOptions CreateItemOptions(ManifestOptions baseOptions) =>
-        new()
-        {
-            Priority = baseOptions.Priority,
-            IsEnabled = baseOptions.IsEnabled,
-            MaxRetries = baseOptions.MaxRetries,
-            Timeout = baseOptions.Timeout,
-            IsDormant = baseOptions.IsDormant,
-            Exclusions = baseOptions.Exclusions,
-            Variance = baseOptions.Variance,
-        };
 
     private static async Task<Manifest> GetManifestByExternalIdAsync(
         IDataContext context,
@@ -1356,6 +1383,7 @@ public class TraxScheduler(
 
     private async Task PruneSafeAsync(
         string prunePrefix,
+        string? batchGroup,
         System.Collections.Generic.HashSet<string> keepExternalIds,
         CancellationToken ct
     )
@@ -1363,7 +1391,13 @@ public class TraxScheduler(
         try
         {
             await using var pruneContext = CreateContext();
-            await PruneStaleManifestsAsync(pruneContext, prunePrefix, keepExternalIds, ct);
+            await PruneStaleManifestsAsync(
+                pruneContext,
+                prunePrefix,
+                batchGroup,
+                keepExternalIds,
+                ct
+            );
         }
         catch (Exception ex)
         {
@@ -1375,9 +1409,16 @@ public class TraxScheduler(
         }
     }
 
+    /// <summary>
+    /// Deletes the manifests whose external ID starts with <paramref name="prunePrefix"/> and that
+    /// this batch no longer declares. A named batch passes its group in
+    /// <paramref name="batchGroup"/> and prunes only manifests of that group, so a batch named
+    /// <c>sync</c> never prunes the manifests of one named <c>sync-users</c>.
+    /// </summary>
     private async Task PruneStaleManifestsAsync(
         IDataContext context,
         string prunePrefix,
+        string? batchGroup,
         System.Collections.Generic.HashSet<string> keepExternalIds,
         CancellationToken ct
     )
@@ -1385,8 +1426,11 @@ public class TraxScheduler(
         // Server compute: load prefixed manifest IDs, filter stale ones in C#.
         // Avoids a NOT IN(...) clause with many string parameters that can timeout
         // on low-resource Postgres instances during query planning.
-        var prefixedManifests = await context
-            .Manifests.Where(m => m.ExternalId.StartsWith(prunePrefix))
+        var prefixed = context.Manifests.Where(m => m.ExternalId.StartsWith(prunePrefix));
+        if (batchGroup is not null)
+            prefixed = prefixed.Where(m => m.ManifestGroup.Name == batchGroup);
+
+        var prefixedManifests = await prefixed
             .Select(m => new { m.Id, m.ExternalId })
             .ToListAsync(ct);
 
@@ -1398,40 +1442,21 @@ public class TraxScheduler(
         if (staleManifestIds.Count == 0)
             return;
 
-        // Database compute: delete by integer PK — small IN(...) clause per query.
-        await context
-            .WorkQueues.Where(w =>
-                w.ManifestId.HasValue && staleManifestIds.Contains(w.ManifestId.Value)
-            )
-            .ExecuteDeleteAsync(ct);
-
-        await context
-            .DeadLetters.Where(d => staleManifestIds.Contains(d.ManifestId))
-            .ExecuteDeleteAsync(ct);
-
-        await context
-            .Metadatas.Where(m =>
-                m.ManifestId.HasValue && staleManifestIds.Contains(m.ManifestId.Value)
-            )
-            .ExecuteDeleteAsync(ct);
-
-        var pruned = await context
-            .Manifests.Where(m => staleManifestIds.Contains(m.Id))
-            .ExecuteDeleteAsync(ct);
+        var (pruned, kept) = await ManifestPruner.PruneAsync(context, staleManifestIds, logger, ct);
 
         logger.LogInformation(
-            "Pruned {Count} stale manifests with prefix '{Prefix}'",
+            "Pruned {Count} stale manifests with prefix '{Prefix}' ({Kept} kept until their runs finish)",
             pruned,
-            prunePrefix
+            prunePrefix,
+            kept
         );
     }
 
     private record ResolvedOptions(
         ManifestOptions ManifestOptions,
         string? GroupId,
-        int GroupPriority,
-        int? GroupMaxActiveJobs,
-        bool GroupEnabled,
-        string? PrunePrefix
+        ManifestGroupSeed Group,
+        string? PrunePrefix,
+        string? BatchName
     );
 }
