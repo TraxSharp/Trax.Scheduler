@@ -42,6 +42,9 @@ internal class JobDispatcherPollingService(
     {
         if (!configuration.JobDispatcherEnabled)
         {
+            // The loop is alive and doing what it was told; stamping it means re-enabling the
+            // dispatcher does not start from a stale timestamp. The health check reports "paused".
+            livenessMonitor.RecordDispatchCycle();
             logger.LogDebug("JobDispatcher is disabled, skipping polling cycle");
             return;
         }
@@ -52,9 +55,10 @@ internal class JobDispatcherPollingService(
             var train = scope.ServiceProvider.GetRequiredService<IJobDispatcherTrain>();
 
             logger.LogDebug("JobDispatcher polling cycle starting");
+            livenessMonitor.BeginDispatchCycle();
             await train.Run(Unit.Default, cancellationToken);
 
-            // Stamp liveness only on a successful cycle (a no-op poll still proves the loop
+            // Stamp completion only on a successful cycle (a no-op poll still proves the loop
             // and DB round-trip work). A failed run leaves the timestamp stale so the health
             // check flips unhealthy.
             livenessMonitor.RecordDispatchCycle();
@@ -62,6 +66,7 @@ internal class JobDispatcherPollingService(
         }
         catch (Exception ex)
         {
+            livenessMonitor.RecordDispatchCycleFailed();
             logger.LogError(ex, "Error during JobDispatcher polling cycle");
         }
     }
