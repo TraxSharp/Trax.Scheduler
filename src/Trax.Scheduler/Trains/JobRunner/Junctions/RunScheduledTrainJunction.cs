@@ -8,6 +8,7 @@ using Trax.Effect.Services.EffectJunction;
 using Trax.Mediator.Services.TrainBus;
 using Trax.Scheduler.Services.DormantDependentContext;
 using Trax.Scheduler.Trains.ManifestManager.Utilities;
+using Trax.Scheduler.Utilities;
 
 namespace Trax.Scheduler.Trains.JobRunner.Junctions;
 
@@ -88,7 +89,7 @@ internal class RunScheduledTrainJunction(
 
         // The scheduled work is done. From here on this is bookkeeping for it, not work a
         // cancellation can still usefully stop (effect/0005 applies the same rule to the outcome).
-        RecordManifestSuccess(metadata);
+        await RecordManifestSuccessAsync(metadata);
         await dataContext.SaveChanges(CancellationToken.None);
 
         return Unit.Default;
@@ -103,7 +104,7 @@ internal class RunScheduledTrainJunction(
             metadata.TrainState
         );
 
-    private void RecordManifestSuccess(Metadata metadata)
+    private async Task RecordManifestSuccessAsync(Metadata metadata)
     {
         if (metadata.Manifest is null)
         {
@@ -114,7 +115,13 @@ internal class RunScheduledTrainJunction(
             return;
         }
 
-        metadata.Manifest.LastSuccessfulRun = DateTime.UtcNow;
+        // By the database's clock: a dependent compares this with when its own run was
+        // dispatched, which another machine stamped (see DatabaseClock).
+        var manifestId = metadata.Manifest.Id;
+        metadata.Manifest.LastSuccessfulRun = await DatabaseClock.UtcNowAsync(
+            dataContext.Manifests.Where(m => m.Id == manifestId),
+            CancellationToken.None
+        );
         metadata.Manifest.NextScheduledRun = SchedulingHelpers.ComputeNextScheduledRun(
             metadata.Manifest
         );

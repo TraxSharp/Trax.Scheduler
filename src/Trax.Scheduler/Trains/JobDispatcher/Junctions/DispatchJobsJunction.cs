@@ -244,7 +244,12 @@ internal class DispatchJobsJunction(
         // Update work queue entry
         claimed.Status = WorkQueueStatus.Dispatched;
         claimed.MetadataId = metadata.Id;
-        claimed.DispatchedAt = DateTime.UtcNow;
+        // By the database's clock: a dependent's next run is decided by comparing this with its
+        // parent's LastSuccessfulRun, which a worker on another machine stamps (see DatabaseClock).
+        claimed.DispatchedAt = await DatabaseClock.UtcNowAsync(
+            dataContext.WorkQueues.Where(q => q.Id == claimed.Id),
+            CancellationToken
+        );
         await dataContext.SaveChanges(CancellationToken);
 
         // Link retry metadata on the dead letter if this WorkQueue was from a requeue
@@ -371,7 +376,12 @@ internal class DispatchJobsJunction(
 
         claimed.Status = WorkQueueStatus.Dispatched;
         claimed.MetadataId = metadata.Id;
-        claimed.DispatchedAt = DateTime.UtcNow;
+        // By the database's clock: a dependent's next run is decided by comparing this with its
+        // parent's LastSuccessfulRun, which a worker on another machine stamps (see DatabaseClock).
+        claimed.DispatchedAt = await DatabaseClock.UtcNowAsync(
+            dataContext.WorkQueues.Where(q => q.Id == claimed.Id),
+            CancellationToken
+        );
         await dataContext.SaveChanges(CancellationToken);
         await LinkDeadLetterRetryAsync(dataContext, claimed, metadata.Id);
         await dataContext.CommitTransaction();

@@ -75,17 +75,31 @@ internal class LoadManifestsJunction(IDataContext dataContext, SchedulerConfigur
                 HasSuccessfulMetadata = m.Metadatas.Any(md =>
                     md.TrainState == TrainState.Completed
                 ),
+                // A dependent's runs are dated by when the dispatcher dispatched them, which the
+                // database's clock stamps, as it stamps the parent's LastSuccessfulRun (see
+                // DatabaseClock). A run with no dispatched entry (run directly, or dispatched in
+                // memory) falls back to its own start time.
                 LatestSuccessfulRunStart =
                     m.ScheduleType == ScheduleType.Dependent
-                        ? m
-                            .Metadatas.Where(md => md.TrainState == TrainState.Completed)
-                            .Max(md => (DateTime?)md.StartTime)
+                        ? m.WorkQueues.Where(q =>
+                                q.DispatchedAt != null
+                                && q.Metadata != null
+                                && q.Metadata.TrainState == TrainState.Completed
+                            )
+                            .Max(q => q.DispatchedAt)
+                            ?? m.Metadatas.Where(md => md.TrainState == TrainState.Completed)
+                                .Max(md => (DateTime?)md.StartTime)
                         : null,
                 LatestCancelledRunStart =
                     m.ScheduleType == ScheduleType.Dependent
-                        ? m
-                            .Metadatas.Where(md => md.TrainState == TrainState.Cancelled)
-                            .Max(md => (DateTime?)md.StartTime)
+                        ? m.WorkQueues.Where(q =>
+                                q.DispatchedAt != null
+                                && q.Metadata != null
+                                && q.Metadata.TrainState == TrainState.Cancelled
+                            )
+                            .Max(q => q.DispatchedAt)
+                            ?? m.Metadatas.Where(md => md.TrainState == TrainState.Cancelled)
+                                .Max(md => (DateTime?)md.StartTime)
                         : null,
             })
             .AsNoTracking()

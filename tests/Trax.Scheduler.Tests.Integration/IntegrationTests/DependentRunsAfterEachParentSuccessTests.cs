@@ -7,6 +7,8 @@ using Trax.Effect.Models.Manifest;
 using Trax.Effect.Models.Manifest.DTOs;
 using Trax.Effect.Models.Metadata;
 using Trax.Effect.Models.Metadata.DTOs;
+using Trax.Effect.Models.WorkQueue;
+using Trax.Effect.Models.WorkQueue.DTOs;
 using Trax.Scheduler.Tests.Integration.Fakes.Trains;
 using Trax.Scheduler.Tests.Integration.Fixtures;
 using Trax.Scheduler.Trains.ManifestManager;
@@ -139,6 +141,55 @@ public class DependentRunsAfterEachParentSuccessTests : TestSetup
             .Be(0, "the cancelled run started after the parent's latest success");
     }
 
+    [Test]
+    public async Task A_dependent_whose_dispatcher_clock_runs_behind_is_not_queued_again_after_every_run()
+    {
+        // The parent succeeded at T0+10 and the dependent was dispatched for it at T0+11, both by
+        // the database's clock. The dependent's run row was stamped by a dispatcher whose clock
+        // is three minutes behind, so it claims to have started at T0+8, before the parent's
+        // success. Read from that row, every run of the dependent looked like it missed the
+        // parent's output and was queued again.
+        var dependent = await ArrangeAsync(
+            parentSucceededAt: T0.AddMinutes(10),
+            dependentStartedAt: null,
+            dependentSucceededAt: T0.AddMinutes(12)
+        );
+        await AddDispatchedRunAsync(
+            dependent.Id,
+            TrainState.Completed,
+            startTime: T0.AddMinutes(8),
+            dispatchedAt: T0.AddMinutes(11)
+        );
+
+        await RunManifestManagerAsync();
+
+        (await QueuedCount(dependent))
+            .Should()
+            .Be(0, "the run was dispatched after the parent's latest success, by one clock");
+    }
+
+    [Test]
+    public async Task A_parent_success_after_the_dependents_dispatch_queues_it_again_whatever_its_run_row_says()
+    {
+        // The dispatcher's clock runs ahead this time: the run row claims T0+12, but the dependent
+        // was dispatched at T0+5 by the database's clock, before the parent's T0+10 success.
+        var dependent = await ArrangeAsync(
+            parentSucceededAt: T0.AddMinutes(10),
+            dependentStartedAt: null,
+            dependentSucceededAt: T0.AddMinutes(20)
+        );
+        await AddDispatchedRunAsync(
+            dependent.Id,
+            TrainState.Completed,
+            startTime: T0.AddMinutes(12),
+            dispatchedAt: T0.AddMinutes(5)
+        );
+
+        await RunManifestManagerAsync();
+
+        (await QueuedCount(dependent)).Should().Be(1, "the parent succeeded while it ran");
+    }
+
     private async Task<Manifest> ArrangeAsync(
         DateTime parentSucceededAt,
         DateTime? dependentStartedAt,
@@ -214,6 +265,46 @@ public class DependentRunsAfterEachParentSuccessTests : TestSetup
         metadata.StartTime = startTime;
         metadata.EndTime = endTime;
         await DataContext.Track(metadata);
+        await DataContext.SaveChanges(CancellationToken.None);
+        DataContext.Reset();
+    }
+
+    /// <summary>
+    /// A run the dispatcher started: its run row, stamped by the dispatcher's clock, and its
+    /// dispatched work queue entry, stamped by the database's.
+    /// </summary>
+    private async Task AddDispatchedRunAsync(
+        long manifestId,
+        TrainState state,
+        DateTime startTime,
+        DateTime dispatchedAt
+    )
+    {
+        var metadata = Metadata.Create(
+            new CreateMetadata
+            {
+                Name = typeof(SchedulerTestTrain).FullName!,
+                ExternalId = Guid.NewGuid().ToString("N"),
+                Input = new SchedulerTestInput(),
+                ManifestId = manifestId,
+            }
+        );
+        metadata.TrainState = state;
+        metadata.StartTime = startTime;
+        await DataContext.Track(metadata);
+        await DataContext.SaveChanges(CancellationToken.None);
+
+        var entry = WorkQueue.Create(
+            new CreateWorkQueue
+            {
+                TrainName = typeof(SchedulerTestTrain).FullName!,
+                ManifestId = manifestId,
+            }
+        );
+        entry.Status = WorkQueueStatus.Dispatched;
+        entry.MetadataId = metadata.Id;
+        entry.DispatchedAt = dispatchedAt;
+        await DataContext.Track(entry);
         await DataContext.SaveChanges(CancellationToken.None);
         DataContext.Reset();
     }
