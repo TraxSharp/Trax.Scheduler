@@ -3,6 +3,7 @@ using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using Trax.Effect.Data.Services.SqlDialect;
 using Trax.Effect.Enums;
 using Trax.Effect.Models.BackgroundJob;
@@ -82,6 +83,178 @@ public class LocalWorkerHeartbeatTests : TestSetup
             await first.StopAsync(CancellationToken.None);
             DeliveryProbeTrain.Forget(key);
         }
+    }
+
+    [Test]
+    public async Task A_claim_refresh_that_fails_is_logged_and_the_job_still_runs_to_completion()
+    {
+        var key = Guid.NewGuid().ToString("N");
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        DeliveryProbeTrain.Gates[key] = gate;
+
+        var metadata = await QueueLocalJob(new DeliveryProbeInput { Key = key });
+        var jobId = await DataContext
+            .BackgroundJobs.AsNoTracking()
+            .Where(j => j.MetadataId == metadata.Id)
+            .Select(j => j.Id)
+            .SingleAsync();
+
+        // The database refuses every refresh of this job's claim; the claim itself, which sets
+        // fetched_at from null, is allowed.
+        var function = $"refuse_refresh_{jobId}";
+        await ExecuteSqlAsync(
+            $"CREATE FUNCTION trax.{function}() RETURNS trigger LANGUAGE plpgsql AS $$ "
+                + $"BEGIN IF OLD.id = {jobId} AND OLD.fetched_at IS NOT NULL THEN "
+                + "RAISE EXCEPTION 'refresh refused'; END IF; RETURN NEW; END $$; "
+                + $"CREATE TRIGGER {function} BEFORE UPDATE ON trax.background_job "
+                + $"FOR EACH ROW EXECUTE FUNCTION trax.{function}();"
+        );
+
+        var logger = new CapturingLogger();
+        using var stop = new CancellationTokenSource();
+        var worker = NewWorker(
+            new CancellationRegistry(),
+            logger,
+            visibilityTimeout: TimeSpan.FromSeconds(1)
+        );
+        try
+        {
+            await worker.StartAsync(stop.Token);
+
+            (
+                await WaitUntilAsync(
+                    () => logger.Has(LogLevel.Warning, "could not refresh its claim"),
+                    TimeSpan.FromSeconds(30)
+                )
+            )
+                .Should()
+                .BeTrue("a refresh the database refuses should be logged as a warning");
+
+            gate.TrySetResult();
+            await WaitForRunState(metadata.Id, TrainState.Completed);
+            logger
+                .Has(LogLevel.Error, "failed job")
+                .Should()
+                .BeFalse("a failed refresh does not fail the job it was keeping claimed");
+        }
+        finally
+        {
+            gate.TrySetResult();
+            stop.Cancel();
+            await worker.StopAsync(CancellationToken.None);
+            await ExecuteSqlAsync(
+                $"DROP TRIGGER IF EXISTS {function} ON trax.background_job; "
+                    + $"DROP FUNCTION IF EXISTS trax.{function}();"
+            );
+            DeliveryProbeTrain.Forget(key);
+        }
+    }
+
+    [Test]
+    public async Task A_visibility_timeout_too_short_to_divide_runs_the_job_without_a_heartbeat()
+    {
+        var key = Guid.NewGuid().ToString("N");
+        var metadata = await QueueLocalJob(new DeliveryProbeInput { Key = key });
+
+        var logger = new CapturingLogger();
+        using var stop = new CancellationTokenSource();
+        var worker = NewWorker(
+            new CancellationRegistry(),
+            logger,
+            visibilityTimeout: TimeSpan.Zero
+        );
+        try
+        {
+            await worker.StartAsync(stop.Token);
+
+            await WaitForRunState(metadata.Id, TrainState.Completed);
+            (
+                await WaitUntilAsync(
+                    () => logger.Has(LogLevel.Debug, "completed job"),
+                    TimeSpan.FromSeconds(30)
+                )
+            )
+                .Should()
+                .BeTrue();
+            logger
+                .Entries.Should()
+                .NotContain(
+                    e => e.Level >= LogLevel.Warning,
+                    "a zero timeout has no refresh interval, so there is no heartbeat to start or fail"
+                );
+        }
+        finally
+        {
+            stop.Cancel();
+            await worker.StopAsync(CancellationToken.None);
+            DeliveryProbeTrain.Forget(key);
+        }
+    }
+
+    private static async Task ExecuteSqlAsync(string sql)
+    {
+        await using var connection = new NpgsqlConnection(TestPostgres.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition())
+                return true;
+            // determinism: polls the condition, bounded by the timeout above.
+            await Task.Delay(25);
+        }
+        return condition();
+    }
+
+    private LocalWorkerService NewWorker(
+        ICancellationRegistry registry,
+        ILogger<LocalWorkerService> logger,
+        TimeSpan visibilityTimeout
+    ) =>
+        new(
+            Scope.ServiceProvider,
+            new LocalWorkerOptions
+            {
+                WorkerCount = 1,
+                PollingInterval = TimeSpan.FromMilliseconds(100),
+                VisibilityTimeout = visibilityTimeout,
+                ShutdownTimeout = TimeSpan.FromSeconds(5),
+            },
+            registry,
+            logger,
+            Scope.ServiceProvider.GetRequiredService<ISqlDialect>()
+        );
+
+    private sealed class CapturingLogger : ILogger<LocalWorkerService>
+    {
+        private readonly System.Collections.Concurrent.ConcurrentQueue<(
+            LogLevel Level,
+            string Message
+        )> _entries = new();
+
+        public IReadOnlyList<(LogLevel Level, string Message)> Entries => _entries.ToList();
+
+        public bool Has(LogLevel level, string fragment) =>
+            _entries.Any(e => e.Level == level && e.Message.Contains(fragment));
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter
+        ) => _entries.Enqueue((logLevel, formatter(state, exception)));
     }
 
     private LocalWorkerService NewWorker(ICancellationRegistry registry) =>

@@ -375,6 +375,34 @@ public class OperationsServiceEnqueueTests
     }
 
     [Test]
+    public async Task A_missing_authorization_service_is_thrown_by_a_service_built_without_a_logger()
+    {
+        EnqueueThrows(
+            new TrainAuthorizationNotConfiguredException(
+                typeof(IProbeTrain).FullName!,
+                "Train 'IProbeTrain' declares [TraxAuthorize] but no ITrainAuthorizationService is registered."
+            )
+        );
+        var service = new OperationsService(
+            _discovery,
+            Substitute.For<IDataContextProviderFactory>(),
+            new SchedulerConfiguration(),
+            _execution
+        );
+
+        var act = async () =>
+            await service.QueueTrainAsync(
+                new QueueTrainInput(typeof(IProbeTrain).FullName!, "{\"customerId\":1}"),
+                CancellationToken.None
+            );
+
+        await act.Should()
+            .ThrowAsync<TrainAuthorizationNotConfiguredException>(
+                "with nowhere to log it, the misconfiguration still reaches the caller"
+            );
+    }
+
+    [Test]
     public async Task A_hook_refusal_is_still_reported_as_a_refusal()
     {
         EnqueueThrows(new InvalidOperationException("Customer 1 is on hold."));

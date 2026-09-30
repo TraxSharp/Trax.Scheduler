@@ -90,6 +90,18 @@ public class SchedulingHelpersCronCatchUpTests
             .Be(new DateTime(2026, 3, 4, 12, 7, 30, DateTimeKind.Utc), "now itself counts");
     }
 
+    [Test]
+    public void A_cron_that_never_occurs_has_no_latest_occurrence()
+    {
+        var now = new DateTime(2026, 3, 4, 12, 0, 0, DateTimeKind.Utc);
+        var parsed = Services.Scheduling.CronParser.Parse("0 0 0 30 2 *");
+
+        SchedulingHelpers
+            .LatestOccurrence(parsed, after: now.AddYears(-5), now)
+            .Should()
+            .BeNull("February has no 30th, so there is nothing to catch up on");
+    }
+
     private static Manifest DoNothingCron(string cron, DateTime lastSuccess) =>
         new()
         {

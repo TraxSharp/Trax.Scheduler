@@ -116,6 +116,25 @@ public class SqsBatchDeliveryTests
     }
 
     [Test]
+    public async Task A_record_naming_a_run_that_does_not_exist_is_reported()
+    {
+        var (run, key) = await PendingRun();
+        var handler = new SqsJobRunnerHandler(_serviceProvider);
+        var batch = new SQSEvent
+        {
+            Records = [Record("m1", run, key), Record("m2", run + 1_000_000, "missing")],
+        };
+
+        var response = await handler.HandleBatchAsync(batch);
+
+        response
+            .BatchItemFailures.Select(f => f.ItemIdentifier)
+            .Should()
+            .Equal(["m2"], "no row records m2's outcome, so it is not acknowledged");
+        DeliveryProbeTrain.Runs[key].Should().Be(1);
+    }
+
+    [Test]
     public async Task A_redelivered_record_whose_run_already_completed_is_acknowledged()
     {
         var (run, key) = await PendingRun();

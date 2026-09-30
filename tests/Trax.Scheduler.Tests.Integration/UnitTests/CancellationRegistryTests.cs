@@ -304,4 +304,43 @@ public class CancellationRegistryTests
     }
 
     #endregion
+
+    #region An implementation written before the owner-checked overload
+
+    [Test]
+    public void OwnerCheckedUnregister_OnAnImplementationWithoutIt_RemovesById()
+    {
+        ICancellationRegistry registry = new IdOnlyRegistry();
+        using var cts = new CancellationTokenSource();
+        registry.Register(7, cts);
+
+        registry.Unregister(7, cts);
+
+        registry
+            .TryCancel(7)
+            .Should()
+            .BeFalse("the default overload falls back to the implementation's remove by id");
+        cts.IsCancellationRequested.Should().BeFalse();
+    }
+
+    /// <summary>A host's registry that implements only the members that predate the overload.</summary>
+    private sealed class IdOnlyRegistry : ICancellationRegistry
+    {
+        private readonly Dictionary<long, CancellationTokenSource> _sources = new();
+
+        public void Register(long metadataId, CancellationTokenSource cts) =>
+            _sources.TryAdd(metadataId, cts);
+
+        public void Unregister(long metadataId) => _sources.Remove(metadataId);
+
+        public bool TryCancel(long metadataId)
+        {
+            if (!_sources.TryGetValue(metadataId, out var cts))
+                return false;
+            cts.Cancel();
+            return true;
+        }
+    }
+
+    #endregion
 }

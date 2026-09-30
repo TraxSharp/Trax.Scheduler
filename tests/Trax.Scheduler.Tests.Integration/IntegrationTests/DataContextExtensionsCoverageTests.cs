@@ -189,6 +189,156 @@ public class DataContextExtensionsCoverageTests : TestSetup
 
     #endregion
 
+    #region Re-seeding an existing dependent or one-off manifest's enabled state
+
+    [Test]
+    public async Task UpsertDependentManifestAsync_Existing_WritesEnabledOnlyWhenTheOptionsStateIt()
+    {
+        var parent = await DataContext.UpsertManifestAsync(
+            typeof(SchedulerTestTrain),
+            $"en-parent-{Guid.NewGuid():N}",
+            new SchedulerTestInput(),
+            IntervalSchedule,
+            new ManifestOptions(),
+            groupId: "en-group",
+            group: new ManifestGroupSeed(PriorityIfNew: 0)
+        );
+        await DataContext.SaveChanges(CancellationToken.None);
+        var childId = $"en-child-{Guid.NewGuid():N}";
+
+        Task<Trax.Effect.Models.Manifest.Manifest> Seed(ManifestOptions options) =>
+            DataContext.UpsertDependentManifestAsync(
+                typeof(SchedulerTestTrain),
+                childId,
+                new SchedulerTestInput(),
+                parent.Id,
+                options,
+                groupId: "en-group",
+                group: new ManifestGroupSeed(PriorityIfNew: 0)
+            );
+
+        await AssertEnabledIsWrittenOnlyWhenStated(childId, Seed);
+    }
+
+    [Test]
+    public async Task UpsertOnceManifestAsync_Existing_WritesEnabledOnlyWhenTheOptionsStateIt()
+    {
+        var externalId = $"en-once-{Guid.NewGuid():N}";
+
+        Task<Trax.Effect.Models.Manifest.Manifest> Seed(ManifestOptions options) =>
+            DataContext.UpsertOnceManifestAsync(
+                typeof(SchedulerTestTrain),
+                externalId,
+                new SchedulerTestInput(),
+                DateTime.UtcNow.AddHours(1),
+                options,
+                groupId: "en-once-group",
+                group: new ManifestGroupSeed(PriorityIfNew: 0)
+            );
+
+        await AssertEnabledIsWrittenOnlyWhenStated(externalId, Seed);
+    }
+
+    /// <summary>
+    /// Seeds the manifest, disables it as an operator would, then re-seeds it without and with
+    /// the enabled state stated.
+    /// </summary>
+    private async Task AssertEnabledIsWrittenOnlyWhenStated(
+        string externalId,
+        Func<ManifestOptions, Task<Trax.Effect.Models.Manifest.Manifest>> seed
+    )
+    {
+        await seed(new ManifestOptions());
+        await DataContext.SaveChanges(CancellationToken.None);
+        await DataContext
+            .Manifests.Where(m => m.ExternalId == externalId)
+            .ExecuteUpdateAsync(u => u.SetProperty(m => m.IsEnabled, false));
+        DataContext.Reset();
+
+        var reseeded = await seed(new ManifestOptions());
+        await DataContext.SaveChanges(CancellationToken.None);
+        DataContext.Reset();
+        reseeded
+            .IsEnabled.Should()
+            .BeFalse("options that do not state Enabled leave the operator's choice alone");
+
+        var stated = await seed(new ManifestOptions { IsEnabled = true });
+        await DataContext.SaveChanges(CancellationToken.None);
+        stated.IsEnabled.Should().BeTrue("options that state Enabled write it");
+    }
+
+    #endregion
+
+    #region A cron's first occurrence across re-seeds
+
+    [Test]
+    public async Task UpsertManifestAsync_ReseedingACronThatHasNotRun_KeepsOrRecomputesItsFirstOccurrence()
+    {
+        var externalId = $"cron-first-{Guid.NewGuid():N}";
+
+        Task<Trax.Effect.Models.Manifest.Manifest> Seed(Schedule schedule) =>
+            DataContext.UpsertManifestAsync(
+                typeof(SchedulerTestTrain),
+                externalId,
+                new SchedulerTestInput(),
+                schedule,
+                new ManifestOptions(),
+                groupId: "cron-first-group",
+                group: new ManifestGroupSeed(PriorityIfNew: 0)
+            );
+
+        async Task<DateTime?> SeedAndRead(Schedule schedule)
+        {
+            await Seed(schedule);
+            await DataContext.SaveChanges(CancellationToken.None);
+            DataContext.Reset();
+            return await DataContext
+                .Manifests.AsNoTracking()
+                .Where(m => m.ExternalId == externalId)
+                .Select(m => m.NextScheduledRun)
+                .SingleAsync();
+        }
+
+        var daily = Schedule.FromCron("0 3 * * *");
+        (await SeedAndRead(daily)).Should().NotBeNull("a new cron waits for its first occurrence");
+
+        // Stand in for an occurrence recorded earlier, so keeping it is distinguishable from
+        // computing the next one again.
+        var recorded = DateTime.UtcNow.AddDays(2).Date.AddHours(3);
+        await DataContext
+            .Manifests.Where(m => m.ExternalId == externalId)
+            .ExecuteUpdateAsync(u => u.SetProperty(m => m.NextScheduledRun, recorded));
+
+        (await SeedAndRead(daily))
+            .Should()
+            .Be(recorded, "re-stating the same cron keeps the pending first occurrence");
+
+        var hourly = Schedule.FromCron("0 * * * *");
+        var afterChange = await SeedAndRead(hourly);
+        afterChange
+            .Should()
+            .NotBe(recorded, "a different cron computes its own first occurrence")
+            .And.BeAfter(DateTime.UtcNow)
+            .And.BeBefore(DateTime.UtcNow.AddHours(1).AddMinutes(1));
+
+        (await SeedAndRead(IntervalSchedule))
+            .Should()
+            .BeNull("an interval schedule has no pre-computed occurrence");
+
+        await DataContext
+            .Manifests.Where(m => m.ExternalId == externalId)
+            .ExecuteUpdateAsync(u =>
+                u.SetProperty(m => m.ScheduleType, ScheduleType.Cron)
+                    .SetProperty(m => m.CronExpression, "0 3 * * *")
+                    .SetProperty(m => m.NextScheduledRun, (DateTime?)null)
+            );
+        (await SeedAndRead(daily))
+            .Should()
+            .NotBeNull("the same cron with no occurrence recorded computes one");
+    }
+
+    #endregion
+
     #region Variance validation
 
     [Test]

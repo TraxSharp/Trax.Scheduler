@@ -1,7 +1,11 @@
+using System.Data.Common;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Npgsql;
+using Trax.Effect.Data.Postgres.Services.PostgresContext;
 using Trax.Effect.Data.Services.DataContext;
 using Trax.Effect.Data.Services.IDataContextFactory;
 using Trax.Effect.Enums;
@@ -480,6 +484,123 @@ public class OrphanManifestPruningTests : TestSetup
             .Metadatas.Where(m => m.ManifestId == orphan.Id)
             .CountAsync();
         orphanMetadata.Should().Be(0);
+    }
+
+    [Test]
+    public async Task StartAsync_WhenEveryOrphanHasAnActiveRun_DeletesNothingAndReportsThemKept()
+    {
+        // Arrange: the only orphan's run is still pending, so its whole batch is kept
+        await CreateAndSaveManifestWithExternalId("keep-me");
+        var orphan = await CreateAndSaveManifestWithExternalId("orphan-pending");
+        var run = await CreateAndSaveMetadata(orphan, TrainState.Pending);
+
+        var logger = new CapturingLogger();
+        var startupService = new SchedulerStartupService(
+            Scope.ServiceProvider,
+            CreateConfiguration(expectedExternalIds: ["keep-me"]),
+            logger
+        );
+
+        // Act
+        await startupService.StartAsync(CancellationToken.None);
+
+        // Assert
+        DataContext.Reset();
+        (await DataContext.Manifests.AnyAsync(m => m.Id == orphan.Id)).Should().BeTrue();
+        (await DataContext.Metadatas.AnyAsync(m => m.Id == run.Id)).Should().BeTrue();
+        logger
+            .Messages.Should()
+            .Contain(
+                "Finished pruning 0 orphaned manifest(s) from the database (1 kept until their runs finish)"
+            );
+    }
+
+    [Test]
+    public async Task StartAsync_WhenPruningFails_LogsTheFailureAndStillCleansUpEmptyGroups()
+    {
+        // Arrange: an orphan to prune, and a group with no manifests left
+        await CreateAndSaveManifestWithExternalId("keep-me");
+        var orphan = await CreateAndSaveManifestWithExternalId("orphan-unreachable");
+        var emptyGroup = await TestSetup.CreateAndSaveManifestGroup(
+            DataContext,
+            name: $"empty-{Guid.NewGuid():N}"
+        );
+
+        // The prune's read of the orphans' runs fails, as a dropped connection would.
+        var options = new DbContextOptionsBuilder<PostgresContext>(
+            Scope.ServiceProvider.GetRequiredService<DbContextOptions<PostgresContext>>()
+        )
+            .AddInterceptors(new FailingMetadataReadInterceptor())
+            .Options;
+        await using var failingContext = new PostgresContext(options);
+        var services = new ServiceCollection()
+            .AddSingleton(Scope.ServiceProvider.GetRequiredService<ITraxScheduler>())
+            .AddSingleton<IDataContext>(failingContext)
+            .BuildServiceProvider();
+
+        var logger = new CapturingLogger();
+        var startupService = new SchedulerStartupService(
+            services,
+            CreateConfiguration(expectedExternalIds: ["keep-me"]),
+            logger
+        );
+
+        // Act
+        var act = () => startupService.StartAsync(CancellationToken.None);
+
+        // Assert
+        await act.Should().NotThrowAsync("pruning is housekeeping and does not stop the host");
+        logger
+            .Errors.Should()
+            .ContainSingle()
+            .Which.Should()
+            .StartWith("Pruning orphaned manifests failed");
+        DataContext.Reset();
+        (await DataContext.Manifests.AnyAsync(m => m.Id == orphan.Id))
+            .Should()
+            .BeTrue("the failed prune deleted nothing, and the next start prunes again");
+        (await DataContext.ManifestGroups.AnyAsync(g => g.Id == emptyGroup.Id))
+            .Should()
+            .BeFalse("the orphaned-group cleanup after the prune still runs");
+    }
+
+    private sealed class FailingMetadataReadInterceptor : DbCommandInterceptor
+    {
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default
+        ) =>
+            command.CommandText.Contains("trax.metadata", StringComparison.Ordinal)
+                ? throw new NpgsqlException("The connection was lost.")
+                : ValueTask.FromResult(result);
+    }
+
+    private sealed class CapturingLogger : ILogger<SchedulerStartupService>
+    {
+        private readonly System.Collections.Concurrent.ConcurrentQueue<(
+            LogLevel Level,
+            string Message
+        )> _entries = new();
+
+        public IReadOnlyList<string> Messages => _entries.Select(e => e.Message).ToList();
+
+        public IReadOnlyList<string> Errors =>
+            _entries.Where(e => e.Level >= LogLevel.Error).Select(e => e.Message).ToList();
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter
+        ) => _entries.Enqueue((logLevel, formatter(state, exception)));
     }
 
     #endregion

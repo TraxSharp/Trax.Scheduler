@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using NUnit.Framework;
@@ -110,5 +111,131 @@ public class OperationsServiceLocalWorkerTests
         // Should NOT throw.
         Func<Task> act = () => hosted.StartAsync(CancellationToken.None);
         await act.Should().NotThrowAsync();
+    }
+
+    [Test]
+    public async Task UpdateSchedulerConfig_PatchNamingNoWorkerCount_LeavesTheWorkerCountAlone()
+    {
+        var service = BuildServiceWithLocalWorkers(out var cfg, out var workerOpts, out _);
+
+        var result = await service.UpdateSchedulerConfigAsync(
+            new UpdateSchedulerConfigInput(MaxActiveJobs: 5),
+            CancellationToken.None
+        );
+
+        result.Count.Should().Be(1, "only MaxActiveJobs was named");
+        cfg.MaxActiveJobs.Should().Be(5);
+        workerOpts.WorkerCount.Should().Be(4);
+    }
+
+    [Test]
+    public async Task BootstrapHostedService_StoredWorkerCount_AppliesToTheLocalWorkers()
+    {
+        var (hosted, _, workerOpts, _) = await BootstrapWithStoredWorkerCount(6);
+        try
+        {
+            workerOpts.WorkerCount.Should().Be(6, "the stored count replaces the configured 4");
+        }
+        finally
+        {
+            await hosted.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Test]
+    public async Task BootstrapHostedService_StoredWorkerCountOutOfRange_IsSkippedAndLogged()
+    {
+        var (hosted, _, workerOpts, warnings) = await BootstrapWithStoredWorkerCount(1_000_000);
+        try
+        {
+            workerOpts.WorkerCount.Should().Be(4, "a count the host cannot run is not applied");
+            warnings
+                .Should()
+                .ContainSingle(w => w.Contains("LocalWorkerCount") && w.Contains("between 1 and"));
+        }
+        finally
+        {
+            await hosted.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Test]
+    public async Task BootstrapHostedService_StoredRowWithoutAWorkerCount_KeepsTheConfiguredCount()
+    {
+        var (hosted, cfg, workerOpts, _) = await BootstrapWithStoredWorkerCount(null);
+        try
+        {
+            cfg.DefaultMaxRetries.Should().Be(6, "the rest of the row applies");
+            workerOpts
+                .WorkerCount.Should()
+                .Be(4, "an unset column leaves the host's configured count");
+        }
+        finally
+        {
+            await hosted.StopAsync(CancellationToken.None);
+        }
+    }
+
+    /// <summary>
+    /// Stores a settings row with <paramref name="workerCount"/> and starts the settings service
+    /// on a host that runs four local workers.
+    /// </summary>
+    private static async Task<(
+        SchedulerConfigBootstrapHostedService Hosted,
+        SchedulerConfiguration Configuration,
+        LocalWorkerOptions Workers,
+        List<string> Warnings
+    )> BootstrapWithStoredWorkerCount(int? workerCount)
+    {
+        var cfg = new SchedulerConfiguration { IsSchedulerHost = true };
+        var workerOpts = new LocalWorkerOptions { WorkerCount = 4 };
+        var services = new ServiceCollection()
+            .AddLogging()
+            .AddTrax(trax => trax.AddEffects(effects => effects.UseInMemory()))
+            .AddSingleton(cfg)
+            .AddSingleton(workerOpts)
+            .BuildServiceProvider();
+
+        var factory = services.GetRequiredService<IDataContextProviderFactory>();
+        using (var db = await factory.CreateDbContextAsync(CancellationToken.None))
+        {
+            db.SchedulerConfigs.Add(
+                new Trax.Effect.Models.SchedulerConfig.SchedulerConfig
+                {
+                    DefaultMaxRetries = 6,
+                    LocalWorkerCount = workerCount,
+                    UpdatedAt = DateTime.UtcNow,
+                }
+            );
+            await db.SaveChanges(CancellationToken.None);
+        }
+
+        var logger = new WarningLogger();
+        var hosted = new SchedulerConfigBootstrapHostedService(services, logger);
+        await hosted.StartAsync(CancellationToken.None);
+        return (hosted, cfg, workerOpts, logger.Warnings);
+    }
+
+    private sealed class WarningLogger : ILogger<SchedulerConfigBootstrapHostedService>
+    {
+        public List<string> Warnings { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter
+        )
+        {
+            if (logLevel == LogLevel.Warning)
+                lock (Warnings)
+                    Warnings.Add(formatter(state, exception));
+        }
     }
 }

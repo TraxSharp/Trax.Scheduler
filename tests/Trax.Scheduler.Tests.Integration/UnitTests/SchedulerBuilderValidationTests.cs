@@ -143,6 +143,39 @@ public class SchedulerBuilderValidationTests
     #region Duplicate train routing validation
 
     [Test]
+    public void AddRoutedSubmitter_DuplicateTrainWithoutDescriptions_NamesTheSubmitterTypes()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        RoutedSubmitterRegistration Custom() =>
+            new(
+                new SubmitterRouting().ForTrain<ITestTrain>(),
+                typeof(InMemoryJobSubmitter),
+                s => s.AddScoped<InMemoryJobSubmitter>()
+            );
+
+        var act = () =>
+            services.AddTrax(trax =>
+                trax.AddEffects(effects => effects.UseInMemory())
+                    .AddMediator(typeof(AssemblyMarker).Assembly)
+                    .AddScheduler(scheduler =>
+                    {
+                        scheduler.AddRoutedSubmitter(Custom());
+                        scheduler.AddRoutedSubmitter(Custom());
+                        return scheduler;
+                    })
+            );
+
+        act.Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage(
+                "*routed to multiple submitters: 'InMemoryJobSubmitter' and 'InMemoryJobSubmitter'*",
+                "a registration with no description is named by its submitter type"
+            );
+    }
+
+    [Test]
     public void UseRemoteWorkers_DuplicateTrainAcrossSubmitters_ThrowsAtBuildTime()
     {
         var services = new ServiceCollection();

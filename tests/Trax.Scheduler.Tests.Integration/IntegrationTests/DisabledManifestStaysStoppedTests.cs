@@ -21,8 +21,16 @@ namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 [TestFixture]
 public class DisabledManifestStaysStoppedTests : TestSetup
 {
-    [Test]
-    public async Task Activating_a_disabled_dormant_dependent_queues_nothing()
+    [TestCase(false, true, TestName = "Activating_a_disabled_dormant_dependent_queues_nothing")]
+    [TestCase(
+        true,
+        false,
+        TestName = "Activating_a_dormant_dependent_in_a_disabled_group_queues_nothing"
+    )]
+    public async Task Activating_a_stopped_dormant_dependent_queues_nothing(
+        bool manifestEnabled,
+        bool groupEnabled
+    )
     {
         var group = await CreateAndSaveManifestGroup(
             DataContext,
@@ -47,14 +55,19 @@ public class DisabledManifestStaysStoppedTests : TestSetup
             new CreateManifest
             {
                 Name = typeof(SchedulerTestTrain),
-                IsEnabled = false,
+                IsEnabled = manifestEnabled,
                 ScheduleType = ScheduleType.DormantDependent,
                 MaxRetries = 3,
                 Properties = new SchedulerTestInput { Value = "dormant" },
                 DependsOnManifestId = parent.Id,
             }
         );
-        dormant.ManifestGroupId = group.Id;
+        var dormantGroup = await CreateAndSaveManifestGroup(
+            DataContext,
+            name: $"dormant-group-{Guid.NewGuid():N}",
+            isEnabled: groupEnabled
+        );
+        dormant.ManifestGroupId = dormantGroup.Id;
         dormant.ExternalId = "disabled-dormant";
         await DataContext.Track(dormant);
         await DataContext.SaveChanges(CancellationToken.None);
@@ -77,7 +90,7 @@ public class DisabledManifestStaysStoppedTests : TestSetup
         DataContext.Reset();
         (await DataContext.WorkQueues.AnyAsync(q => q.ManifestId == dormant.Id))
             .Should()
-            .BeFalse("the operator disabled this manifest");
+            .BeFalse("the operator disabled this manifest or its group");
     }
 
     [Test]

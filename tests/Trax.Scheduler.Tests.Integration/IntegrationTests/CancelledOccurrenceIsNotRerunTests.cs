@@ -147,6 +147,29 @@ public class CancelledOccurrenceIsNotRerunTests : TestSetup
             .Be(0, "the cancelled run was the one the parent's latest success started");
     }
 
+    [Test]
+    public async Task A_dependent_whose_cancelled_run_predates_its_last_success_counts_from_the_success()
+    {
+        var parent = await CreateHourlyManifest(lastSuccessfulRun: DateTime.UtcNow.AddMinutes(-15));
+        await CreateRun(parent, TrainState.Completed, DateTime.UtcNow.AddMinutes(-15));
+        var dependent = await CreateManifest(
+            ScheduleType.Dependent,
+            lastSuccessfulRun: DateTime.UtcNow.AddMinutes(-10),
+            dependsOn: parent.Id
+        );
+        await CreateCancelledRun(dependent, endTime: DateTime.UtcNow.AddMinutes(-20));
+
+        await RunManifestManager();
+
+        (await QueuedCount(dependent))
+            .Should()
+            .Be(
+                0,
+                "the dependent already succeeded after the parent's latest success; the older "
+                    + "cancel does not make that success count again"
+            );
+    }
+
     private async Task RunManifestManager()
     {
         await Scope.ServiceProvider.GetRequiredService<IManifestManagerTrain>().Run(Unit.Default);

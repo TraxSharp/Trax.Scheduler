@@ -2,11 +2,18 @@ using System.Collections.Concurrent;
 using FluentAssertions;
 using LanguageExt;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Trax.Core.Junction;
+using Trax.Effect.Data.Services.IDataContextFactory;
 using Trax.Effect.Enums;
 using Trax.Effect.Models.Manifest;
 using Trax.Effect.Services.ServiceTrain;
+using Trax.Mediator.Services.TrainRegistry;
+using Trax.Scheduler.Configuration;
+using Trax.Scheduler.Services.CancellationRegistry;
 using Trax.Scheduler.Services.Scheduling;
+using Trax.Scheduler.Services.TraxScheduler;
 using Trax.Scheduler.Tests.Integration.Fixtures;
 
 namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
@@ -125,5 +132,54 @@ public class SharedInputTypeDispatchTests
             .Which.Message.Should()
             .Contain(typeof(IUnregisteredSharedInputTrain).FullName!)
             .And.Contain("ScanAssemblies");
+    }
+
+    [Test]
+    public async Task A_scheduler_built_with_the_compatibility_constructor_checks_only_the_input_type_and_keeps_the_built_in_defaults()
+    {
+        await using var fx = await SchedulerE2EFixture.CreateAsync(s => s.DefaultMaxRetries(7));
+        var scheduler = new TraxScheduler(
+            fx.Services.GetRequiredService<IDataContextProviderFactory>(),
+            fx.Services.GetRequiredService<ITrainRegistry>(),
+            fx.Services.GetRequiredService<ICancellationRegistry>(),
+            NullLogger<TraxScheduler>.Instance
+        );
+
+        var manifest = await scheduler.ScheduleAsync<
+            IUnregisteredSharedInputTrain,
+            SharedDispatchInput,
+            Unit
+        >("shared-compat", new SharedDispatchInput { Tag = "never" }, Every.Minutes(5));
+
+        manifest
+            .Name.Should()
+            .Be(
+                typeof(IUnregisteredSharedInputTrain).FullName,
+                "without the discovery service only the input type can be checked, and a train "
+                    + "takes it"
+            );
+        manifest
+            .MaxRetries.Should()
+            .Be(
+                new ManifestOptions().MaxRetries,
+                "without the configuration the built-in default applies, not DefaultMaxRetries(7)"
+            );
+
+        // No change signal either: a delayed trigger and a group trigger still queue.
+        await scheduler.TriggerAsync("shared-compat", TimeSpan.FromMinutes(10));
+        (
+            await fx
+                .DataContext.WorkQueues.AsNoTracking()
+                .CountAsync(w => w.ManifestId == manifest.Id && w.ScheduledAt != null)
+        )
+            .Should()
+            .Be(1);
+
+        var other = await scheduler.ScheduleAsync<
+            IUnregisteredSharedInputTrain,
+            SharedDispatchInput,
+            Unit
+        >("shared-compat-other", new SharedDispatchInput { Tag = "never" }, Every.Minutes(5));
+        (await scheduler.TriggerGroupAsync(other.ManifestGroupId)).Should().Be(1);
     }
 }

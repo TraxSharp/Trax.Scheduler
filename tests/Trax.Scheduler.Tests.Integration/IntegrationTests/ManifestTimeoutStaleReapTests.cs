@@ -88,6 +88,24 @@ public class ManifestTimeoutStaleReapTests : TestSetup
         (await Load(run)).TrainState.Should().Be(TrainState.Failed);
     }
 
+    [TestCase(165, TrainState.InProgress)]
+    [TestCase(185, TrainState.Failed)]
+    public async Task With_a_stale_timeout_shorter_than_the_default_job_timeout_a_run_is_reaped_at_its_manifest_timeout(
+        int startedMinutesAgo,
+        TrainState expected
+    )
+    {
+        // The grace (stale minus default) would be -30 minutes; it counts as none, so a run is
+        // never failed before its own manifest's timeout.
+        _config.StaleInProgressTimeout = TimeSpan.FromMinutes(30);
+        _config.DefaultJobTimeout = TimeSpan.FromMinutes(60);
+        var run = await CreateInProgressRun(TimeSpan.FromHours(3), startedMinutesAgo);
+
+        await RunManifestManager();
+
+        (await Load(run)).TrainState.Should().Be(expected);
+    }
+
     private async Task RunManifestManager()
     {
         await Scope.ServiceProvider.GetRequiredService<IManifestManagerTrain>().Run(Unit.Default);

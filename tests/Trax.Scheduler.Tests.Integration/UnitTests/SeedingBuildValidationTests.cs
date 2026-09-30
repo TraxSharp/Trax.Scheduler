@@ -135,6 +135,165 @@ public class SeedingBuildValidationTests
         act.Should().Throw<InvalidOperationException>().WithMessage("*'sync'*'sync-users'*");
     }
 
+    [Test]
+    public void Two_members_stating_different_enabled_states_for_one_group_fail_the_build()
+    {
+        var act = () =>
+            Build(scheduler =>
+                scheduler
+                    .Schedule<ISchedulerTestTrain, SchedulerTestInput, Unit>(
+                        "e-a",
+                        new SchedulerTestInput(),
+                        Every.Minutes(5),
+                        o => o.Group("toggled", g => g.Enabled(true))
+                    )
+                    .Schedule<ISchedulerTestTrain, SchedulerTestInput, Unit>(
+                        "e-b",
+                        new SchedulerTestInput(),
+                        Every.Minutes(5),
+                        o => o.Group("toggled", g => g.Enabled(false))
+                    )
+            );
+
+        act.Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage("*'toggled'*Enabled values: True by 'e-a' and False by 'e-b'*");
+    }
+
+    [Test]
+    public void A_member_stating_no_limit_conflicts_with_one_stating_a_limit_and_is_named_as_none()
+    {
+        var act = () =>
+            Build(scheduler =>
+                scheduler
+                    .Schedule<ISchedulerTestTrain, SchedulerTestInput, Unit>(
+                        "l-a",
+                        new SchedulerTestInput(),
+                        Every.Minutes(5),
+                        o => o.Group("limited", g => g.MaxActiveJobs(null))
+                    )
+                    .Schedule<ISchedulerTestTrain, SchedulerTestInput, Unit>(
+                        "l-b",
+                        new SchedulerTestInput(),
+                        Every.Minutes(5),
+                        o => o.Group("limited", g => g.MaxActiveJobs(2))
+                    )
+            );
+
+        act.Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage("*MaxActiveJobs values: none by 'l-a' and 2 by 'l-b'*");
+    }
+
+    [Test]
+    public void An_unnamed_batch_without_a_group_or_prefix_is_checked_as_the_group_of_its_first_id()
+    {
+        var act = () =>
+            Build(scheduler =>
+                scheduler
+                    .ScheduleMany<ISchedulerTestTrain, SchedulerTestInput, Unit, string>(
+                        ["first-id", "second-id"],
+                        id => (id, new SchedulerTestInput { Value = id }),
+                        Every.Minutes(5),
+                        o => o.Priority(5)
+                    )
+                    .Schedule<ISchedulerTestTrain, SchedulerTestInput, Unit>(
+                        "other",
+                        new SchedulerTestInput(),
+                        Every.Minutes(5),
+                        o => o.Group("first-id", g => g.Priority(9))
+                    )
+            );
+
+        act.Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage(
+                "Manifest group 'first-id'*Priority values: 5 by the batch starting 'first-id' and 9 by 'other'*"
+            );
+    }
+
+    [Test]
+    public void An_unnamed_batch_with_only_a_prune_prefix_is_checked_as_the_group_of_its_prefix()
+    {
+        var act = () =>
+            Build(scheduler =>
+                scheduler
+                    .ScheduleMany<ISchedulerTestTrain, SchedulerTestInput, Unit, string>(
+                        ["pp-a"],
+                        id => (id, new SchedulerTestInput { Value = id }),
+                        Every.Minutes(5),
+                        o => o.PrunePrefix("pp-").Priority(5)
+                    )
+                    .Schedule<ISchedulerTestTrain, SchedulerTestInput, Unit>(
+                        "other",
+                        new SchedulerTestInput(),
+                        Every.Minutes(5),
+                        o => o.Group("pp-", g => g.Priority(9))
+                    )
+            );
+
+        act.Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage("Manifest group 'pp-'*5 by the batch starting 'pp-a' and 9 by 'other'*");
+    }
+
+    [Test]
+    public void A_named_batch_placed_in_another_group_does_not_state_that_groups_priority()
+    {
+        var act = () =>
+            Build(scheduler =>
+                scheduler
+                    .ScheduleMany<ISchedulerTestTrain, SchedulerTestInput, Unit, string>(
+                        "nightly",
+                        ["n1"],
+                        id => (id, new SchedulerTestInput { Value = id }),
+                        Every.Minutes(5),
+                        o => o.Group("shared").Priority(5)
+                    )
+                    .Schedule<ISchedulerTestTrain, SchedulerTestInput, Unit>(
+                        "member",
+                        new SchedulerTestInput(),
+                        Every.Minutes(5),
+                        o => o.Group("shared", g => g.Priority(9))
+                    )
+            );
+
+        act.Should()
+            .NotThrow(
+                "the batch's Priority(5) is its manifests' own priority; it owns no group here, so "
+                    + "only 'member' states the group's"
+            );
+    }
+
+    [Test]
+    public void Unnamed_batches_whose_prune_prefixes_overlap_fail_the_build_even_in_different_groups()
+    {
+        var act = () =>
+            Build(scheduler =>
+                scheduler
+                    .ScheduleMany<ISchedulerTestTrain, SchedulerTestInput, Unit, string>(
+                        ["sync-users-alice"],
+                        id => (id, new SchedulerTestInput { Value = id }),
+                        Every.Minutes(5),
+                        o => o.Group("users").PrunePrefix("sync-users-")
+                    )
+                    .ScheduleMany<ISchedulerTestTrain, SchedulerTestInput, Unit, string>(
+                        ["sync-orders"],
+                        id => (id, new SchedulerTestInput { Value = id }),
+                        Every.Minutes(5),
+                        o => o.Group("orders").PrunePrefix("sync-")
+                    )
+            );
+
+        act.Should()
+            .Throw<InvalidOperationException>(
+                "an unnamed batch's prune is not limited to its group"
+            )
+            .WithMessage(
+                "The batch starting 'sync-orders' prunes manifests whose external ID starts with 'sync-'*"
+            );
+    }
+
     private static void Build(
         Func<SchedulerConfigurationBuilder, SchedulerConfigurationBuilder> configure
     )
