@@ -61,8 +61,10 @@ before it.
 
 A queued job's request names its input type. The runner looks that name up among the input types
 of its registered trains and refuses anything else; it never loads a type by the name it was sent.
-`LoadMetadataJunction` then refuses a row whose train is not the train registered for the input,
-before anything touches the row, so the row stays `Pending`. On the scheduler side, a remote run's
+`LoadMetadataJunction` then resolves the registered train the row names and refuses the row when
+there is none, or when that train does not take the input, before anything touches the row, so the
+row stays `Pending`. The train the row names is the one that runs (`ITrainBus.RunByNameAsync`),
+since two trains may take the same input type. On the scheduler side, a remote run's
 output is read into the output type the caller expects, not a type the response names. When that
 type is an interface or abstract, and so cannot be read into, the response's type name picks an
 implementation of the expected type: only a concrete type already loaded in the scheduler's process
@@ -73,13 +75,13 @@ Registered does not include the scheduler's own trains (`AdminTrains`: the Manif
 JobDispatcher, the JobRunner and the two cleanup trains). They are registered on any host that
 also runs the scheduler, but the scheduler starts them itself, in its own process, and never sends
 one to a runner. The run path refuses a train name that is, or could resolve to, one of them, and
-`LoadMetadataJunction` refuses a job whose input belongs to one, leaving the row `Pending`. A host
+`LoadMetadataJunction` refuses a job whose row names one, leaving the row `Pending`. A host
 train that shares a scheduler train's short name still runs by that name.
 
 The scheduler's own stored names follow the same rule. The dispatcher resolves a work queue row's
 input type, and `LocalWorkerService` a background job's, among the registered trains' input types
 rather than by loading the name, so no path that turns a name back into a train input loads a type
-by it. `TypeResolver` is no longer called by Trax.
+by it. The `TypeResolver` that loaded one is deleted.
 
 ## What a runner sends back
 
@@ -148,6 +150,9 @@ Not covered: sharing nonces across runner instances is
 
 ## Changelog
 
+- **2026-09-30**: The unused `TypeResolver` is deleted.
+- **2026-09-30**: The job path resolves and runs the train the row names, not the train registered
+  for the input type.
 - **2026-09-27**: The per-process nonce memory is replaced by a shared store, recorded in
   [0009](./0009-a-runner-shares-its-accepted-nonces-through-the-database.md).
 - **2026-09-27**: A runner refuses the scheduler's own trains on the run path and the job path.

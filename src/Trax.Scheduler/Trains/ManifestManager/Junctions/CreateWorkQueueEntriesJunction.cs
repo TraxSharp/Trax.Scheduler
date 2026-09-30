@@ -1,4 +1,5 @@
 using LanguageExt;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Trax.Effect.Data.Services.DataContext;
 using Trax.Effect.Enums;
@@ -48,6 +49,8 @@ internal class CreateWorkQueueEntriesJunction(
 
         foreach (var view in views)
         {
+            Trax.Effect.Models.WorkQueue.WorkQueue? entry = null;
+
             try
             {
                 var basePriority = view.ManifestGroup.Priority;
@@ -79,7 +82,7 @@ internal class CreateWorkQueueEntriesJunction(
                     );
                 }
 
-                var entry = Trax.Effect.Models.WorkQueue.WorkQueue.Create(
+                entry = Trax.Effect.Models.WorkQueue.WorkQueue.Create(
                     new CreateWorkQueue
                     {
                         TrainName = view.Manifest.Name,
@@ -105,6 +108,14 @@ internal class CreateWorkQueueEntriesJunction(
             }
             catch (Exception ex)
             {
+                // The failed entry is still tracked as Added, so every later save in this cycle,
+                // the reapers' and the dead-letter writes included, would retry it and fail the
+                // same way. EF Core rolled the leader transaction back to the savepoint it takes
+                // before each save, so detaching the entry is all that is left to undo. A unique
+                // violation here is a manifest that a trigger queued after the cycle loaded it.
+                if (entry is not null && dataContext is DbContext db)
+                    db.Entry(entry).State = EntityState.Detached;
+
                 logger.LogError(
                     ex,
                     "Error creating work queue entry for manifest {ManifestId} (name: {ManifestName})",

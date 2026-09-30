@@ -171,7 +171,8 @@ public interface ITraxScheduler
     /// <param name="ct">Cancellation token.</param>
     /// <remarks>
     /// This creates a new execution independent of the regular schedule.
-    /// The job's normal schedule continues unaffected.
+    /// The job's normal schedule continues unaffected. A manifest holds at most one queued work
+    /// queue entry, so when it already has one, that entry runs it and nothing more is queued.
     /// </remarks>
     /// <exception cref="InvalidOperationException">
     /// Thrown when no manifest with the specified ExternalId exists.
@@ -188,7 +189,8 @@ public interface ITraxScheduler
     /// <remarks>
     /// Creates a WorkQueue entry with <c>ScheduledAt = DateTime.UtcNow + delay</c>.
     /// The JobDispatcher will skip the entry until <c>ScheduledAt &lt;= now</c>.
-    /// The manifest's normal schedule continues unaffected.
+    /// The manifest's normal schedule continues unaffected. When the manifest already has a
+    /// queued entry, nothing more is queued and that entry keeps its own time.
     /// </remarks>
     /// <exception cref="InvalidOperationException">
     /// Thrown when no manifest with the specified ExternalId exists.
@@ -244,7 +246,11 @@ public interface ITraxScheduler
     /// </summary>
     /// <param name="groupId">The ID of the manifest group to trigger.</param>
     /// <param name="ct">Cancellation token.</param>
-    /// <returns>The number of manifests that were queued.</returns>
+    /// <returns>
+    /// The number of manifests that were queued. A manifest that already has a queued entry is
+    /// skipped, not counted, and does not stop the others being queued; the skipped count is
+    /// logged.
+    /// </returns>
     /// <remarks>
     /// Only enabled manifests with non-dependent schedule types (None, Cron, Interval, OnDemand)
     /// are queued. Dependent and DormantDependent manifests are skipped because they rely on

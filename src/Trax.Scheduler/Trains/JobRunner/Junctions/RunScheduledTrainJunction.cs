@@ -11,7 +11,7 @@ using Trax.Scheduler.Trains.ManifestManager.Utilities;
 namespace Trax.Scheduler.Trains.JobRunner.Junctions;
 
 /// <summary>
-/// Executes the target train using the TrainBus with the resolved input, then records the
+/// Executes the train the job's metadata row names, by name through the TrainBus, with the resolved input, then records the
 /// success on its manifest.
 /// </summary>
 /// <remarks>
@@ -36,7 +36,7 @@ internal class RunScheduledTrainJunction(
 
         // Initialize the dormant dependent context so user train junctions
         // can activate dormant dependents of this parent manifest.
-        // Uses AsyncLocal to flow across the DI scope boundary created by TrainBus.RunAsync.
+        // Uses AsyncLocal to flow across the DI scope boundary created by TrainBus.RunByNameAsync.
         if (metadata.ManifestId.HasValue)
             dormantDependentContext.Initialize(metadata.ManifestId.Value);
 
@@ -48,7 +48,13 @@ internal class RunScheduledTrainJunction(
                 metadata.Id
             );
 
-            await trainBus.RunAsync(resolvedInput.Value, CancellationToken, metadata);
+            // By name: the train the row names runs, even when another train takes the same input type.
+            await trainBus.RunByNameAsync(
+                resolvedInput.TrainName,
+                resolvedInput.Value,
+                CancellationToken,
+                metadata
+            );
 
             logger.LogDebug(
                 "Successfully executed train {TrainName} for Metadata {MetadataId}",

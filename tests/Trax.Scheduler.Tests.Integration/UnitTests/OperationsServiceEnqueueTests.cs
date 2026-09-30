@@ -343,6 +343,38 @@ public class OperationsServiceEnqueueTests
     }
 
     [Test]
+    public async Task A_missing_authorization_service_is_thrown_rather_than_reported_as_a_refusal()
+    {
+        var missing = new TrainAuthorizationNotConfiguredException(
+            typeof(IProbeTrain).FullName!,
+            "Train 'IProbeTrain' declares [TraxAuthorize] but no ITrainAuthorizationService is registered."
+        );
+        EnqueueThrows(missing);
+
+        OperationResult? result = null;
+        var act = async () =>
+            result = await Queue(
+                new QueueTrainInput(typeof(IProbeTrain).FullName!, "{\"customerId\":1}")
+            );
+
+        (
+            await act.Should()
+                .ThrowAsync<TrainAuthorizationNotConfiguredException>(
+                    "a host with no enforcer is misconfigured; that is not an answer about the input "
+                        + "(see docs/adr/0004-an-enqueue-refusal-is-a-result-an-infrastructure-failure-is-thrown.md)"
+                )
+        )
+            .Which.Should()
+            .BeSameAs(missing);
+        result.Should().BeNull();
+        _logger
+            .Errors.Should()
+            .ContainSingle("the misconfiguration is logged where an operator can see it")
+            .Which.Should()
+            .BeSameAs(missing);
+    }
+
+    [Test]
     public async Task A_hook_refusal_is_still_reported_as_a_refusal()
     {
         EnqueueThrows(new InvalidOperationException("Customer 1 is on hold."));

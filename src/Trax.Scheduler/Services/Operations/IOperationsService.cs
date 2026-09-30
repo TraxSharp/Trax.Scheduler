@@ -20,8 +20,7 @@ public interface IOperationsService
     /// A refusal of the enqueue is also returned as a failed result, with the message
     /// <c>"The enqueue was refused: {exception message}"</c>: the <c>OnQueue</c> hook or
     /// <c>QueueSubjectKey</c> threw, the subject key was unusable, or a deferred entry was
-    /// cancelled before it was confirmed. The mediator's <see cref="InvalidOperationException"/>
-    /// for a train that declares authorization on a host with no enforcer arrives the same way.
+    /// cancelled before it was confirmed.
     /// </para>
     /// </returns>
     /// <exception cref="System.Data.Common.DbException">
@@ -33,6 +32,11 @@ public interface IOperationsService
     /// <exception cref="UnauthorizedAccessException">
     /// The caller may not run the train (a <c>TrainAuthorizationException</c> when the API's
     /// authorization is registered). It propagates rather than becoming a failed result.
+    /// </exception>
+    /// <exception cref="Trax.Mediator.Exceptions.TrainAuthorizationNotConfiguredException">
+    /// The train declares <c>[TraxAuthorize]</c> and the host registered no
+    /// <c>ITrainAuthorizationService</c>. A host misconfiguration, so it is logged and thrown
+    /// rather than reported as a refusal (scheduler/0004).
     /// </exception>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="ct"/> was cancelled. It propagates rather than becoming a failed result.
@@ -47,24 +51,28 @@ public interface IOperationsService
     /// wants the train to start at once.
     /// </summary>
     /// <remarks>
-    /// The train's <c>[TraxAuthorize]</c> requirements are checked the way the mediator checks
-    /// them for <see cref="QueueTrainAsync"/>, before the input is read, and the input is read
-    /// the way the mediator reads a caller's input (<c>docs/0023</c>): the system serializer
-    /// options with property names matched whatever their case and a property given twice
-    /// refused, the input size cap, and a blank input standing for an empty object. A run has no
-    /// <c>OnQueue</c> hook and no subject key, so nothing a train does can refuse it.
+    /// The mediator prepares the run (<c>ITrainExecutionService.PrepareAsync</c>), so the train's
+    /// <c>[TraxAuthorize]</c> requirements are checked as they are for
+    /// <see cref="QueueTrainAsync"/>, before the input is read, and the input is read as every
+    /// caller's input is (<c>TrainInputReader</c>, <c>docs/0023</c>): property names matched
+    /// whatever their case, a property given twice refused, JSON reference metadata not honoured,
+    /// the input size cap, and a blank input standing for an empty object. The stored form the
+    /// submitter writes for the worker is then held to the cap a queued input's stored form is
+    /// held to, <c>TrainInputReader.StoredInputGrowthFactor</c> times <c>MaxInputJsonBytes</c>. A
+    /// run has no <c>OnQueue</c> hook and no subject key, so nothing a train does can refuse it.
     /// </remarks>
     /// <returns>
     /// <c>OperationResult(true, Id: metadataId, Count: 1, ...)</c> once the job is submitted; the
     /// id is the run's metadata id, not a work queue id. <c>OperationResult(false, ...)</c> with
-    /// a populated <c>Message</c> for a missing <c>TrainName</c>, an unknown train, or invalid or
-    /// oversized <c>InputJson</c>; no metadata row is written for any of these.
+    /// a populated <c>Message</c> for a missing <c>TrainName</c>, an unknown train, invalid or
+    /// oversized <c>InputJson</c>, or an input whose stored form is over its cap; no metadata row
+    /// is written for any of these.
     /// </returns>
     /// <exception cref="UnauthorizedAccessException">
     /// The caller may not run the train. It propagates rather than becoming a failed result, and
     /// no metadata row is written.
     /// </exception>
-    /// <exception cref="InvalidOperationException">
+    /// <exception cref="Trax.Mediator.Exceptions.TrainAuthorizationNotConfiguredException">
     /// The train declares <c>[TraxAuthorize]</c>, no <c>ITrainAuthorizationService</c> is
     /// registered, the call is not in a trusted scope and the host did not opt out with
     /// <c>AllowMissingAuthorizationService()</c>. A host misconfiguration, so it is thrown rather

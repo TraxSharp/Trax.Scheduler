@@ -271,6 +271,17 @@ namespace Trax.Scheduler.Extensions
         public static Microsoft.AspNetCore.Builder.RouteHandlerBuilder UseTraxJobRunner(this Microsoft.AspNetCore.Routing.IEndpointRouteBuilder endpoints, string route = "/trax/execute") { }
         public static Microsoft.AspNetCore.Builder.RouteHandlerBuilder UseTraxRunEndpoint(this Microsoft.AspNetCore.Routing.IEndpointRouteBuilder endpoints, string route = "/trax/run") { }
     }
+    public static class SchedulerBuilderOrderExtensions
+    {
+        [System.Obsolete("Call AddMediator(...) before AddScheduler(...).", true)]
+        public static Trax.Mediator.Configuration.TraxBuilderWithMediator AddScheduler(this Trax.Effect.Configuration.TraxBuilder.TraxBuilder builder) { }
+        [System.Obsolete("Call AddMediator(...) before AddScheduler(...).", true)]
+        public static Trax.Mediator.Configuration.TraxBuilderWithMediator AddScheduler(this Trax.Effect.Configuration.TraxBuilder.TraxBuilderWithEffects builder) { }
+        [System.Obsolete("Call AddMediator(...) before AddScheduler(...).", true)]
+        public static Trax.Mediator.Configuration.TraxBuilderWithMediator AddScheduler(this Trax.Effect.Configuration.TraxBuilder.TraxBuilder builder, System.Func<Trax.Scheduler.Configuration.SchedulerConfigurationBuilder, Trax.Scheduler.Configuration.SchedulerConfigurationBuilder> configure) { }
+        [System.Obsolete("Call AddMediator(...) before AddScheduler(...).", true)]
+        public static Trax.Mediator.Configuration.TraxBuilderWithMediator AddScheduler(this Trax.Effect.Configuration.TraxBuilder.TraxBuilderWithEffects builder, System.Func<Trax.Scheduler.Configuration.SchedulerConfigurationBuilder, Trax.Scheduler.Configuration.SchedulerConfigurationBuilder> configure) { }
+    }
     public static class SchedulerExtensions
     {
         public static Trax.Mediator.Configuration.TraxBuilderWithMediator AddScheduler(this Trax.Mediator.Configuration.TraxBuilderWithMediator builder) { }
@@ -840,6 +851,7 @@ namespace Trax.Scheduler.Services.TraxScheduler
     public class TraxScheduler : Trax.Scheduler.Services.TraxScheduler.ITraxScheduler
     {
         public TraxScheduler(Trax.Effect.Data.Services.IDataContextFactory.IDataContextProviderFactory dataContextFactory, Trax.Mediator.Services.TrainRegistry.ITrainRegistry trainRegistry, Trax.Scheduler.Services.CancellationRegistry.ICancellationRegistry cancellationRegistry, Microsoft.Extensions.Logging.ILogger<Trax.Scheduler.Services.TraxScheduler.TraxScheduler> logger, Trax.Effect.Services.ChangeSignal.ITraxChangeSignal? changeSignal = null) { }
+        public TraxScheduler(Trax.Effect.Data.Services.IDataContextFactory.IDataContextProviderFactory dataContextFactory, Trax.Mediator.Services.TrainRegistry.ITrainRegistry trainRegistry, Trax.Mediator.Services.TrainDiscovery.ITrainDiscoveryService trainDiscovery, Trax.Scheduler.Services.CancellationRegistry.ICancellationRegistry cancellationRegistry, Microsoft.Extensions.Logging.ILogger<Trax.Scheduler.Services.TraxScheduler.TraxScheduler> logger, Trax.Effect.Services.ChangeSignal.ITraxChangeSignal? changeSignal = null) { }
         public System.Threading.Tasks.Task<Trax.Scheduler.Services.TraxScheduler.BatchDeadLetterResult> AcknowledgeAllDeadLettersAsync(string note, System.Threading.CancellationToken ct = default) { }
         public System.Threading.Tasks.Task<Trax.Scheduler.Services.TraxScheduler.DeadLetterOperationResult> AcknowledgeDeadLetterAsync(long deadLetterId, string note, System.Threading.CancellationToken ct = default) { }
         public System.Threading.Tasks.Task<Trax.Scheduler.Services.TraxScheduler.BatchDeadLetterResult> AcknowledgeDeadLettersAsync(long[] deadLetterIds, string note, System.Threading.CancellationToken ct = default) { }

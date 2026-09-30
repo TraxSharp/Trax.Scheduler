@@ -5,7 +5,6 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Trax.Effect.Configuration.TraxEffectConfiguration;
 using Trax.Effect.Data.Services.DataContext;
 using Trax.Effect.Data.Services.IDataContextFactory;
 using Trax.Effect.Enums;
@@ -18,10 +17,8 @@ using Trax.Effect.Services.ChangeSignal;
 using Trax.Effect.Utils;
 using Trax.Mediator.Configuration;
 using Trax.Mediator.Exceptions;
-using Trax.Mediator.Services.TrainAuthorization;
 using Trax.Mediator.Services.TrainDiscovery;
 using Trax.Mediator.Services.TrainExecution;
-using Trax.Mediator.Services.TrustedExecution;
 using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Extensions;
 using Trax.Scheduler.Services.CancellationRegistry;
@@ -187,14 +184,24 @@ public class OperationsService : IOperationsService
             );
             throw;
         }
+        catch (TrainAuthorizationNotConfiguredException ex)
+        {
+            // The train declares [TraxAuthorize] and the host registered no enforcer. The host is
+            // misconfigured; that is not an answer about this enqueue, so it is logged and thrown
+            // like an infrastructure failure, never reported as a refusal. See scheduler/0004.
+            _logger?.LogError(
+                ex,
+                "Queueing {TrainName} failed: the host has no ITrainAuthorizationService",
+                registration.ServiceType.FullName
+            );
+            throw;
+        }
         catch (Exception ex)
             when (ex is not UnauthorizedAccessException and not OperationCanceledException)
         {
             // A refusal: the train's OnQueue hook or QueueSubjectKey threw, the subject key could
             // not be used, or a deferred entry was cancelled before it was confirmed. The message
-            // is the train author's or the mediator's, written for the caller. The mediator's
-            // missing-enforcer InvalidOperationException also lands here, because nothing tells
-            // it apart from a subject key refusal but its text.
+            // is the train author's or the mediator's, written for the caller.
             return new OperationResult(false, Message: $"The enqueue was refused: {ex.Message}");
         }
 
@@ -235,17 +242,25 @@ public class OperationsService : IOperationsService
 
         var trainName = registration.ServiceType.FullName!;
 
-        // Authorize before the input is read, as the mediator does for a queue, so a caller who
-        // may not run the train learns nothing about its input from a parse error. An
-        // UnauthorizedAccessException, and the missing-enforcer InvalidOperationException, are
-        // not caught: neither is an answer about this run.
-        await AuthorizeRunAsync(services, registration, ct);
-
+        // The mediator's step: authorization before the input is read, so a caller who may not run
+        // the train learns nothing about its input from a parse error, then the input read exactly
+        // as a queue reads it. An UnauthorizedAccessException, and the missing-enforcer
+        // TrainAuthorizationNotConfiguredException, are not caught: neither is an answer about
+        // this run.
         object runInput;
 
         try
         {
-            runInput = ReadRunInput(services, registration, input.InputJson);
+            var prepared = await _trainExecution.PrepareAsync(trainName, input.InputJson, ct);
+            runInput = prepared.Input;
+            CheckStoredInputSize(services, prepared.Registration, runInput);
+        }
+        catch (TrainNotFoundException)
+        {
+            return new OperationResult(
+                false,
+                Message: $"Unknown train: {input.TrainName}. Use operations.getTrains to list registered trains."
+            );
         }
         catch (JsonException ex)
         {
@@ -305,133 +320,39 @@ public class OperationsService : IOperationsService
     }
 
     /// <summary>
-    /// The mediator's authorization rule for an enqueue, applied to a run: an enforcer, when one
-    /// is registered, decides (and honours a trusted scope itself); otherwise a trusted scope
-    /// passes, and a <c>[TraxAuthorize]</c> train fails closed unless the host opted out
-    /// (mediator/0001). A copy, because the published mediator keeps its check private.
+    /// Refuses an input whose stored form, the JSON a submitter writes for the worker, is larger
+    /// than <see cref="TrainInputReader.StoredInputGrowthFactor"/> times
+    /// <c>MaxInputJsonBytes</c>: the cap the mediator holds a queued input's stored form to. The
+    /// caller's JSON was capped when it was read; the stored form writes every member and is
+    /// indented, so it is measured too, before anything is written or submitted.
     /// </summary>
-    private static async Task AuthorizeRunAsync(
+    /// <exception cref="TrainInputValidationException">The stored form is over its cap.</exception>
+    private static void CheckStoredInputSize(
         IServiceProvider services,
         TrainRegistration registration,
-        CancellationToken ct
+        object runInput
     )
     {
-        var authorization = services.GetService<ITrainAuthorizationService>();
-
-        if (authorization is not null)
-        {
-            await authorization.AuthorizeAsync(registration, ct);
-            return;
-        }
-
-        if (services.GetService<ITrustedExecutionScope>() is { IsTrusted: true })
-            return;
-
-        var allowMissing =
-            services.GetService<MediatorConfiguration>()?.AllowMissingAuthorizationService ?? false;
-
-        if (registration.HasAuthorizeAttribute && !allowMissing)
-            throw new InvalidOperationException(
-                $"Train '{registration.ServiceTypeName}' declares [TraxAuthorize] but no "
-                    + "ITrainAuthorizationService is registered. Call AddTraxApi() (or register "
-                    + "a custom ITrainAuthorizationService) before building the host. If this "
-                    + "process intentionally runs no authorized submissions, opt out with "
-                    + "AddMediator(m => m.AllowMissingAuthorizationService())."
-            );
-    }
-
-    /// <summary>
-    /// Reads a run's input the way the mediator reads a queued one: the input size cap, property
-    /// names matched whatever their case and a property given twice refused (docs/0023), a blank
-    /// input standing for an empty object that the input type must be buildable from, and a JSON
-    /// <c>null</c> refused. A copy, for the same reason as <see cref="AuthorizeRunAsync"/>;
-    /// keeping it identical is what makes a run and a queue of the same JSON agree.
-    /// </summary>
-    private static object ReadRunInput(
-        IServiceProvider services,
-        TrainRegistration registration,
-        string? inputJson
-    )
-    {
-        var missing = string.IsNullOrWhiteSpace(inputJson);
-        var json = missing ? "{}" : inputJson!;
-
         var maxBytes =
             services.GetService<MediatorConfiguration>()?.MaxInputJsonBytes
             ?? new MediatorConfiguration().MaxInputJsonBytes;
-        var byteCount = System.Text.Encoding.UTF8.GetByteCount(json);
-        if (byteCount > maxBytes)
+        var storedCap = (int)
+            Math.Min((long)maxBytes * TrainInputReader.StoredInputGrowthFactor, int.MaxValue);
+
+        var stored = JsonSerializer.Serialize(
+            runInput,
+            registration.InputType,
+            TraxJsonSerializationOptions.ManifestProperties
+        );
+        var byteCount = System.Text.Encoding.UTF8.GetByteCount(stored);
+
+        if (byteCount > storedCap)
             throw new TrainInputValidationException(
                 registration.ServiceTypeName,
                 byteCount,
-                maxBytes
-            );
-
-        var options = RunInputOptions();
-        object? read;
-
-        if (missing)
-        {
-            try
-            {
-                read = JsonSerializer.Deserialize(json, registration.InputType, options.Missing);
-            }
-            catch (JsonException refused)
-            {
-                throw new JsonException(
-                    $"No input was given, and {registration.InputTypeName} cannot be built "
-                        + $"without one: {refused.Message}",
-                    refused
-                );
-            }
-        }
-        else
-        {
-            read = JsonSerializer.Deserialize(json, registration.InputType, options.Given);
-        }
-
-        return read
-            ?? throw new JsonException(
-                $"InputJson deserialized to null. Expected an instance of {registration.InputTypeName}."
+                storedCap
             );
     }
-
-    private static CallerInputOptions? _runInputOptions;
-
-    /// <summary>
-    /// The system options with property names matched whatever their case and a property given
-    /// twice, in any casing, refused (docs/0023); the missing-input reading also respects
-    /// required constructor parameters. Rebuilt only if the system options object itself is
-    /// replaced, as the mediator's copy is.
-    /// </summary>
-    private static CallerInputOptions RunInputOptions()
-    {
-        var source = TraxEffectConfiguration.StaticSystemJsonSerializerOptions;
-        var cached = _runInputOptions;
-
-        if (cached is not null && ReferenceEquals(cached.Source, source))
-            return cached;
-
-        var given = new JsonSerializerOptions(source)
-        {
-            PropertyNameCaseInsensitive = true,
-            AllowDuplicateProperties = false,
-        };
-        var missing = new JsonSerializerOptions(given)
-        {
-            RespectRequiredConstructorParameters = true,
-        };
-
-        var built = new CallerInputOptions(source, given, missing);
-        _runInputOptions = built;
-        return built;
-    }
-
-    private sealed record CallerInputOptions(
-        JsonSerializerOptions Source,
-        JsonSerializerOptions Given,
-        JsonSerializerOptions Missing
-    );
 
     /// <summary>
     /// The submitter the job dispatcher would use for this train: its builder or
