@@ -162,7 +162,10 @@ public class SchedulerConfiguration
     /// The default delay between retry attempts.
     /// </summary>
     /// <remarks>
-    /// This can be combined with RetryBackoffMultiplier for exponential backoff.
+    /// This can be combined with RetryBackoffMultiplier for exponential backoff. A retry is the
+    /// run after a failed one: the delay applies only when the manifest's latest finished run
+    /// failed, and grows with the failures inside <see cref="FailureCountWindow"/>. The run after
+    /// a success or a cancel goes on time.
     /// </remarks>
     public TimeSpan DefaultRetryDelay
     {
@@ -191,9 +194,9 @@ public class SchedulerConfiguration
     /// <remarks>
     /// A failed run counts while it started within this window before the current ManifestManager
     /// cycle, and after the manifest's latest resolved dead letter. A failure older than the window
-    /// no longer delays the next run or counts toward <c>MaxRetries</c>, so occasional failures
+    /// no longer delays a retry or counts toward <c>MaxRetries</c>, so occasional failures
     /// spread over weeks do not dead-letter a healthy manifest. A success does not reset the count
-    /// inside the window. Defaults to 24 hours; must be positive. A manifest scheduled with its
+    /// inside the window, but the run after a success is not delayed. Defaults to 24 hours; must be positive. A manifest scheduled with its
     /// own <c>FailureWindow</c> uses that instead.
     /// </remarks>
     public TimeSpan FailureCountWindow { get; internal set; } = TimeSpan.FromHours(24);

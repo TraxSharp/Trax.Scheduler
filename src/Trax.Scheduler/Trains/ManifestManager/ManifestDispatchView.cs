@@ -20,6 +20,13 @@ internal record ManifestDispatchView
     public required int FailedCount { get; init; }
 
     /// <summary>
+    /// Whether the manifest's latest finished run (succeeded, failed or cancelled) failed. Only
+    /// then is the next run a retry, delayed by the backoff; after a success or a cancel the next
+    /// occurrence runs on time, however many failures are still in the window.
+    /// </summary>
+    public bool LatestFinishedRunFailed { get; init; }
+
+    /// <summary>
     /// When the manifest's most recent cancelled run ended (its start time if it has no end time),
     /// or <c>null</c> when it has none. A cancelled run consumes its occurrence, so the schedule is
     /// evaluated from whichever is later: this or <c>Manifest.LastSuccessfulRun</c>.

@@ -51,6 +51,45 @@ public class SqliteFailureWindowTests : TestSetup
             .Be(1, "the failure is inside the manifest's three hour window");
     }
 
+    [Test]
+    public async Task A_success_after_failures_in_the_window_does_not_delay_the_next_run()
+    {
+        var manifest = await CreateDueManifest(maxRetries: 3);
+        await CreateRun(manifest, TrainState.Failed, DateTime.UtcNow.AddHours(-4));
+        await CreateRun(manifest, TrainState.Failed, DateTime.UtcNow.AddHours(-3));
+        await CreateRun(manifest, TrainState.Failed, DateTime.UtcNow.AddHours(-2));
+        await CreateRun(manifest, TrainState.Completed, DateTime.UtcNow.AddHours(-1));
+
+        await RunManifestManager();
+
+        var entry = await DataContext
+            .WorkQueues.AsNoTracking()
+            .SingleAsync(q => q.ManifestId == manifest.Id && q.Status == WorkQueueStatus.Queued);
+        entry
+            .ScheduledAt.Should()
+            .BeNull(
+                "the latest run succeeded, so the next occurrence is not a retry. The failures "
+                    + "still count toward the dead letter. See "
+                    + "docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
+            );
+    }
+
+    [Test]
+    public async Task A_failure_after_a_success_backs_off_by_every_failure_in_the_window()
+    {
+        var manifest = await CreateDueManifest(maxRetries: 3);
+        await CreateRun(manifest, TrainState.Failed, DateTime.UtcNow.AddHours(-3));
+        await CreateRun(manifest, TrainState.Completed, DateTime.UtcNow.AddHours(-2));
+        await CreateRun(manifest, TrainState.Failed, DateTime.UtcNow.AddHours(-1));
+
+        await RunManifestManager();
+
+        var entry = await DataContext
+            .WorkQueues.AsNoTracking()
+            .SingleAsync(q => q.ManifestId == manifest.Id && q.Status == WorkQueueStatus.Queued);
+        entry.ScheduledAt.Should().NotBeNull("the latest run failed, so this run is a retry");
+    }
+
     private async Task RunManifestManager()
     {
         await Scope.ServiceProvider.GetRequiredService<IManifestManagerTrain>().Run(Unit.Default);

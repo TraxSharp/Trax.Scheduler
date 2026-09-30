@@ -62,6 +62,21 @@ internal class LoadManifestsJunction(IDataContext dataContext, SchedulerConfigur
                         && md.StartTime <= dl.ResolvedAt
                     )
                 ),
+                // Whether the latest run that finished (succeeded, failed or was cancelled) failed.
+                // A requeued dispatch attempt is not a finished run, as it is not a failure above.
+                LatestFinishedRunFailed = m
+                    .Metadatas.Where(md =>
+                        md.TrainState == TrainState.Completed
+                        || md.TrainState == TrainState.Cancelled
+                        || (
+                            md.TrainState == TrainState.Failed
+                            && md.FailureException != DispatchFailure.Requeued
+                        )
+                    )
+                    .OrderByDescending(md => md.StartTime)
+                    .ThenByDescending(md => md.Id)
+                    .Select(md => md.TrainState == TrainState.Failed)
+                    .FirstOrDefault(),
                 LastCancelledRun = m
                     .Metadatas.Where(md => md.TrainState == TrainState.Cancelled)
                     .Max(md => (DateTime?)(md.EndTime ?? md.StartTime)),

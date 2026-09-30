@@ -61,9 +61,12 @@ internal class CreateWorkQueueEntriesJunction(
                         ? basePriority + schedulerConfiguration.DependentPriorityBoost
                         : basePriority;
 
-                // Apply retry delay with exponential backoff when the manifest has prior failures
+                // A retry, the run after a failed one, waits out an exponential backoff over the
+                // failures in the window. The run after a success or a cancel is an ordinary
+                // occurrence and goes on time; its window's failures still count toward the dead
+                // letter.
                 DateTime? scheduledAt = null;
-                if (view.FailedCount > 0)
+                if (view.LatestFinishedRunFailed && view.FailedCount > 0)
                 {
                     var delaySeconds =
                         schedulerConfiguration.DefaultRetryDelay.TotalSeconds

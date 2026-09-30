@@ -72,6 +72,12 @@ run's work queue entry was dispatched, stamped by the database. A run with no di
 is the process's clock again; with an entry the dependent never needs it. Stamping from the
 database costs one small query per dispatch and per scheduled success.
 
+**Only a retry waits out the backoff.** The failures in the window decide how long a retry
+waits, but a run is a retry only when the manifest's latest finished run failed. After a
+success or a cancel the next occurrence runs on time, however many failures the window still
+holds; they still count toward the dead letter, so flapping is still caught. Before this, three
+failures in the morning delayed an hourly job by twenty minutes for the rest of the day.
+
 **A manifest can carry its own window.** `FailureWindow` on `ScheduleOptions` and
 `ManifestOptions` stores it in `manifest.failure_window_seconds`, and the failure count uses it
 in place of `FailureCountWindow` for that manifest. Following scheduler/0011 it is written on a
@@ -98,7 +104,7 @@ success that landed while the run was going was not seen by it, so it still earn
 
 - `FailureCountWindowTests` covers a failure 30 days ago (no backoff), three failures over 90
   days (no dead letter), failures inside the window (backoff and dead letter), a configured
-  window, and a manifest's own window overriding it either way.
+  window, a manifest's own window overriding it either way, and no backoff after a success.
 - `DependentRunsAfterEachParentSuccessTests` (and its SQLite twin) covers a parent success during
   a dependent's successful or cancelled run, and a dispatcher whose clock runs behind or ahead
   of the database's; `DatabaseClockTests` pins that the stamp is read on the server.
@@ -124,3 +130,5 @@ check) applies the same window, or that a new place deciding "due" consults the 
   parent's latest success, not once per parent success, because recording the parent run needs a
   Trax.Effect schema change for behaviour nobody asked for. Both timestamps compared are now the
   database's clock.
+- **2026-09-30**: The backoff applies only when the latest finished run failed, not whenever a
+  failure is in the window.
