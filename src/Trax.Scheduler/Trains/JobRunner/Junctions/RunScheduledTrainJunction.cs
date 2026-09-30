@@ -2,6 +2,7 @@ using LanguageExt;
 using Microsoft.Extensions.Logging;
 using Trax.Effect.Data.Services.DataContext;
 using Trax.Effect.Enums;
+using Trax.Effect.Exceptions;
 using Trax.Effect.Models.Metadata;
 using Trax.Effect.Services.EffectJunction;
 using Trax.Mediator.Services.TrainBus;
@@ -34,6 +35,14 @@ internal class RunScheduledTrainJunction(
     {
         var (metadata, resolvedInput) = input;
 
+        // A row that is no longer Pending belongs to the delivery that started it. This one
+        // records nothing and completes, so its transport acknowledges it rather than retrying.
+        if (metadata.TrainState != TrainState.Pending)
+        {
+            LogOwnedElsewhere(metadata);
+            return Unit.Default;
+        }
+
         // Initialize the dormant dependent context so user train junctions
         // can activate dormant dependents of this parent manifest.
         // Uses AsyncLocal to flow across the DI scope boundary created by TrainBus.RunAsync.
@@ -56,6 +65,13 @@ internal class RunScheduledTrainJunction(
                 metadata.Id
             );
         }
+        catch (TrainAlreadyStartedException started) when (started.MetadataId == metadata.Id)
+        {
+            // Another delivery claimed the row between the load and the start; the store decided
+            // it, and the train's body has not run here. Same outcome as the check above.
+            LogOwnedElsewhere(metadata);
+            return Unit.Default;
+        }
         finally
         {
             // Clear the AsyncLocal to prevent stale manifest IDs from leaking
@@ -70,6 +86,14 @@ internal class RunScheduledTrainJunction(
 
         return Unit.Default;
     }
+
+    private void LogOwnedElsewhere(Metadata metadata) =>
+        logger.LogInformation(
+            "Metadata {MetadataId} ({TrainName}) was already started by another delivery; "
+                + "this delivery did not run it",
+            metadata.Id,
+            metadata.Name
+        );
 
     private void RecordManifestSuccess(Metadata metadata)
     {

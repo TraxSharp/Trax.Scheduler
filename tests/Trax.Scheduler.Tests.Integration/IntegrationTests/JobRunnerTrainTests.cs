@@ -42,60 +42,8 @@ public class JobRunnerTrainTests : TestSetup
 
     #endregion
 
-    #region Run - Invalid State Tests
-
-    [Test]
-    public async Task Run_WhenStateIsCompleted_ThrowsTrainException()
-    {
-        // Arrange
-        var manifest = await CreateAndSaveManifest();
-        var metadata = await CreateAndSaveMetadata(manifest, TrainState.Completed);
-        var input = manifest.GetProperties<SchedulerTestInput>();
-
-        // Act
-        var act = async () => await JobRunner.Run(new RunJobRequest(metadata.Id, input));
-
-        // Assert
-        await act.Should()
-            .ThrowAsync<TrainException>()
-            .WithMessage("*Cannot execute a job with state Completed*");
-    }
-
-    [Test]
-    public async Task Run_WhenStateIsFailed_ThrowsTrainException()
-    {
-        // Arrange
-        var manifest = await CreateAndSaveManifest();
-        var metadata = await CreateAndSaveMetadata(manifest, TrainState.Failed);
-        var input = manifest.GetProperties<SchedulerTestInput>();
-
-        // Act
-        var act = async () => await JobRunner.Run(new RunJobRequest(metadata.Id, input));
-
-        // Assert
-        await act.Should()
-            .ThrowAsync<TrainException>()
-            .WithMessage("*Cannot execute a job with state Failed*");
-    }
-
-    [Test]
-    public async Task Run_WhenStateIsInProgress_ThrowsTrainException()
-    {
-        // Arrange
-        var manifest = await CreateAndSaveManifest();
-        var metadata = await CreateAndSaveMetadata(manifest, TrainState.InProgress);
-        var input = manifest.GetProperties<SchedulerTestInput>();
-
-        // Act
-        var act = async () => await JobRunner.Run(new RunJobRequest(metadata.Id, input));
-
-        // Assert
-        await act.Should()
-            .ThrowAsync<TrainException>()
-            .WithMessage("*Cannot execute a job with state InProgress*");
-    }
-
-    #endregion
+    // A row that is not Pending is covered by DuplicateDeliveryTests: the delivery completes
+    // without running the train and records nothing.
 
     #region Run - Null Manifest Tests
 
