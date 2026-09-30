@@ -23,6 +23,9 @@ public static class SqsSchedulerExtensions
     ///
     /// Trains can also be marked with <c>[TraxRemote]</c> to opt into remote execution without
     /// explicit <c>ForTrain&lt;T&gt;()</c> routing. Builder routing takes precedence over the attribute.
+    /// A scheduler with a <c>[TraxRemote]</c> train and no remote submitter at all (this,
+    /// <c>UseRemoteWorkers</c>, <c>UseSqsWorkers</c> or <c>UseLambdaWorkers</c>) refuses to build,
+    /// rather than run the train locally.
     ///
     /// Jobs are sent as JSON messages containing a <see cref="RemoteJobRequest"/> payload.
     /// The consumer runs <c>JobRunnerTrain</c> to execute the train.

@@ -183,8 +183,30 @@ public partial class SchedulerConfigurationBuilder
     /// </summary>
     private void RegisterRoutedSubmitters()
     {
+        // [TraxRemote] trains go to the first routed registration. With none, there is nowhere to
+        // send them, and running them locally instead would put a train marked remote, often for
+        // isolation, on the one host it was kept off.
+        var remoteTrains = new TrainDiscoveryService(_parentBuilder.ServiceCollection)
+            .DiscoverTrains()
+            .Where(r => r.IsRemote)
+            .Select(r => r.ServiceType.FullName!)
+            .ToList();
+
         if (_routedSubmitterRegistrations.Count == 0)
+        {
+            if (remoteTrains.Count > 0)
+                throw new InvalidOperationException(
+                    $"{string.Join(", ", remoteTrains.Order().Select(n => $"'{n}'"))} "
+                        + $"{(remoteTrains.Count == 1 ? "is" : "are")} marked [TraxRemote], but "
+                        + "this scheduler has no remote submitter to send "
+                        + $"{(remoteTrains.Count == 1 ? "it" : "them")} to, so "
+                        + $"{(remoteTrains.Count == 1 ? "it" : "they")} would run on this host. "
+                        + "Add UseRemoteWorkers(), UseSqsWorkers() or UseLambdaWorkers() to the "
+                        + "scheduler, or remove the attribute from a train that should run locally."
+                );
+
             return;
+        }
 
         foreach (var registration in _routedSubmitterRegistrations)
         {
@@ -199,14 +221,9 @@ public partial class SchedulerConfigurationBuilder
             }
         }
 
-        // Discover [TraxRemote] attribute trains and register them for attribute-based routing
-        var discoveryService = new TrainDiscoveryService(_parentBuilder.ServiceCollection);
-        var remoteTrains = discoveryService.DiscoverTrains().Where(r => r.IsRemote);
-
+        // Register the [TraxRemote] trains for attribute-based routing
         foreach (var train in remoteTrains)
-        {
-            _routingConfiguration.AddAttributeRemoteTrain(train.ServiceType.FullName!);
-        }
+            _routingConfiguration.AddAttributeRemoteTrain(train);
 
         // [TraxRemote] trains go to the first routed registration, of whatever kind
         _routingConfiguration.SetAttributeDefaultSubmitter(_routedSubmitterRegistrations[0]);

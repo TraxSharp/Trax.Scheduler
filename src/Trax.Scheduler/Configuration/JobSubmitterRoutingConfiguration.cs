@@ -56,7 +56,8 @@ internal class JobSubmitterRoutingConfiguration
     /// <remarks>
     /// Precedence:
     /// 1. Builder <c>ForTrain&lt;T&gt;()</c> routing (highest priority)
-    /// 2. <c>[TraxRemote]</c> attribute (if a remote submitter is configured)
+    /// 2. <c>[TraxRemote]</c> attribute, to the first routed submitter (a scheduler with a
+    ///    <c>[TraxRemote]</c> train and no routed submitter refuses to build)
     /// 3. null (use default local <c>IJobSubmitter</c>)
     /// </remarks>
     internal RoutedSubmitterRegistration? GetRegistration(string trainName)

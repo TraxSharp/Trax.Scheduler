@@ -230,6 +230,48 @@ public class SchedulerBuilderValidationTests
         act.Should().NotThrow();
     }
 
+    [Test]
+    public void A_TraxRemote_train_with_no_routed_submitter_fails_the_build()
+    {
+        // It used to run locally without a word, on a host that may be exactly where a train
+        // marked remote for isolation must not run.
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddScoped<IRemoteCoverageTrain, RemoteCoverageTrain>();
+
+        var act = () =>
+            services.AddTrax(trax =>
+                trax.AddEffects(effects => effects.UseInMemory())
+                    .AddMediator(typeof(AssemblyMarker).Assembly)
+                    .AddScheduler()
+            );
+
+        act.Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage($"*{typeof(IRemoteCoverageTrain).FullName}*")
+            .WithMessage("*[TraxRemote]*")
+            .WithMessage("*UseRemoteWorkers*");
+    }
+
+    [Test]
+    public void A_TraxRemote_train_with_a_routed_submitter_builds()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddScoped<IRemoteCoverageTrain, RemoteCoverageTrain>();
+
+        var act = () =>
+            services.AddTrax(trax =>
+                trax.AddEffects(effects => effects.UseInMemory())
+                    .AddMediator(typeof(AssemblyMarker).Assembly)
+                    .AddScheduler(scheduler =>
+                        scheduler.UseRemoteWorkers(o => o.BaseUrl = "http://endpoint")
+                    )
+            );
+
+        act.Should().NotThrow();
+    }
+
     #endregion
 
     #region ConfigureLocalWorkers
