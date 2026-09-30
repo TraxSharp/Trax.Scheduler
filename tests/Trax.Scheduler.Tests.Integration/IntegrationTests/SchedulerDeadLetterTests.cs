@@ -188,6 +188,37 @@ public class SchedulerDeadLetterTests
     }
 
     [Test]
+    public async Task DeadLetterCleanup_RequeuedEntryStillQueued_KeepsTheDeadLetterAndItsRetry()
+    {
+        await using var fx = await CreateWithManifestAsync("dl-queued-retry");
+        var dl = await SeedDeadLetterAsync(fx, "dl-queued-retry");
+
+        // The operator retries it, but the dispatcher is paused, so the retry waits in the queue
+        // past the retention period.
+        (await fx.Scheduler.RequeueDeadLetterAsync(dl.Id))
+            .Success.Should()
+            .BeTrue();
+        await fx
+            .DataContext.DeadLetters.Where(d => d.Id == dl.Id)
+            .ExecuteUpdateAsync(s =>
+                s.SetProperty(d => d.ResolvedAt, DateTime.UtcNow.AddDays(-90))
+            );
+
+        await fx.RunDeadLetterCleanupAsync();
+
+        (
+            await fx
+                .DataContext.WorkQueues.AsNoTracking()
+                .AnyAsync(w => w.DeadLetterId == dl.Id && w.Status == WorkQueueStatus.Queued)
+        )
+            .Should()
+            .BeTrue("the purge must not drop a retry that has not run yet");
+        (await fx.DataContext.DeadLetters.AsNoTracking().AnyAsync(d => d.Id == dl.Id))
+            .Should()
+            .BeTrue("it is purged once its retry has left the queue");
+    }
+
+    [Test]
     public async Task DeadLetterCleanup_AwaitingIntervention_NotDeleted()
     {
         await using var fx = await CreateWithManifestAsync("dl-keep");

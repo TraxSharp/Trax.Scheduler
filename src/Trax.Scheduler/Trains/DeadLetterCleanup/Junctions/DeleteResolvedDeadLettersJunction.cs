@@ -15,8 +15,10 @@ namespace Trax.Scheduler.Trains.DeadLetterCleanup.Junctions;
 /// <remarks>
 /// Only dead letters in a terminal state (Retried or Acknowledged) with a ResolvedAt
 /// timestamp older than <see cref="SchedulerConfiguration.DeadLetterRetentionPeriod"/>
-/// are eligible for deletion. AwaitingIntervention dead letters are never deleted. Nothing is
-/// deleted while <see cref="SchedulerConfiguration.AutoPurgeDeadLetters"/> is false.
+/// are eligible for deletion. AwaitingIntervention dead letters are never deleted, and neither is
+/// one whose requeued work queue entry is still Queued, since deleting the dead letter deletes
+/// that entry. Nothing is deleted while <see cref="SchedulerConfiguration.AutoPurgeDeadLetters"/>
+/// is false.
 /// </remarks>
 internal class DeleteResolvedDeadLettersJunction(
     IDataContext dataContext,
@@ -51,6 +53,11 @@ internal class DeleteResolvedDeadLettersJunction(
                     dl.Status != DeadLetterStatus.AwaitingIntervention
                     && dl.ResolvedAt != null
                     && dl.ResolvedAt < cutoffTime
+                    // A retry still waiting in the queue has not run yet; deleting the dead
+                    // letter would delete it too.
+                    && !dataContext.WorkQueues.Any(wq =>
+                        wq.DeadLetterId == dl.Id && wq.Status == WorkQueueStatus.Queued
+                    )
                 )
                 .Select(dl => dl.Id)
                 .Take(BatchSize)
