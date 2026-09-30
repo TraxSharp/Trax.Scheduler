@@ -242,6 +242,11 @@ public partial class SchedulerConfigurationBuilder
     /// A failure older than the window no longer delays the next run or counts toward
     /// <c>MaxRetries</c>. A manifest scheduled with its own <c>FailureWindow</c> uses that
     /// instead. See <see cref="SchedulerConfiguration.FailureCountWindow"/>.
+    ///
+    /// The scheduler logs a warning when it starts if the retry backoff alone (the retry delay,
+    /// its multiplier and <see cref="MaxRetryDelay"/>) spaces <see cref="DefaultMaxRetries"/>
+    /// retries over the window or more: the count can then never be reached, and a manifest that
+    /// always fails is retried for ever instead of being dead-lettered.
     /// </remarks>
     /// <param name="window">The failure count window (default: 24 hours)</param>
     /// <returns>The builder for method chaining</returns>

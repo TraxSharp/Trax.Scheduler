@@ -36,6 +36,9 @@ internal class SchedulerStartupService(
     {
         configuration.Owner ??= ResolveOwner(serviceProvider);
 
+        if (configuration.UnreachableRetriesWarning() is { } warning)
+            logger.LogWarning("{Warning}", warning);
+
         // RecoverStuckJobs only makes sense with a real database — in-memory data is
         // lost on restart, so there are no stuck jobs to recover.
         if (configuration.RecoverStuckJobsOnStartup && configuration.HasDatabaseProvider)

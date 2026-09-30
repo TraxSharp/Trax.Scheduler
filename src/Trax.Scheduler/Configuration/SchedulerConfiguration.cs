@@ -199,6 +199,58 @@ public class SchedulerConfiguration
     public TimeSpan FailureCountWindow { get; internal set; } = TimeSpan.FromHours(24);
 
     /// <summary>
+    /// A warning when <see cref="FailureCountWindow"/> is too short for
+    /// <see cref="DefaultMaxRetries"/> to be reached, or null when it is long enough.
+    /// </summary>
+    /// <remarks>
+    /// A manifest is dead-lettered once more than <c>MaxRetries</c> failures fall inside the
+    /// window, but each retry waits out its backoff first (<see cref="DefaultRetryDelay"/> times
+    /// <see cref="RetryBackoffMultiplier"/> per failure, capped at <see cref="MaxRetryDelay"/>).
+    /// When those waits alone add up to the window or more, the oldest failure ages out before
+    /// the last one happens, and a manifest that fails every time retries for ever without being
+    /// dead-lettered. Logged at startup rather than refused: the window and the retry settings
+    /// can each be changed at runtime, and the combination is a trade-off, not a value the
+    /// scheduler cannot run with.
+    /// </remarks>
+    internal string? UnreachableRetriesWarning()
+    {
+        var retries = DefaultMaxRetries;
+        if (retries <= 0)
+            return null;
+
+        var window = FailureCountWindow.TotalSeconds;
+        var cap = MaxRetryDelay.TotalSeconds;
+        var backoff = 0.0;
+
+        for (var failure = 1; failure <= retries && backoff < window; failure++)
+        {
+            var delay = Math.Min(
+                DefaultRetryDelay.TotalSeconds * Math.Pow(RetryBackoffMultiplier, failure - 1),
+                cap
+            );
+
+            // Every later delay is the same from here, so the rest adds up at once.
+            if (delay >= cap || delay <= 0)
+            {
+                backoff += delay * (retries - failure + 1);
+                break;
+            }
+
+            backoff += delay;
+        }
+
+        if (backoff < window)
+            return null;
+
+        return $"FailureCountWindow ({FailureCountWindow}) is too short for DefaultMaxRetries "
+            + $"({retries}): the retry backoff alone spaces a failing manifest's {retries + 1} "
+            + $"runs over {TimeSpan.FromSeconds(Math.Min(backoff, TimeSpan.MaxValue.TotalSeconds - 1))}, "
+            + "so its oldest failure leaves the window before the last one, and a manifest that "
+            + "always fails retries for ever without being dead-lettered. Lengthen "
+            + "FailureCountWindow, or lower DefaultMaxRetries, DefaultRetryDelay or MaxRetryDelay.";
+    }
+
+    /// <summary>
     /// Timeout after which a running job is cancelled when its manifest sets no Timeout.
     /// </summary>
     /// <remarks>

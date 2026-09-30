@@ -50,7 +50,16 @@ also needs no new column: the cancelled run's own end time is the record.
 `ManifestOptions` stores it in `manifest.failure_window_seconds`, and the failure count uses it
 in place of `FailureCountWindow` for that manifest. Following scheduler/0011 it is written on a
 seed only when the code states it, so removing it from the code leaves the stored window in
-place. The persisted scheduler settings row has no column for the scheduler's window, so a value patched through `UpdateSchedulerConfigAsync` lasts until restart.
+place.
+
+**A window too short for the retry count is warned about, not refused.** Each retry waits out
+its backoff first, so when the backoff for `DefaultMaxRetries` retries adds up to the window, the
+oldest failure leaves it before the last one happens and a manifest that always fails is retried
+for ever. The scheduler logs a warning at startup instead of refusing to build: the window and
+the retry settings each change at runtime, and the combination is a trade-off rather than a value
+the scheduler cannot run with. The reaper also dead-letters only a manifest with at least one
+counted failure, so a negative `MaxRetries` reaching a row cannot dead-letter one that never
+failed.
 
 **A triggered run that is cancelled moves the schedule** the same way a triggered success
 already did, because the anchor is the run's end time, not the occurrence it was queued for.
@@ -74,3 +83,5 @@ check) applies the same window, or that a new place deciding "due" consults the 
 - **2026-09-30**: Recorded.
 - **2026-09-30**: A manifest's own `FailureWindow` overrides `FailureCountWindow`, now that
   Trax.Effect 1.57.4 has the column.
+- **2026-09-30**: A window the retry backoff outlasts is warned about at startup; the reaper
+  requires a counted failure before it dead-letters.
