@@ -83,6 +83,8 @@ namespace Trax.Scheduler.Configuration
     public class RoutedSubmitterRegistration : System.IEquatable<Trax.Scheduler.Configuration.RoutedSubmitterRegistration>
     {
         public RoutedSubmitterRegistration(Trax.Scheduler.Configuration.SubmitterRouting Routing, System.Type SubmitterType, System.Action<Microsoft.Extensions.DependencyInjection.IServiceCollection> Register) { }
+        public System.Func<System.IServiceProvider, Trax.Scheduler.Services.JobSubmitter.IJobSubmitter>? CreateSubmitter { get; init; }
+        public string? Description { get; init; }
         public System.Action<Microsoft.Extensions.DependencyInjection.IServiceCollection> Register { get; init; }
         public Trax.Scheduler.Configuration.SubmitterRouting Routing { get; init; }
         public System.Type SubmitterType { get; init; }

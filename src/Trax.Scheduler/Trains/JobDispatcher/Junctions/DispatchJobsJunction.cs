@@ -512,11 +512,7 @@ internal class DispatchJobsJunction(
     /// Resolves the appropriate job submitter for a train based on routing configuration.
     /// Falls back to the default IJobSubmitter if no routing is configured for this train.
     /// </summary>
-    private IJobSubmitter ResolveSubmitter(IServiceProvider provider, string trainName)
-    {
-        var concreteType = routingConfiguration.GetSubmitterType(trainName);
-        return concreteType is not null
-            ? (IJobSubmitter)provider.GetRequiredService(concreteType)
-            : provider.GetRequiredService<IJobSubmitter>();
-    }
+    private IJobSubmitter ResolveSubmitter(IServiceProvider provider, string trainName) =>
+        routingConfiguration.ResolveSubmitter(provider, trainName)
+        ?? provider.GetRequiredService<IJobSubmitter>();
 }
