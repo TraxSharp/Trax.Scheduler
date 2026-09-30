@@ -358,18 +358,16 @@ public class TraxScheduler(
 
         var manifest = await GetManifestByExternalIdAsync(context, externalId, ct);
 
-        var entry = WorkQueue.Create(
-            new CreateWorkQueue
-            {
-                TrainName = manifest.Name,
-                Input = manifest.Properties,
-                InputTypeName = manifest.PropertyTypeName,
-                ManifestId = manifest.Id,
-                Priority = manifest.Priority,
-            }
-        );
-        context.WorkQueues.Add(entry);
-        await context.SaveChanges(ct);
+        var entry = await TryQueueManifestAsync(context, manifest, scheduledAt: null, ct);
+        if (entry is null)
+        {
+            logger.LogInformation(
+                "Manifest {ExternalId} already has a queued entry; the trigger queued nothing more",
+                externalId
+            );
+            return;
+        }
+
         changeSignal?.Notify(ChangeDomain.WorkQueue);
 
         logger.LogInformation(
@@ -390,19 +388,16 @@ public class TraxScheduler(
 
         var manifest = await GetManifestByExternalIdAsync(context, externalId, ct);
 
-        var entry = WorkQueue.Create(
-            new CreateWorkQueue
-            {
-                TrainName = manifest.Name,
-                Input = manifest.Properties,
-                InputTypeName = manifest.PropertyTypeName,
-                ManifestId = manifest.Id,
-                Priority = manifest.Priority,
-                ScheduledAt = DateTime.UtcNow + delay,
-            }
-        );
-        context.WorkQueues.Add(entry);
-        await context.SaveChanges(ct);
+        var entry = await TryQueueManifestAsync(context, manifest, DateTime.UtcNow + delay, ct);
+        if (entry is null)
+        {
+            logger.LogInformation(
+                "Manifest {ExternalId} already has a queued entry; the delayed trigger queued nothing more",
+                externalId
+            );
+            return;
+        }
+
         changeSignal?.Notify(ChangeDomain.WorkQueue);
 
         logger.LogInformation(
@@ -412,6 +407,64 @@ public class TraxScheduler(
             entry.Id
         );
     }
+
+    /// <summary>
+    /// Queues one entry for <paramref name="manifest"/>, unless it already has a queued one: the
+    /// database holds at most one per manifest (<c>ix_work_queue_unique_queued_manifest</c>), and
+    /// the entry already there runs the manifest. Returns the new entry, or null when it queued
+    /// nothing. The check and the insert are two statements, so an entry the ManifestManager or
+    /// another trigger queues between them is recognised by the insert's failure and treated the
+    /// same way; any other failed save is thrown.
+    /// </summary>
+    private static async Task<WorkQueue?> TryQueueManifestAsync(
+        IDataContext context,
+        Manifest manifest,
+        DateTime? scheduledAt,
+        CancellationToken ct
+    )
+    {
+        if (await HasQueuedEntryAsync(context, manifest.Id, ct))
+            return null;
+
+        var entry = WorkQueue.Create(
+            new CreateWorkQueue
+            {
+                TrainName = manifest.Name,
+                Input = manifest.Properties,
+                InputTypeName = manifest.PropertyTypeName,
+                ManifestId = manifest.Id,
+                Priority = manifest.Priority,
+                ScheduledAt = scheduledAt,
+            }
+        );
+        context.WorkQueues.Add(entry);
+
+        try
+        {
+            await context.SaveChanges(ct);
+            return entry;
+        }
+        catch (DbUpdateException)
+        {
+            // Untracked either way, so a later save on this context does not retry it.
+            context.Reset();
+
+            if (await HasQueuedEntryAsync(context, manifest.Id, ct))
+                return null;
+
+            throw;
+        }
+    }
+
+    private static Task<bool> HasQueuedEntryAsync(
+        IDataContext context,
+        long manifestId,
+        CancellationToken ct
+    ) =>
+        context.WorkQueues.AnyAsync(
+            w => w.ManifestId == manifestId && w.Status == WorkQueueStatus.Queued,
+            ct
+        );
 
     /// <inheritdoc />
     public Task<Manifest> ScheduleOnceAsync<TTrain, TInput, TOutput>(
@@ -486,31 +539,24 @@ public class TraxScheduler(
         if (manifests.Count == 0)
             return 0;
 
+        // One save per manifest, so a manifest that already has a queued entry is skipped rather
+        // than failing the whole group on the unique index.
+        var queued = 0;
         foreach (var manifest in manifests)
-        {
-            var entry = WorkQueue.Create(
-                new CreateWorkQueue
-                {
-                    TrainName = manifest.Name,
-                    Input = manifest.Properties,
-                    InputTypeName = manifest.PropertyTypeName,
-                    ManifestId = manifest.Id,
-                    Priority = manifest.Priority,
-                }
-            );
-            context.WorkQueues.Add(entry);
-        }
+            if (await TryQueueManifestAsync(context, manifest, scheduledAt: null, ct) is not null)
+                queued++;
 
-        await context.SaveChanges(ct);
-        changeSignal?.Notify(ChangeDomain.WorkQueue);
+        if (queued > 0)
+            changeSignal?.Notify(ChangeDomain.WorkQueue);
 
         logger.LogInformation(
-            "Queued {Count} manifests in group {GroupId} for execution",
-            manifests.Count,
-            groupId
+            "Queued {Count} manifests in group {GroupId} for execution; {Skipped} already queued",
+            queued,
+            groupId,
+            manifests.Count - queued
         );
 
-        return manifests.Count;
+        return queued;
     }
 
     /// <inheritdoc />
