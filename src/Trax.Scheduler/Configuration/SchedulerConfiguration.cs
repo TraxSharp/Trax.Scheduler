@@ -363,4 +363,18 @@ public class SchedulerConfiguration
     /// recover operations are unnecessary.
     /// </remarks>
     internal bool HasDatabaseProvider { get; set; }
+
+    /// <summary>
+    /// Whether this configuration is the one <c>AddScheduler</c> built, rather than the empty one
+    /// <c>AddTraxJobRunner</c> registers on a runner or API-only host. Only a scheduler host knows
+    /// the values the scheduler runs with, so only it may create the persisted settings row.
+    /// </summary>
+    internal bool IsSchedulerHost { get; set; }
+
+    /// <summary>
+    /// How often a running scheduler checks the persisted settings row for a save made by another
+    /// host (or this one) and applies it. Zero turns the check off; the row is then read only at
+    /// startup.
+    /// </summary>
+    internal TimeSpan SettingsRefreshInterval { get; set; } = TimeSpan.FromSeconds(5);
 }

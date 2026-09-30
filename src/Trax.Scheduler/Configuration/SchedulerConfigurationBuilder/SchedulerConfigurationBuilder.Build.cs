@@ -32,6 +32,7 @@ public partial class SchedulerConfigurationBuilder
         ValidateRoutedSubmitters();
 
         _configuration.HasDatabaseProvider = _parentBuilder.HasDatabaseProvider;
+        _configuration.IsSchedulerHost = true;
 
         // Exclude internal scheduler trains from MaxActiveJobs count
         foreach (var name in AdminTrains.FullNames)
@@ -66,7 +67,8 @@ public partial class SchedulerConfigurationBuilder
         _parentBuilder.ServiceCollection.AddScoped<IOperationsService, OperationsService>();
 
         // Reads the persisted scheduler_config row at startup and applies it to the
-        // in-memory SchedulerConfiguration singleton.
+        // in-memory SchedulerConfiguration singleton, then keeps checking it so a save made on
+        // any host reaches this one within seconds.
         _parentBuilder.ServiceCollection.AddHostedService<SchedulerConfigBootstrapHostedService>();
 
         // Register IDormantDependentContext with forwarding so both concrete type
