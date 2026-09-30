@@ -8,8 +8,14 @@ namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 /// <summary>
 /// The time a dependent's dispatch and its parent's success are stamped with comes from the
 /// database, not the process, so two machines with skewed clocks still agree on their order.
+///
+/// <para>Enforces <c>docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md</c>.</para>
 /// </summary>
 [TestFixture]
+[Property(
+    "adr",
+    "docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
+)]
 public class DatabaseClockTests : TestSetup
 {
     [Test]
@@ -20,7 +26,11 @@ public class DatabaseClockTests : TestSetup
             .Take(1)
             .ToQueryString();
 
-        sql.Should().Contain("now()", "the projection must run on the server (PostgreSQL's now())");
+        sql.Should()
+            .Contain(
+                "now()",
+                "the projection must run on the server (PostgreSQL's now()). See docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
+            );
     }
 
     [Test]

@@ -18,8 +18,14 @@ namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 /// <summary>
 /// A dependent runs at least once after each success of its parent. A parent success that
 /// lands while the dependent is already running was not seen by that run, so it earns another.
+///
+/// <para>Enforces <c>docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md</c>.</para>
 /// </summary>
 [TestFixture]
+[Property(
+    "adr",
+    "docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
+)]
 public class DependentRunsAfterEachParentSuccessTests : TestSetup
 {
     private static readonly DateTime T0 = DateTime.UtcNow.AddHours(-1);
@@ -165,7 +171,11 @@ public class DependentRunsAfterEachParentSuccessTests : TestSetup
 
         (await QueuedCount(dependent))
             .Should()
-            .Be(0, "the run was dispatched after the parent's latest success, by one clock");
+            .Be(
+                0,
+                "the run was dispatched after the parent's latest success, by one clock. See "
+                    + "docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
+            );
     }
 
     [Test]
@@ -187,7 +197,12 @@ public class DependentRunsAfterEachParentSuccessTests : TestSetup
 
         await RunManifestManagerAsync();
 
-        (await QueuedCount(dependent)).Should().Be(1, "the parent succeeded while it ran");
+        (await QueuedCount(dependent))
+            .Should()
+            .Be(
+                1,
+                "the parent succeeded while it ran. See docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
+            );
     }
 
     private async Task<Manifest> ArrangeAsync(

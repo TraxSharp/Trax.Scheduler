@@ -18,8 +18,14 @@ namespace Trax.Scheduler.Tests.Sqlite.Integration.IntegrationTests;
 /// <summary>
 /// The dependent baseline on SQLite, which stores timestamps as text: the latest successful
 /// run's start is a MAX over those strings, so it has to sort like the instants it encodes.
+///
+/// <para>Enforces <c>docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md</c>.</para>
 /// </summary>
 [TestFixture]
+[Property(
+    "adr",
+    "docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
+)]
 public class SqliteDependentRunsAfterEachParentSuccessTests : TestSetup
 {
     private static readonly DateTime T0 = DateTime.UtcNow.AddHours(-1);
@@ -165,7 +171,11 @@ public class SqliteDependentRunsAfterEachParentSuccessTests : TestSetup
 
         (await QueuedCount(dependent))
             .Should()
-            .Be(0, "the run was dispatched after the parent's latest success, by one clock");
+            .Be(
+                0,
+                "the run was dispatched after the parent's latest success, by one clock. See "
+                    + "docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
+            );
     }
 
     [Test]
@@ -187,7 +197,12 @@ public class SqliteDependentRunsAfterEachParentSuccessTests : TestSetup
 
         await RunManifestManagerAsync();
 
-        (await QueuedCount(dependent)).Should().Be(1, "the parent succeeded while it ran");
+        (await QueuedCount(dependent))
+            .Should()
+            .Be(
+                1,
+                "the parent succeeded while it ran. See docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
+            );
     }
 
     private async Task<Manifest> ArrangeAsync(

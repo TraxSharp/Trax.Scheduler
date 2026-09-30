@@ -16,7 +16,8 @@ and the last cancelled run.
 
 ## Status
 
-**Accepted.**
+**Accepted.** Amended 2026-09-30 to record when a dependent runs again: at least once after its
+parent's latest success, compared on the database's clock.
 
 ## Why this is written down
 
@@ -39,12 +40,37 @@ say "run once, do not retry", and "retries" in the name reads as retries after t
 The cost is a behaviour change: the default of 3 now allows four attempts, where it allowed
 three.
 
+**A dependent runs at least once after its parent's latest success.** A dependent is due when
+its parent succeeded after the dependent's latest run started (successful or cancelled). Several
+parent successes that land while one dependent run is going collapse into a single re-run: the
+next run reads the parent's latest output, which is what the earlier successes produced too.
+Decided by the user on 2026-09-30.
+
+**Record the parent run each dependent run was queued for** (so every parent success earns its own
+dependent run). The audit recommended it and the user did not choose it: it needs a new column in
+Trax.Effect on the dependent's entry or run, a schema change, to deliver a run per parent success
+that no user has asked for. A dependent re-reads its parent's latest state, so the extra runs
+would read the same data again.
+
+**Compare timestamps from each process's own clock.** Rejected, and fixed with the decision above:
+the parent's success was stamped by the worker that ran it and the dependent's start by the
+dispatcher, so a skew between those machines larger than the parent-to-dependent latency
+re-queued the dependent after every run. Both are now read from the database's clock: the
+parent's `LastSuccessfulRun` and the dependent entry's `DispatchedAt`. Comparing processes'
+clocks would have needed every host in sync; the database is the one clock they all share.
+
 **Count a timeout as a failure** (so backoff and dead-lettering apply) **and let an operator's
 cancel run again.** Rejected: a cancel is deliberate, and restarting a runaway run seconds after
 an operator cancelled it is the opposite of what they asked. Treating both kinds of cancel alike
 also needs no new column: the cancelled run's own end time is the record.
 
 ## Consequences
+
+**A dependent's baseline is its latest dispatch.** The dependent is compared by when its latest
+run's work queue entry was dispatched, stamped by the database. A run with no dispatched entry
+(run directly, or dispatched by the in-memory provider) falls back to its own start time, which
+is the process's clock again; with an entry the dependent never needs it. Stamping from the
+database costs one small query per dispatch and per scheduled success.
 
 **A manifest can carry its own window.** `FailureWindow` on `ScheduleOptions` and
 `ManifestOptions` stores it in `manifest.failure_window_seconds`, and the failure count uses it
@@ -73,6 +99,9 @@ success that landed while the run was going was not seen by it, so it still earn
 - `FailureCountWindowTests` covers a failure 30 days ago (no backoff), three failures over 90
   days (no dead letter), failures inside the window (backoff and dead letter), a configured
   window, and a manifest's own window overriding it either way.
+- `DependentRunsAfterEachParentSuccessTests` (and its SQLite twin) covers a parent success during
+  a dependent's successful or cancelled run, and a dispatcher whose clock runs behind or ahead
+  of the database's; `DatabaseClockTests` pins that the stamp is read on the server.
 - `MaxRetriesBoundaryTests` pins the boundary: dead-lettered on failure n + 1, never on n.
 - `CancelledOccurrenceIsNotRerunTests` covers interval, cron, `Once` and dependent manifests
   whose run was cancelled, and that the following occurrence still runs.
@@ -91,3 +120,7 @@ check) applies the same window, or that a new place deciding "due" consults the 
   requires a counted failure before it dead-letters.
 - **2026-09-30**: A cancelled dependent run is anchored on its start, not its end, so a parent
   success during the cancelled run is not lost.
+- **2026-09-30**: Recorded the dependent semantics, decided by the user: at least once after the
+  parent's latest success, not once per parent success, because recording the parent run needs a
+  Trax.Effect schema change for behaviour nobody asked for. Both timestamps compared are now the
+  database's clock.

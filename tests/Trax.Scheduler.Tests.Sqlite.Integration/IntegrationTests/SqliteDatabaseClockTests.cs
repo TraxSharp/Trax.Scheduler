@@ -8,8 +8,14 @@ namespace Trax.Scheduler.Tests.Sqlite.Integration.IntegrationTests;
 /// <summary>
 /// The time a dependent's dispatch and its parent's success are stamped with comes from the
 /// database, not the process, so two machines with skewed clocks still agree on their order.
+///
+/// <para>Enforces <c>docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md</c>.</para>
 /// </summary>
 [TestFixture]
+[Property(
+    "adr",
+    "docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
+)]
 public class SqliteDatabaseClockTests : TestSetup
 {
     [Test]
@@ -21,7 +27,10 @@ public class SqliteDatabaseClockTests : TestSetup
             .ToQueryString();
 
         sql.Should()
-            .Contain("'now'", "the projection must run on the server (SQLite's strftime('now'))");
+            .Contain(
+                "'now'",
+                "the projection must run on the server (SQLite's strftime('now')). See docs/adr/0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md"
+            );
     }
 
     [Test]
