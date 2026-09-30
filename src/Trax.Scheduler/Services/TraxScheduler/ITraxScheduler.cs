@@ -274,7 +274,8 @@ public interface ITraxScheduler
     /// Sets <c>CancellationRequested = true</c> on all Pending and InProgress metadata for the
     /// manifest (cross-server, picked up at next junction boundary via CancellationCheckProvider)
     /// and also attempts same-server instant cancellation via <see cref="ICancellationRegistry"/>.
-    /// The same rule <c>IOperationsService.CancelExecutionsAsync</c> applies to a list of runs.
+    /// A Pending run is recorded <see cref="TrainState.Cancelled"/> without running when the job
+    /// runner picks it up, on any host. The same rule <c>IOperationsService.CancelExecutionsAsync</c> applies to a list of runs.
     /// Cancelled trains transition to <see cref="TrainState.Cancelled"/> and are not retried.
     /// </remarks>
     /// <exception cref="InvalidOperationException">
@@ -292,7 +293,8 @@ public interface ITraxScheduler
     /// Sets <c>CancellationRequested = true</c> on all Pending and InProgress metadata for
     /// manifests in the group and attempts same-server instant cancellation via
     /// <see cref="ICancellationRegistry"/>, the rule <c>IOperationsService.CancelExecutionsAsync</c>
-    /// applies to a list of runs.
+    /// applies to a list of runs. A Pending run is recorded <see cref="TrainState.Cancelled"/>
+    /// without running when the job runner picks it up, on any host.
     /// </remarks>
     Task<int> CancelGroupAsync(long groupId, CancellationToken ct = default);
 

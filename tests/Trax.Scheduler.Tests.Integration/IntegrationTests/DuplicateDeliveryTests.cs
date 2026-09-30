@@ -109,6 +109,47 @@ public class DuplicateDeliveryTests : TestSetup
         }
     }
 
+    [Test]
+    public async Task A_pending_run_flagged_for_cancellation_is_recorded_cancelled_and_not_run()
+    {
+        // This host has no junction progress provider, so nothing but the job runner reads the
+        // flag the batch, manifest and group cancels set on a Pending run.
+        var key = Guid.NewGuid().ToString("N");
+        var input = new DeliveryProbeInput { Key = key };
+        var metadata = await CreatePendingRun(input);
+        await DataContext
+            .Metadatas.Where(m => m.Id == metadata.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.CancellationRequested, true));
+        DataContext.Reset();
+
+        try
+        {
+            var act = async () => await JobRunner.Run(new RunJobRequest(metadata.Id, input));
+
+            await act.Should().NotThrowAsync("the delivery is settled, not failed");
+            DeliveryProbeTrain
+                .Runs.ContainsKey(key)
+                .Should()
+                .BeFalse("a run cancelled before it started never enters the train");
+
+            DataContext.Reset();
+            var row = await DataContext
+                .Metadatas.AsNoTracking()
+                .SingleAsync(m => m.Id == metadata.Id);
+            row.TrainState.Should().Be(TrainState.Cancelled);
+            row.EndTime.Should().NotBeNull();
+
+            var manifest = await DataContext
+                .Manifests.AsNoTracking()
+                .SingleAsync(m => m.Id == metadata.ManifestId);
+            manifest.LastSuccessfulRun.Should().BeNull("nothing ran");
+        }
+        finally
+        {
+            DeliveryProbeTrain.Forget(key);
+        }
+    }
+
     private async Task RunInOwnScope(RunJobRequest request)
     {
         // Yield first so both deliveries are in flight before either reaches the database.

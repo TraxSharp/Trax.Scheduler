@@ -2,10 +2,12 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Trax.Core.Exceptions;
 using Trax.Effect.Data.Services.DataContext;
+using Trax.Effect.Enums;
 using Trax.Effect.Models.Metadata;
 using Trax.Effect.Services.EffectJunction;
 using Trax.Mediator.Services.TrainDiscovery;
 using Trax.Scheduler.Configuration;
+using Trax.Scheduler.Extensions;
 
 namespace Trax.Scheduler.Trains.JobRunner.Junctions;
 
@@ -13,6 +15,8 @@ namespace Trax.Scheduler.Trains.JobRunner.Junctions;
 /// Loads the Metadata record from the database and uses the provided input.
 /// </summary>
 /// <remarks>
+/// A Pending run whose cancellation was requested before it started is recorded Cancelled here,
+/// and the next junction then does not run it, whatever junction providers the host registers.
 /// All callers now provide the train input via the work queue dispatch pipeline.
 /// The Manifest is eagerly loaded so that UpdateManifestSuccessJunction can persist
 /// LastSuccessfulRun via SaveChanges.
@@ -59,6 +63,9 @@ internal class LoadMetadataJunction(
         if (AdminTrains.Includes(registration))
             throw SchedulerTrain(input.MetadataId, registration.ServiceType.FullName!);
 
+        if (metadata is { TrainState: TrainState.Pending, CancellationRequested: true })
+            await RecordCancelledBeforeStartAsync(metadata);
+
         logger.LogDebug(
             "Loaded metadata for train {TrainName} (MetadataId: {MetadataId})",
             metadata.Name,
@@ -66,6 +73,54 @@ internal class LoadMetadataJunction(
         );
 
         return (metadata, new ResolvedTrainInput(input.Input, registration.ServiceType.FullName!));
+    }
+
+    /// <summary>
+    /// Records a Pending run whose cancellation was requested before it started as
+    /// <c>Cancelled</c>, so the train is not run. The write matches only a row still Pending and
+    /// still flagged, so a delivery that claimed the run meanwhile keeps it; the tracked row is
+    /// then read back and the next junction sees its state either way. Bookkeeping for a run that
+    /// will not start, so it is written on <see cref="CancellationToken.None"/>.
+    /// </summary>
+    /// <remarks>
+    /// The flag is set by the batch, manifest and group cancels on Pending rows. Before this
+    /// check only a host with a junction progress provider read it, at the run's first junction,
+    /// so on any other host a cancelled Pending run still ran.
+    /// </remarks>
+    private async Task RecordCancelledBeforeStartAsync(Metadata metadata)
+    {
+        var endTime = DateTime.UtcNow;
+        var flagged = dataContext.Metadatas.Where(m =>
+            m.Id == metadata.Id && m.TrainState == TrainState.Pending && m.CancellationRequested
+        );
+
+        var cancelled = dataContext.SupportsSetUpdates()
+            ? await flagged.ExecuteUpdateAsync(
+                s =>
+                    s.SetProperty(m => m.TrainState, TrainState.Cancelled)
+                        .SetProperty(m => m.EndTime, endTime),
+                CancellationToken.None
+            )
+            : await dataContext.UpdateEachAsync(
+                flagged,
+                m =>
+                {
+                    m.TrainState = TrainState.Cancelled;
+                    m.EndTime = endTime;
+                },
+                CancellationToken.None
+            );
+
+        if (dataContext is DbContext db)
+            await db.Entry(metadata).ReloadAsync(CancellationToken.None);
+
+        if (cancelled > 0)
+            logger.LogInformation(
+                "Metadata {MetadataId} ({TrainName}) was cancelled before it started; recorded it "
+                    + "cancelled and did not run it",
+                metadata.Id,
+                metadata.Name
+            );
     }
 
     private static TrainException SchedulerTrain(long metadataId, string trainName) =>

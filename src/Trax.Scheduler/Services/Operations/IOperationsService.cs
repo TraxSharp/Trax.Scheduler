@@ -110,7 +110,8 @@ public interface IOperationsService
     /// <summary>
     /// Requests cancellation of the given runs: every one still <c>Pending</c> or
     /// <c>InProgress</c> has <c>CancellationRequested</c> set, which a run observes at its next
-    /// junction boundary on any host, and each is also cancelled at once through the
+    /// junction boundary on any host (a <c>Pending</c> run is recorded <c>Cancelled</c> without
+    /// running when the job runner picks it up), and each is also cancelled at once through the
     /// <c>ICancellationRegistry</c> when it runs on this host. Terminal and unknown ids are
     /// skipped. <c>ITraxScheduler.CancelAsync</c> and <c>CancelGroupAsync</c> apply the same
     /// rule to a manifest's or a group's runs.

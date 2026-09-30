@@ -35,8 +35,9 @@ internal class RunScheduledTrainJunction(
     {
         var (metadata, resolvedInput) = input;
 
-        // A row that is no longer Pending belongs to the delivery that started it. This one
-        // records nothing and completes, so its transport acknowledges it rather than retrying.
+        // A row that is no longer Pending belongs to the delivery that started it, or was
+        // cancelled before it started. This delivery records nothing more and completes, so its
+        // transport acknowledges it rather than retrying.
         if (metadata.TrainState != TrainState.Pending)
         {
             LogOwnedElsewhere(metadata);
@@ -95,10 +96,11 @@ internal class RunScheduledTrainJunction(
 
     private void LogOwnedElsewhere(Metadata metadata) =>
         logger.LogInformation(
-            "Metadata {MetadataId} ({TrainName}) was already started by another delivery; "
-                + "this delivery did not run it",
+            "Metadata {MetadataId} ({TrainName}) is {TrainState}, not Pending; this delivery did "
+                + "not run it",
             metadata.Id,
-            metadata.Name
+            metadata.Name,
+            metadata.TrainState
         );
 
     private void RecordManifestSuccess(Metadata metadata)
