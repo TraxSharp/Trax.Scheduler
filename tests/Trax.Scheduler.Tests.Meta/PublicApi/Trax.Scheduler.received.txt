@@ -142,7 +142,9 @@ namespace Trax.Scheduler.Configuration
         public Microsoft.Extensions.DependencyInjection.IServiceCollection ServiceCollection { get; }
         public Trax.Scheduler.Configuration.SchedulerConfigurationBuilder AddMetadataCleanup(System.Action<Trax.Scheduler.Configuration.MetadataCleanupConfiguration>? configure = null) { }
         public void AddRoutedSubmitter(Trax.Scheduler.Configuration.RoutedSubmitterRegistration registration) { }
+        public Trax.Scheduler.Configuration.SchedulerConfigurationBuilder AutoPurgeDeadLetters(bool purge = true) { }
         public Trax.Scheduler.Configuration.SchedulerConfigurationBuilder ConfigureLocalWorkers(System.Action<Trax.Scheduler.Configuration.LocalWorkerOptions> configure) { }
+        public Trax.Scheduler.Configuration.SchedulerConfigurationBuilder DeadLetterRetentionPeriod(System.TimeSpan retention) { }
         public Trax.Scheduler.Configuration.SchedulerConfigurationBuilder DefaultJobTimeout(System.TimeSpan timeout) { }
         public Trax.Scheduler.Configuration.SchedulerConfigurationBuilder DefaultMaxRetries(int maxRetries) { }
         public Trax.Scheduler.Configuration.SchedulerConfigurationBuilder DefaultMisfirePolicy(Trax.Effect.Enums.MisfirePolicy policy) { }

@@ -285,16 +285,25 @@ public interface IOperationsService
     /// Returns the live scheduler runtime settings, reading from the in-memory
     /// <c>SchedulerConfiguration</c> singleton (and <c>LocalWorkerOptions</c> /
     /// <c>MetadataCleanupConfiguration</c> if registered). The singleton is the
-    /// source of truth at runtime; the persisted row is loaded into it at startup
-    /// by <c>SchedulerConfigBootstrapHostedService</c>.
+    /// source of truth at runtime; on a scheduler host the persisted row is loaded into it at
+    /// startup and again within seconds of any save, by <c>SchedulerConfigBootstrapHostedService</c>.
     /// </summary>
     SchedulerConfigSnapshot GetSchedulerConfig();
 
     /// <summary>
-    /// Patches the live scheduler runtime settings. Writes are applied to both the
-    /// in-memory singleton (so changes take effect immediately) and to the persisted
-    /// <c>trax.scheduler_config</c> row (so changes survive restart).
+    /// Patches the scheduler runtime settings. Only the fields the patch sets are written to the
+    /// persisted <c>trax.scheduler_config</c> row, so a save never rewrites a setting it did not
+    /// name. The host that saves applies the change at once, and every running scheduler host
+    /// picks the row up within seconds (<c>SchedulerConfiguration</c>'s settings refresh), so a
+    /// save made on an API-only host reaches the scheduler without a restart. A scheduler applies a
+    /// change from its next polling cycle; <see cref="UpdateSchedulerConfigInput.LocalWorkerCount"/>
+    /// is the exception and applies when the worker pool next starts.
     /// </summary>
+    /// <remarks>
+    /// The row stores every setting, so the first save, which creates it, records this host's
+    /// values for the settings it does not name. A host that does not run the scheduler cannot know
+    /// those values, so there the first save is refused; make it on a scheduler host.
+    /// </remarks>
     /// <returns>
     /// <c>OperationResult(true, Count: N, ...)</c> where <c>N</c> is the number of
     /// fields actually changed. <c>OperationResult(false, ...)</c>, naming each offending field,
@@ -303,7 +312,8 @@ public interface IOperationsService
     /// under 1 second; a negative retry count, retry delay or dead-letter retention; any duration
     /// over ten years; a <c>MaxActiveJobs</c> below 1; a <c>LocalWorkerCount</c> outside 1 to
     /// 256; or a backoff multiplier below 1 or
-    /// not finite. A refused patch applies nothing.
+    /// not finite; or, when no settings have been saved yet, when this host does not run the
+    /// scheduler. A refused patch applies nothing.
     /// </returns>
     Task<OperationResult> UpdateSchedulerConfigAsync(
         UpdateSchedulerConfigInput input,

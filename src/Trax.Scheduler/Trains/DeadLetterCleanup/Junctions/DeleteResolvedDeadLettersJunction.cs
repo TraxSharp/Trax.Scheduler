@@ -14,7 +14,8 @@ namespace Trax.Scheduler.Trains.DeadLetterCleanup.Junctions;
 /// <remarks>
 /// Only dead letters in a terminal state (Retried or Acknowledged) with a ResolvedAt
 /// timestamp older than <see cref="SchedulerConfiguration.DeadLetterRetentionPeriod"/>
-/// are eligible for deletion. AwaitingIntervention dead letters are never deleted.
+/// are eligible for deletion. AwaitingIntervention dead letters are never deleted. Nothing is
+/// deleted while <see cref="SchedulerConfiguration.AutoPurgeDeadLetters"/> is false.
 /// </remarks>
 internal class DeleteResolvedDeadLettersJunction(
     IDataContext dataContext,
@@ -26,6 +27,14 @@ internal class DeleteResolvedDeadLettersJunction(
 
     public override async Task<Unit> Run(DeadLetterCleanupRequest input)
     {
+        // Read per run, not at registration: an operator can turn the purge off at runtime to
+        // keep resolved dead letters, and the cleanup service keeps running either way.
+        if (!configuration.AutoPurgeDeadLetters)
+        {
+            logger.LogDebug("AutoPurgeDeadLetters is off; resolved dead letters are kept");
+            return Unit.Default;
+        }
+
         var cutoffTime = DateTime.UtcNow - configuration.DeadLetterRetentionPeriod;
         var totalDeleted = 0;
 

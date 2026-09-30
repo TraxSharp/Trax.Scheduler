@@ -251,6 +251,31 @@ public partial class SchedulerConfigurationBuilder
     }
 
     /// <summary>
+    /// Sets how long a resolved (retried or acknowledged) dead letter is kept before the automatic
+    /// purge deletes it. Dead letters awaiting intervention are never purged.
+    /// </summary>
+    /// <param name="retention">The retention period (default: 30 days)</param>
+    /// <returns>The builder for method chaining</returns>
+    public SchedulerConfigurationBuilder DeadLetterRetentionPeriod(TimeSpan retention)
+    {
+        _configuration.DeadLetterRetentionPeriod = retention;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets whether resolved dead letters older than the retention period are deleted
+    /// automatically. The purge reads this on every run, so it can also be turned off or on at
+    /// runtime from the dashboard or the <c>updateScheduler</c> mutation.
+    /// </summary>
+    /// <param name="purge">True to purge resolved dead letters (default: true)</param>
+    /// <returns>The builder for method chaining</returns>
+    public SchedulerConfigurationBuilder AutoPurgeDeadLetters(bool purge = true)
+    {
+        _configuration.AutoPurgeDeadLetters = purge;
+        return this;
+    }
+
+    /// <summary>
     /// Sets the timeout after which a Pending job that was never picked up is automatically failed.
     /// </summary>
     /// <param name="timeout">The stale pending timeout (default: 20 minutes)</param>

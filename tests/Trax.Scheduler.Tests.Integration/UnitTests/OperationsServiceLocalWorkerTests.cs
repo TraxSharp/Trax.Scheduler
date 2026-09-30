@@ -3,7 +3,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using NUnit.Framework;
+using Trax.Effect.Data.InMemory.Extensions;
 using Trax.Effect.Data.Services.IDataContextFactory;
+using Trax.Effect.Extensions;
 using Trax.Mediator.Services.TrainDiscovery;
 using Trax.Mediator.Services.TrainExecution;
 using Trax.Scheduler.Configuration;
@@ -15,7 +17,7 @@ namespace Trax.Scheduler.Tests.Integration.UnitTests;
 /// Unit tests that exercise the LocalWorkerOptions branches of
 /// <see cref="OperationsService.UpdateSchedulerConfigAsync"/>. The integration fixture
 /// uses <c>UseInMemoryWorkers()</c> so it never registers <c>LocalWorkerOptions</c>;
-/// these tests construct the service directly with a stubbed instance to cover the
+/// these tests construct the service directly, over an InMemory database, to cover the
 /// branch.
 /// </summary>
 [TestFixture]
@@ -27,14 +29,17 @@ public class OperationsServiceLocalWorkerTests
         out IDataContextProviderFactory factory
     )
     {
-        cfg = new SchedulerConfiguration();
+        cfg = new SchedulerConfiguration { IsSchedulerHost = true };
         workerOpts = new LocalWorkerOptions { WorkerCount = 4 };
-        factory = Substitute.For<IDataContextProviderFactory>();
         var discovery = Substitute.For<ITrainDiscoveryService>();
 
-        // Provide a no-op data context for PersistAsync calls. Use a real InMemory
-        // context if persistence is needed; for change-detection tests below we only
-        // need the singleton mutation path, and a stubbed factory throws if persisted.
+        // A fresh InMemory database per service: the save reads and writes the settings row.
+        factory = new ServiceCollection()
+            .AddLogging()
+            .AddTrax(trax => trax.AddEffects(effects => effects.UseInMemory()))
+            .BuildServiceProvider()
+            .GetRequiredService<IDataContextProviderFactory>();
+
         // These tests exercise scheduler-config mutation, not enqueueing, so the execution
         // service is never called — but it is required rather than optional so that no code
         // path can enqueue without going through authorization.
@@ -52,17 +57,12 @@ public class OperationsServiceLocalWorkerTests
     {
         var service = BuildServiceWithLocalWorkers(out _, out var workerOpts, out _);
 
-        // PersistAsync will throw because the substitute factory has no real DB. The
-        // singleton mutation runs before the persistence call, so the worker count
-        // change still happens.
-        try
-        {
-            await service.UpdateSchedulerConfigAsync(
-                new UpdateSchedulerConfigInput(LocalWorkerCount: 12),
-                CancellationToken.None
-            );
-        }
-        catch { }
+        var result = await service.UpdateSchedulerConfigAsync(
+            new UpdateSchedulerConfigInput(LocalWorkerCount: 12),
+            CancellationToken.None
+        );
+
+        result.Count.Should().Be(1);
 
         workerOpts.WorkerCount.Should().Be(12);
     }
@@ -73,14 +73,10 @@ public class OperationsServiceLocalWorkerTests
         var service = BuildServiceWithLocalWorkers(out _, out var workerOpts, out _);
         workerOpts.WorkerCount = 999; // far from Environment.ProcessorCount
 
-        try
-        {
-            await service.UpdateSchedulerConfigAsync(
-                new UpdateSchedulerConfigInput(ClearLocalWorkerCount: true),
-                CancellationToken.None
-            );
-        }
-        catch { }
+        await service.UpdateSchedulerConfigAsync(
+            new UpdateSchedulerConfigInput(ClearLocalWorkerCount: true),
+            CancellationToken.None
+        );
 
         workerOpts.WorkerCount.Should().Be(Environment.ProcessorCount);
     }
@@ -96,7 +92,6 @@ public class OperationsServiceLocalWorkerTests
             CancellationToken.None
         );
 
-        // No change → no persistence call → no exception from the stubbed factory.
         result.Count.Should().Be(0);
         result.Success.Should().BeTrue();
     }

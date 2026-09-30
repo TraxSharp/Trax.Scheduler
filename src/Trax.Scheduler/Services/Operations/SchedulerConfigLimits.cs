@@ -7,9 +7,10 @@ namespace Trax.Scheduler.Services.Operations;
 /// them, so a bad value can neither be stored nor stop a host that finds one already stored.
 /// </summary>
 /// <remarks>
-/// The bounds come from what consumes each value. A polling or cleanup interval becomes a
-/// <see cref="PeriodicTimer"/>, which throws below 1 ms and above about 49.7 days; the floor is
-/// one second because polling the database faster than that is load, not responsiveness. A
+/// The bounds come from what consumes each value. A polling or cleanup interval is the wait
+/// between two cycles; the ceiling keeps it well inside what a timer accepts (about 49.7 days),
+/// and the floor is one second because polling the database faster than that is load, not
+/// responsiveness. A
 /// timeout or retention is subtracted from the current time, and the job timeout is read as whole
 /// seconds in an <see cref="int"/>, so ten years is the ceiling. Each local worker polls on its own
 /// connection, so more workers than a connection pool holds only queue for connections.

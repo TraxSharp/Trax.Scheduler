@@ -32,13 +32,15 @@ public partial class SchedulerConfigurationBuilder
         ValidateRoutedSubmitters();
 
         _configuration.HasDatabaseProvider = _parentBuilder.HasDatabaseProvider;
+        _configuration.IsSchedulerHost = true;
 
         // Exclude internal scheduler trains from MaxActiveJobs count
         foreach (var name in AdminTrains.FullNames)
             _configuration.ExcludedTrainTypeNames.Add(name);
 
-        // Register the configuration
-        _parentBuilder.ServiceCollection.AddSingleton(_configuration);
+        // Register the configuration. Replace, not Add: AddTraxJobRunner registers an empty one
+        // for a runner-only host, and a host that called it first must still get this one.
+        _parentBuilder.ServiceCollection.Replace(ServiceDescriptor.Singleton(_configuration));
 
         // Liveness tracking: the JobDispatcher stamps this after each successful cycle so a
         // wedged scheduler (up but dispatching nothing) can be detected via
@@ -53,10 +55,9 @@ public partial class SchedulerConfigurationBuilder
         );
 
         // Register the cancellation registry (singleton — shared across all workers)
-        _parentBuilder.ServiceCollection.AddSingleton<
-            ICancellationRegistry,
-            CancellationRegistry
-        >();
+        _parentBuilder.ServiceCollection.Replace(
+            ServiceDescriptor.Singleton<ICancellationRegistry, CancellationRegistry>()
+        );
 
         // Register ITraxScheduler
         _parentBuilder.ServiceCollection.AddScoped<ITraxScheduler, TraxScheduler>();
@@ -66,7 +67,8 @@ public partial class SchedulerConfigurationBuilder
         _parentBuilder.ServiceCollection.AddScoped<IOperationsService, OperationsService>();
 
         // Reads the persisted scheduler_config row at startup and applies it to the
-        // in-memory SchedulerConfiguration singleton.
+        // in-memory SchedulerConfiguration singleton, then keeps checking it so a save made on
+        // any host reaches this one within seconds.
         _parentBuilder.ServiceCollection.AddHostedService<SchedulerConfigBootstrapHostedService>();
 
         // Register IDormantDependentContext with forwarding so both concrete type
@@ -116,6 +118,12 @@ public partial class SchedulerConfigurationBuilder
         else if (_parentBuilder.HasDatabaseProvider)
         {
             // Default: PostgresJobSubmitter + local worker threads
+            if (
+                _parentBuilder.ServiceCollection.Any(d =>
+                    d.ServiceType == typeof(LocalWorkerOptions)
+                )
+            )
+                throw new InvalidOperationException(LocalWorkerOptions.RegisteredTwiceMessage);
             _parentBuilder.ServiceCollection.AddSingleton(_localWorkerOptions);
             _parentBuilder.ServiceCollection.AddScoped<IJobSubmitter, PostgresJobSubmitter>();
             _parentBuilder.ServiceCollection.AddScopedTraxRoute<IJobRunnerTrain, JobRunnerTrain>();
@@ -162,8 +170,9 @@ public partial class SchedulerConfigurationBuilder
                 _parentBuilder.ServiceCollection.AddHostedService<MetadataCleanupPollingService>();
             }
 
-            if (_configuration.AutoPurgeDeadLetters)
-                _parentBuilder.ServiceCollection.AddHostedService<Services.DeadLetterCleanupPollingService.DeadLetterCleanupPollingService>();
+            // Always registered: AutoPurgeDeadLetters can be switched on at runtime, and the
+            // cleanup reads it on every run rather than here.
+            _parentBuilder.ServiceCollection.AddHostedService<Services.DeadLetterCleanupPollingService.DeadLetterCleanupPollingService>();
         }
     }
 

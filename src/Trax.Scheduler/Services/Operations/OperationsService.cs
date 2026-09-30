@@ -1364,154 +1364,103 @@ public class OperationsService : IOperationsService
                 Message: $"Scheduler config not updated: {refusal}"
             );
 
-        var cfg = _schedulerConfiguration;
-        var changed = 0;
+        var target = new SchedulerSettingsTarget(_schedulerConfiguration, _localWorkerOptions);
 
-        // Apply each patch field to the in-memory singleton. `changed` is incremented
-        // only when the value actually differs, so `updated_at` is bumped accurately
-        // and a no-op patch returns Count: 0 with no DB write.
-        if (input.ManifestManagerEnabled is { } v1 && cfg.ManifestManagerEnabled != v1)
-        {
-            cfg.ManifestManagerEnabled = v1;
-            changed++;
-        }
-        if (input.JobDispatcherEnabled is { } v2 && cfg.JobDispatcherEnabled != v2)
-        {
-            cfg.JobDispatcherEnabled = v2;
-            changed++;
-        }
-        if (
-            input.ManifestManagerPollingInterval is { } v3
-            && cfg.ManifestManagerPollingInterval != v3
-        )
-        {
-            cfg.ManifestManagerPollingInterval = v3;
-            changed++;
-        }
-        if (input.JobDispatcherPollingInterval is { } v4 && cfg.JobDispatcherPollingInterval != v4)
-        {
-            cfg.JobDispatcherPollingInterval = v4;
-            changed++;
-        }
-
-        if (input.ClearMaxActiveJobs)
-        {
-            if (cfg.MaxActiveJobs is not null)
-            {
-                cfg.MaxActiveJobs = null;
-                changed++;
-            }
-        }
-        else if (input.MaxActiveJobs is { } maxJobs && cfg.MaxActiveJobs != maxJobs)
-        {
-            cfg.MaxActiveJobs = maxJobs;
-            changed++;
-        }
-
-        if (input.DefaultMaxRetries is { } v5 && cfg.DefaultMaxRetries != v5)
-        {
-            cfg.DefaultMaxRetries = v5;
-            changed++;
-        }
-        if (input.FailureCountWindow is { } window && cfg.FailureCountWindow != window)
-        {
-            cfg.FailureCountWindow = window;
-            changed++;
-        }
-        if (input.DefaultRetryDelay is { } v6 && cfg.DefaultRetryDelay != v6)
-        {
-            cfg.DefaultRetryDelay = v6;
-            changed++;
-        }
-        if (input.RetryBackoffMultiplier is { } v7 && cfg.RetryBackoffMultiplier != v7)
-        {
-            cfg.RetryBackoffMultiplier = v7;
-            changed++;
-        }
-        if (input.MaxRetryDelay is { } v8 && cfg.MaxRetryDelay != v8)
-        {
-            cfg.MaxRetryDelay = v8;
-            changed++;
-        }
-        if (input.DefaultJobTimeout is { } v9 && cfg.DefaultJobTimeout != v9)
-        {
-            cfg.DefaultJobTimeout = v9;
-            changed++;
-        }
-        if (input.StalePendingTimeout is { } v10 && cfg.StalePendingTimeout != v10)
-        {
-            cfg.StalePendingTimeout = v10;
-            changed++;
-        }
-        if (input.RecoverStuckJobsOnStartup is { } v11 && cfg.RecoverStuckJobsOnStartup != v11)
-        {
-            cfg.RecoverStuckJobsOnStartup = v11;
-            changed++;
-        }
-        if (input.DeadLetterRetentionPeriod is { } v12 && cfg.DeadLetterRetentionPeriod != v12)
-        {
-            cfg.DeadLetterRetentionPeriod = v12;
-            changed++;
-        }
-        if (input.AutoPurgeDeadLetters is { } v13 && cfg.AutoPurgeDeadLetters != v13)
-        {
-            cfg.AutoPurgeDeadLetters = v13;
-            changed++;
-        }
-
-        if (_localWorkerOptions is not null)
-        {
-            if (input.ClearLocalWorkerCount)
-            {
-                // LocalWorkerOptions.WorkerCount is non-nullable; "clear" resets to processor count.
-                var def = Environment.ProcessorCount;
-                if (_localWorkerOptions.WorkerCount != def)
-                {
-                    _localWorkerOptions.WorkerCount = def;
-                    changed++;
-                }
-            }
-            else if (input.LocalWorkerCount is { } wc && _localWorkerOptions.WorkerCount != wc)
-            {
-                _localWorkerOptions.WorkerCount = wc;
-                changed++;
-            }
-        }
-
-        if (cfg.MetadataCleanup is not null)
-        {
-            if (
-                input.MetadataCleanupInterval is { } v14
-                && cfg.MetadataCleanup.CleanupInterval != v14
+        // The settings the patch sets. One this host does not have (local workers, metadata
+        // cleanup) is left alone, as it always was.
+        var patch = SchedulerSettings
+            .All.Where(s => s.AppliesTo(target))
+            .Select(s =>
+                s.TryReadPatch(input, out var value) ? (Setting: s, Value: value) : default
             )
-            {
-                cfg.MetadataCleanup.CleanupInterval = v14;
-                changed++;
-            }
-            if (
-                input.MetadataCleanupRetention is { } v15
-                && cfg.MetadataCleanup.RetentionPeriod != v15
+            .Where(p => p.Setting is not null)
+            .ToList();
+
+        if (patch.Count == 0)
+            return new OperationResult(
+                true,
+                Id: SchedulerConfig.SingletonId,
+                Count: 0,
+                Message: "Scheduler config: no changes."
+            );
+
+        // Read the stored row and change only the fields the patch sets. A save used to write
+        // every field of the saving host's configuration, so a save from an API-only host (whose
+        // configuration is the empty one AddTraxJobRunner registers) replaced the scheduler's
+        // settings with defaults, and a save on one scheduler host carried its values for every
+        // field to the others.
+        using var db = await _dataContextFactory.CreateDbContextAsync(ct);
+        var row = await db.SchedulerConfigs.FindAsync(
+            new object[] { SchedulerConfig.SingletonId },
+            ct
+        );
+
+        // A field counts as changed when the patch differs from what the scheduler runs with:
+        // the stored value when the row sets it, this host's value otherwise.
+        var changes = patch
+            .Where(p =>
+                !Equals(
+                    row is not null && p.Setting.TryReadRow(row, out var stored)
+                        ? stored
+                        : p.Setting.ReadLive(target),
+                    p.Value
+                )
             )
+            .ToList();
+
+        // A live-only setting (no column yet) changes this host and is never written.
+        var stored = changes.Where(c => c.Setting.IsPersisted).ToList();
+
+        if (stored.Count > 0)
+        {
+            if (row is null)
             {
-                cfg.MetadataCleanup.RetentionPeriod = v15;
-                changed++;
+                // The row stores every setting, so creating it records a value for each. Only a
+                // host running the scheduler knows the values the scheduler runs with; an API-only
+                // host would store its defaults, which every scheduler then applies.
+                if (!_schedulerConfiguration.IsSchedulerHost)
+                    return new OperationResult(
+                        false,
+                        Id: SchedulerConfig.SingletonId,
+                        Message: "Scheduler config not updated: no scheduler settings have been "
+                            + "saved yet, and this host does not run the scheduler, so it cannot tell "
+                            + "which values the scheduler runs with for the settings this change "
+                            + "leaves alone. Make the first change on a host that calls AddScheduler."
+                    );
+
+                // We use DbSet.Add directly (rather than db.Track) because Track infers
+                // Added/Modified from `Id > 0`, which would misclassify the singleton row
+                // (Id is fixed at 1) as an update on first persist.
+                row = new SchedulerConfig { Id = SchedulerConfig.SingletonId };
+                foreach (var setting in SchedulerSettings.All.Where(s => s.AppliesTo(target)))
+                    setting.WriteRow(row, setting.ReadLive(target));
+                db.SchedulerConfigs.Add(row);
             }
+
+            foreach (var (setting, value) in stored)
+                setting.WriteRow(row, value);
+            row.UpdatedAt = DateTime.UtcNow;
+
+            await db.SaveChanges(ct);
         }
+
+        // This host applies the patch at once; every scheduler host, this one included, also
+        // picks the saved row up on its next settings refresh.
+        foreach (var (setting, value) in patch)
+            if (!Equals(setting.ReadLive(target), value))
+                setting.WriteLive(target, value);
 
         // No-op patches skip the DB write entirely so `updated_at` only moves on real changes.
-        if (changed > 0)
-        {
-            await PersistAsync(ct);
+        if (changes.Count > 0)
             _changeSignal?.Notify(ChangeDomain.SchedulerConfig);
-        }
 
         return new OperationResult(
             true,
             Id: SchedulerConfig.SingletonId,
-            Count: changed,
-            Message: changed == 0
+            Count: changes.Count,
+            Message: changes.Count == 0
                 ? "Scheduler config: no changes."
-                : $"Scheduler config: {changed} field(s) updated."
+                : $"Scheduler config: {changes.Count} field(s) updated."
         );
     }
 
@@ -1614,56 +1563,5 @@ public class OperationsService : IOperationsService
             .ToList();
 
         return problems.Count == 0 ? null : string.Join(" ", problems);
-    }
-
-    private async Task PersistAsync(CancellationToken ct)
-    {
-        using var db = await _dataContextFactory.CreateDbContextAsync(ct);
-        var row = await db.SchedulerConfigs.FindAsync(
-            new object[] { SchedulerConfig.SingletonId },
-            ct
-        );
-        var cfg = _schedulerConfiguration;
-
-        // Snapshot the current in-memory state into the row (it's already been
-        // mutated by the caller). Insert if missing, update otherwise.
-        // We use DbSet.Add directly (rather than db.Track) because Track infers
-        // Added/Modified from `Id > 0`, which would misclassify the singleton row
-        // (Id is fixed at 1) as an update on first persist.
-        if (row is null)
-        {
-            row = new SchedulerConfig { Id = SchedulerConfig.SingletonId };
-            CopyInto(row, cfg);
-            row.UpdatedAt = DateTime.UtcNow;
-            db.SchedulerConfigs.Add(row);
-        }
-        else
-        {
-            CopyInto(row, cfg);
-            row.UpdatedAt = DateTime.UtcNow;
-        }
-
-        await db.SaveChanges(ct);
-    }
-
-    private void CopyInto(SchedulerConfig row, SchedulerConfiguration cfg)
-    {
-        row.ManifestManagerEnabled = cfg.ManifestManagerEnabled;
-        row.JobDispatcherEnabled = cfg.JobDispatcherEnabled;
-        row.ManifestManagerPollingInterval = cfg.ManifestManagerPollingInterval;
-        row.JobDispatcherPollingInterval = cfg.JobDispatcherPollingInterval;
-        row.MaxActiveJobs = cfg.MaxActiveJobs;
-        row.DefaultMaxRetries = cfg.DefaultMaxRetries;
-        row.DefaultRetryDelay = cfg.DefaultRetryDelay;
-        row.RetryBackoffMultiplier = cfg.RetryBackoffMultiplier;
-        row.MaxRetryDelay = cfg.MaxRetryDelay;
-        row.DefaultJobTimeout = cfg.DefaultJobTimeout;
-        row.StalePendingTimeout = cfg.StalePendingTimeout;
-        row.RecoverStuckJobsOnStartup = cfg.RecoverStuckJobsOnStartup;
-        row.DeadLetterRetentionPeriod = cfg.DeadLetterRetentionPeriod;
-        row.AutoPurgeDeadLetters = cfg.AutoPurgeDeadLetters;
-        row.LocalWorkerCount = _localWorkerOptions?.WorkerCount;
-        row.MetadataCleanupInterval = cfg.MetadataCleanup?.CleanupInterval;
-        row.MetadataCleanupRetention = cfg.MetadataCleanup?.RetentionPeriod;
     }
 }

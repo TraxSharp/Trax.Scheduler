@@ -86,18 +86,21 @@ public static class JobRunnerExtensions
             sp.GetService<TimeProvider>()
         ));
 
-        // Empty scheduler configuration (no manifests, no polling)
-        services.AddSingleton(new SchedulerConfiguration());
+        // A runner-only host gets an empty scheduler configuration (no manifests, no polling).
+        // Everything below that AddScheduler also registers is TryAdd: a scheduler host that also
+        // maps a runner endpoint keeps the configuration, registry and services it configured,
+        // whichever of the two calls came first.
+        services.TryAddSingleton(new SchedulerConfiguration());
 
         // Cancellation registry (singleton — shared across all requests)
-        services.AddSingleton<ICancellationRegistry, CancellationRegistry>();
+        services.TryAddSingleton<ICancellationRegistry, CancellationRegistry>();
 
         // Runtime scheduler interface
-        services.AddScoped<ITraxScheduler, TraxScheduler>();
+        services.TryAddScoped<ITraxScheduler, TraxScheduler>();
 
         // Dependent train context
-        services.AddScoped<DormantDependentContext>();
-        services.AddScoped<IDormantDependentContext>(sp =>
+        services.TryAddScoped<DormantDependentContext>();
+        services.TryAddScoped<IDormantDependentContext>(sp =>
             sp.GetRequiredService<DormantDependentContext>()
         );
 
