@@ -400,21 +400,9 @@ public class TraxScheduler(
 
         var manifest = await GetManifestByExternalIdAsync(context, externalId, ct);
 
-        var outcome = await TriggerManifestAsync(context, manifest, scheduledAt: null, ct);
+        var outcome = await TriggerManifestAsync(context, manifest, runAt: DateTime.UtcNow, ct);
         changeSignal?.Notify(ChangeDomain.WorkQueue);
-
-        if (outcome.Created)
-            logger.LogInformation(
-                "Queued manifest {ExternalId} for execution (WorkQueueId: {WorkQueueId})",
-                externalId,
-                outcome.WorkQueueId
-            );
-        else
-            logger.LogInformation(
-                "Manifest {ExternalId} already has a queued entry (WorkQueueId: {WorkQueueId}); the trigger released it and queued nothing more",
-                externalId,
-                outcome.WorkQueueId
-            );
+        LogTrigger(externalId, outcome);
     }
 
     /// <inheritdoc />
@@ -428,48 +416,71 @@ public class TraxScheduler(
 
         var manifest = await GetManifestByExternalIdAsync(context, externalId, ct);
 
-        var scheduledAt = DateTime.UtcNow + delay;
-        var outcome = await TriggerManifestAsync(context, manifest, scheduledAt, ct);
+        var outcome = await TriggerManifestAsync(context, manifest, DateTime.UtcNow + delay, ct);
         changeSignal?.Notify(ChangeDomain.WorkQueue);
+        LogTrigger(externalId, outcome);
+    }
 
+    private void LogTrigger(string externalId, TriggerOutcome outcome)
+    {
         if (outcome.Created)
             logger.LogInformation(
-                "Queued delayed manifest {ExternalId} for execution at {ScheduledAt} (WorkQueueId: {WorkQueueId})",
+                "Queued manifest {ExternalId} for execution at {ScheduledAt} (WorkQueueId: {WorkQueueId})",
                 externalId,
-                scheduledAt,
+                outcome.ScheduledAt,
                 outcome.WorkQueueId
+            );
+        else if (outcome.MovedForward)
+            logger.LogInformation(
+                "Manifest {ExternalId} already had a queued entry (WorkQueueId: {WorkQueueId}) due later; the trigger moved it forward to {ScheduledAt} and queued nothing more",
+                externalId,
+                outcome.WorkQueueId,
+                outcome.ScheduledAt
             );
         else
             logger.LogInformation(
-                "Manifest {ExternalId} already has a queued entry (WorkQueueId: {WorkQueueId}); the delayed trigger released it and queued nothing more",
+                "Manifest {ExternalId} already has a queued entry (WorkQueueId: {WorkQueueId}) due at {ScheduledAt}; the trigger released it and queued nothing more",
                 externalId,
-                outcome.WorkQueueId
+                outcome.WorkQueueId,
+                outcome.ScheduledAt
             );
     }
 
-    /// <summary>What a trigger did: queued a new entry, or found the manifest's queued one.</summary>
-    private readonly record struct TriggerOutcome(long WorkQueueId, bool Created);
+    /// <summary>
+    /// What a trigger did: queued a new entry, or found the manifest's queued one and, when that
+    /// entry was due later than the trigger asked, moved it forward. <see cref="ScheduledAt"/> is
+    /// when the entry is now due; null means immediately.
+    /// </summary>
+    private readonly record struct TriggerOutcome(
+        long WorkQueueId,
+        bool Created,
+        bool MovedForward,
+        DateTime? ScheduledAt
+    );
 
     /// <summary>
-    /// Queues one entry for <paramref name="manifest"/>, marked as asked for by name
-    /// (<see cref="WorkQueue.IsExplicitTrigger"/>) so it runs even while the manifest is disabled.
-    /// The database holds at most one queued entry per manifest
+    /// Queues one entry for <paramref name="manifest"/>, due at <paramref name="runAt"/> and
+    /// marked as asked for by name (<see cref="WorkQueue.IsExplicitTrigger"/>) so it runs even
+    /// while the manifest is disabled. The database holds at most one queued entry per manifest
     /// (<c>ix_work_queue_unique_queued_manifest</c>), so when one is already there nothing more is
-    /// queued and that entry is marked instead: the trigger asked for a run, and the entry already
-    /// queued is that run. The check and the insert are two statements, so an entry the
+    /// queued and that entry becomes the triggered run instead: it is marked the same way, and an
+    /// entry due later than <paramref name="runAt"/> (a retry waiting out its backoff, say) is
+    /// brought forward to it. The check and the insert are two statements, so an entry the
     /// ManifestManager or another trigger queues between them is recognised by the insert's
     /// failure and treated the same way; any other failed save is thrown.
     /// </summary>
     private static async Task<TriggerOutcome> TriggerManifestAsync(
         IDataContext context,
         Manifest manifest,
-        DateTime? scheduledAt,
+        DateTime runAt,
         CancellationToken ct
     )
     {
-        if (await ReleaseQueuedEntryAsync(context, manifest.Id, ct) is { } queuedId)
-            return new TriggerOutcome(queuedId, Created: false);
+        if (await ReleaseQueuedEntryAsync(context, manifest.Id, runAt, ct) is { } queued)
+            return queued;
 
+        // An immediate trigger stores no time, as it always has; a delayed one stores its time.
+        DateTime? scheduledAt = runAt > DateTime.UtcNow ? runAt : null;
         var entry = WorkQueue.Create(
             new CreateWorkQueue
             {
@@ -487,56 +498,71 @@ public class TraxScheduler(
         try
         {
             await context.SaveChanges(ct);
-            return new TriggerOutcome(entry.Id, Created: true);
+            return new TriggerOutcome(entry.Id, Created: true, MovedForward: false, scheduledAt);
         }
         catch (DbUpdateException)
         {
             // Untracked either way, so a later save on this context does not retry it.
             context.Reset();
 
-            if (await ReleaseQueuedEntryAsync(context, manifest.Id, ct) is { } racedId)
-                return new TriggerOutcome(racedId, Created: false);
+            if (await ReleaseQueuedEntryAsync(context, manifest.Id, runAt, ct) is { } raced)
+                return raced;
 
             throw;
         }
     }
 
     /// <summary>
-    /// Marks the manifest's queued entry, if it has one, as asked for by name, and returns its id.
-    /// Null when the manifest has no queued entry.
+    /// Makes the manifest's queued entry, if it has one, the triggered run: marks it as asked for
+    /// by name and, when it is due later than <paramref name="runAt"/>, brings it forward to that
+    /// time. Null when the manifest has no queued entry.
     /// </summary>
     /// <remarks>
     /// The update is conditional on the entry still being queued, so an entry the dispatcher claims
     /// in the meantime is left as it is: it is already running, which is what the trigger asked
     /// for.
     /// </remarks>
-    private static async Task<long?> ReleaseQueuedEntryAsync(
+    private static async Task<TriggerOutcome?> ReleaseQueuedEntryAsync(
         IDataContext context,
         long manifestId,
+        DateTime runAt,
         CancellationToken ct
     )
     {
-        var queuedId = await context
+        var queued = await context
             .WorkQueues.AsNoTracking()
             .Where(w => w.ManifestId == manifestId && w.Status == WorkQueueStatus.Queued)
-            .Select(w => (long?)w.Id)
+            .Select(w => new { w.Id, w.ScheduledAt })
             .FirstOrDefaultAsync(ct);
 
-        if (queuedId is not { } id)
+        if (queued is null)
             return null;
 
-        var unmarked = context.WorkQueues.Where(w =>
-            w.Id == id && w.Status == WorkQueueStatus.Queued && !w.IsExplicitTrigger
+        var moveForward = queued.ScheduledAt > runAt;
+        var dueAt = moveForward ? runAt : queued.ScheduledAt;
+
+        var entry = context.WorkQueues.Where(w =>
+            w.Id == queued.Id && w.Status == WorkQueueStatus.Queued
         );
         if (context.SupportsSetUpdates())
-            await unmarked.ExecuteUpdateAsync(
-                s => s.SetProperty(w => w.IsExplicitTrigger, true),
+            await entry.ExecuteUpdateAsync(
+                s =>
+                    s.SetProperty(w => w.IsExplicitTrigger, true)
+                        .SetProperty(w => w.ScheduledAt, dueAt),
                 ct
             );
         else
-            await context.UpdateEachAsync(unmarked, w => w.IsExplicitTrigger = true, ct);
+            await context.UpdateEachAsync(
+                entry,
+                w =>
+                {
+                    w.IsExplicitTrigger = true;
+                    w.ScheduledAt = dueAt;
+                },
+                ct
+            );
 
-        return id;
+        return new TriggerOutcome(queued.Id, Created: false, moveForward, dueAt);
     }
 
     /// <inheritdoc />
@@ -614,9 +640,10 @@ public class TraxScheduler(
 
         // One save per manifest, so a manifest that already has a queued entry is skipped rather
         // than failing the whole group on the unique index.
+        var now = DateTime.UtcNow;
         var queued = 0;
         foreach (var manifest in manifests)
-            if ((await TriggerManifestAsync(context, manifest, scheduledAt: null, ct)).Created)
+            if ((await TriggerManifestAsync(context, manifest, runAt: now, ct)).Created)
                 queued++;
 
         if (queued > 0)

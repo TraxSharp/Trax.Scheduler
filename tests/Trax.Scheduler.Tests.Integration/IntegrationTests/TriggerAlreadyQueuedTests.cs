@@ -345,4 +345,91 @@ public class TriggerAlreadyQueuedTests
             ) => messages.Enqueue(formatter(state, exception));
         }
     }
+
+    [Test]
+    public async Task Triggering_a_manifest_whose_retry_waits_out_its_backoff_brings_the_retry_forward_to_now()
+    {
+        var logs = new CapturingLoggerProvider();
+        await using var fx = await CreateAsync(logs);
+        await fx.MaterializePendingManifestsAsync();
+        var retryId = await QueueRetryAsync(fx, "aq-a", DateTime.UtcNow.AddMinutes(30));
+
+        var before = DateTime.UtcNow;
+        await fx.Scheduler.TriggerAsync("aq-a");
+
+        fx.DataContext.Reset();
+        var retry = await fx
+            .DataContext.WorkQueues.AsNoTracking()
+            .SingleAsync(w => w.Id == retryId);
+        retry.Status.Should().Be(WorkQueueStatus.Queued);
+        retry
+            .ScheduledAt.Should()
+            .NotBeNull()
+            .And.BeOnOrBefore(DateTime.UtcNow)
+            .And.BeOnOrAfter(before.AddSeconds(-1));
+        (await QueuedPerManifest(fx)).Should().Equal(new Dictionary<string, int> { ["aq-a"] = 1 });
+        logs.Messages.Should()
+            .Contain(m => m.Contains("moved it forward"), "the trigger says what it did");
+    }
+
+    [Test]
+    public async Task A_delayed_trigger_brings_a_later_retry_forward_to_the_requested_time()
+    {
+        await using var fx = await CreateAsync();
+        await fx.MaterializePendingManifestsAsync();
+        var retryId = await QueueRetryAsync(fx, "aq-a", DateTime.UtcNow.AddMinutes(30));
+
+        await fx.Scheduler.TriggerAsync("aq-a", TimeSpan.FromMinutes(5));
+
+        fx.DataContext.Reset();
+        var retry = await fx
+            .DataContext.WorkQueues.AsNoTracking()
+            .SingleAsync(w => w.Id == retryId);
+        retry
+            .ScheduledAt.Should()
+            .BeCloseTo(DateTime.UtcNow.AddMinutes(5), TimeSpan.FromMinutes(1));
+    }
+
+    [Test]
+    public async Task A_delayed_trigger_leaves_an_entry_due_sooner_at_its_own_time()
+    {
+        await using var fx = await CreateAsync();
+        await fx.MaterializePendingManifestsAsync();
+        var dueAt = DateTime.UtcNow.AddMinutes(2);
+        var retryId = await QueueRetryAsync(fx, "aq-a", dueAt);
+
+        await fx.Scheduler.TriggerAsync("aq-a", TimeSpan.FromMinutes(30));
+
+        fx.DataContext.Reset();
+        var retry = await fx
+            .DataContext.WorkQueues.AsNoTracking()
+            .SingleAsync(w => w.Id == retryId);
+        retry.ScheduledAt.Should().BeCloseTo(dueAt, TimeSpan.FromMilliseconds(1));
+    }
+
+    /// <summary>A retry the ManifestManager queued with a backoff, due at <paramref name="dueAt"/>.</summary>
+    private static async Task<long> QueueRetryAsync(
+        SchedulerE2EFixture fx,
+        string externalId,
+        DateTime dueAt
+    )
+    {
+        var manifest = await fx
+            .DataContext.Manifests.AsNoTracking()
+            .FirstAsync(m => m.ExternalId == externalId);
+        var entry = WorkQueue.Create(
+            new CreateWorkQueue
+            {
+                TrainName = manifest.Name,
+                Input = manifest.Properties,
+                InputTypeName = manifest.PropertyTypeName,
+                ManifestId = manifest.Id,
+                ScheduledAt = dueAt,
+            }
+        );
+        await fx.DataContext.Track(entry);
+        await fx.DataContext.SaveChanges(CancellationToken.None);
+        fx.DataContext.Reset();
+        return entry.Id;
+    }
 }

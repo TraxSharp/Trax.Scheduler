@@ -174,8 +174,9 @@ public interface ITraxScheduler
     /// The job's normal schedule continues unaffected. The run is one someone asked for by name,
     /// so it runs even while the manifest is disabled (a disabled manifest group still holds it).
     /// A manifest holds at most one queued work queue entry, so when it already has one, nothing
-    /// more is queued and that entry is marked as asked for by name instead, which releases it if
-    /// the manifest is disabled.
+    /// more is queued and that entry becomes the triggered run: it is marked as asked for by name,
+    /// which releases it if the manifest is disabled, and an entry due later (a retry waiting out
+    /// its backoff, or a delayed trigger) is brought forward to now. The log says which happened.
     /// </remarks>
     /// <exception cref="InvalidOperationException">
     /// Thrown when no manifest with the specified ExternalId exists.
@@ -194,8 +195,9 @@ public interface ITraxScheduler
     /// The JobDispatcher will skip the entry until <c>ScheduledAt &lt;= now</c>.
     /// The manifest's normal schedule continues unaffected. Like the immediate trigger, the run
     /// is one someone asked for by name and runs even while the manifest is disabled. When the
-    /// manifest already has a queued entry, nothing more is queued, that entry keeps its own time,
-    /// and it is marked as asked for by name.
+    /// manifest already has a queued entry, nothing more is queued and that entry is marked as
+    /// asked for by name; if it is due later than <c>DateTime.UtcNow + delay</c> it is brought
+    /// forward to that time, and if it is due sooner it keeps its own time.
     /// </remarks>
     /// <exception cref="InvalidOperationException">
     /// Thrown when no manifest with the specified ExternalId exists.
@@ -259,7 +261,9 @@ public interface ITraxScheduler
     /// <remarks>
     /// Only enabled manifests with non-dependent schedule types (None, Cron, Interval, OnDemand)
     /// are queued, each entry marked as asked for by name the way <see cref="TriggerAsync(string, CancellationToken)"/>
-    /// marks one, so disabling a manifest after the group trigger does not hold its run. Dependent and DormantDependent manifests are skipped because they rely on
+    /// marks one, so disabling a manifest after the group trigger does not hold its run. A member
+    /// that already has a queued entry is not counted, but that entry is marked the same way and
+    /// brought forward to now if it was due later. Dependent and DormantDependent manifests are skipped because they rely on
     /// parent completion and may lack standalone inputs.
     /// </remarks>
     Task<int> TriggerGroupAsync(long groupId, CancellationToken ct = default);
