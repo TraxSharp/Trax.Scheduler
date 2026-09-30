@@ -28,6 +28,7 @@ public partial class SchedulerConfigurationBuilder
     internal void Build()
     {
         ValidateNoCyclicGroupDependencies();
+        ValidateSeedDeclarations();
         ValidateSubmitterRequirements();
         ValidateRoutedSubmitters();
 

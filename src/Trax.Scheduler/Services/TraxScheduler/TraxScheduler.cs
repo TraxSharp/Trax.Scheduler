@@ -52,9 +52,7 @@ public class TraxScheduler(
             schedule,
             resolved.ManifestOptions,
             groupId: resolved.GroupId ?? externalId,
-            groupPriority: resolved.GroupPriority,
-            groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-            groupIsEnabled: resolved.GroupEnabled,
+            group: resolved.Group,
             ct: ct
         );
 
@@ -114,9 +112,7 @@ public class TraxScheduler(
                     schedule,
                     itemOptions,
                     groupId: effectiveGroupId,
-                    groupPriority: resolved.GroupPriority,
-                    groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-                    groupIsEnabled: resolved.GroupEnabled,
+                    group: resolved.Group,
                     ct: ct
                 );
                 results.Add(manifest);
@@ -183,9 +179,7 @@ public class TraxScheduler(
             parentManifest.Id,
             resolved.ManifestOptions,
             groupId: resolved.GroupId ?? externalId,
-            groupPriority: resolved.GroupPriority,
-            groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-            groupIsEnabled: resolved.GroupEnabled,
+            group: resolved.Group,
             ct: ct
         );
 
@@ -265,9 +259,7 @@ public class TraxScheduler(
                     parentManifest.Id,
                     itemOptions,
                     groupId: effectiveGroupId,
-                    groupPriority: resolved.GroupPriority,
-                    groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-                    groupIsEnabled: resolved.GroupEnabled,
+                    group: resolved.Group,
                     ct: ct
                 );
                 results.Add(manifest);
@@ -426,9 +418,7 @@ public class TraxScheduler(
             DateTime.UtcNow + delay,
             resolved.ManifestOptions,
             groupId: resolved.GroupId ?? externalId,
-            groupPriority: resolved.GroupPriority,
-            groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-            groupIsEnabled: resolved.GroupEnabled,
+            group: resolved.Group,
             ct: ct
         );
 
@@ -564,9 +554,7 @@ public class TraxScheduler(
             schedule,
             resolved.ManifestOptions,
             groupId: resolved.GroupId ?? externalId,
-            groupPriority: resolved.GroupPriority,
-            groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-            groupIsEnabled: resolved.GroupEnabled,
+            group: resolved.Group,
             ct: ct
         );
 
@@ -604,9 +592,7 @@ public class TraxScheduler(
             DateTime.UtcNow + delay,
             resolved.ManifestOptions,
             groupId: resolved.GroupId ?? externalId,
-            groupPriority: resolved.GroupPriority,
-            groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-            groupIsEnabled: resolved.GroupEnabled,
+            group: resolved.Group,
             ct: ct
         );
 
@@ -655,9 +641,7 @@ public class TraxScheduler(
             parentManifest.Id,
             resolved.ManifestOptions,
             groupId: resolved.GroupId ?? externalId,
-            groupPriority: resolved.GroupPriority,
-            groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-            groupIsEnabled: resolved.GroupEnabled,
+            group: resolved.Group,
             ct: ct
         );
 
@@ -718,9 +702,7 @@ public class TraxScheduler(
                     schedule,
                     itemOptions,
                     groupId: effectiveGroupId,
-                    groupPriority: resolved.GroupPriority,
-                    groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-                    groupIsEnabled: resolved.GroupEnabled,
+                    group: resolved.Group,
                     ct: ct
                 );
                 results.Add(manifest);
@@ -813,9 +795,7 @@ public class TraxScheduler(
                     parentManifest.Id,
                     itemOptions,
                     groupId: effectiveGroupId,
-                    groupPriority: resolved.GroupPriority,
-                    groupMaxActiveJobs: resolved.GroupMaxActiveJobs,
-                    groupIsEnabled: resolved.GroupEnabled,
+                    group: resolved.Group,
                     ct: ct
                 );
                 results.Add(manifest);
@@ -1254,12 +1234,21 @@ public class TraxScheduler(
 
         var manifestOptions = opts.ToManifestOptions();
 
+        // A group of the manifest's own (no group name) has no other members to disagree with,
+        // so the manifest's stated priority is the group's too.
+        var ownsGroup = opts._groupId is null;
+        var group = opts._groupOptions;
+
         return new ResolvedOptions(
             ManifestOptions: manifestOptions,
             GroupId: opts._groupId,
-            GroupPriority: opts._groupOptions?._priority ?? manifestOptions.Priority,
-            GroupMaxActiveJobs: opts._groupOptions?._maxActiveJobs,
-            GroupEnabled: opts._groupOptions?._isEnabled ?? true,
+            Group: new ManifestGroupSeed(
+                Priority: group?._priority ?? (ownsGroup ? opts._priority : null),
+                MaxActiveJobsStated: group?._maxActiveJobsStated ?? false,
+                MaxActiveJobs: group?._maxActiveJobs,
+                IsEnabled: group?._isEnabled,
+                PriorityIfNew: manifestOptions.Priority
+            ),
             PrunePrefix: opts._prunePrefix
         );
     }
@@ -1359,9 +1348,7 @@ public class TraxScheduler(
     private record ResolvedOptions(
         ManifestOptions ManifestOptions,
         string? GroupId,
-        int GroupPriority,
-        int? GroupMaxActiveJobs,
-        bool GroupEnabled,
+        ManifestGroupSeed Group,
         string? PrunePrefix
     );
 }

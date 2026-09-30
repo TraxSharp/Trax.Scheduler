@@ -33,9 +33,17 @@ public class ManifestOptions
     /// </summary>
     /// <remarks>
     /// When false, the ManifestManager will skip this manifest during polling.
-    /// This allows pausing jobs without deleting them. Defaults to true.
+    /// This allows pausing jobs without deleting them. Defaults to true. Written to an existing
+    /// manifest only when set: left unset, a re-seed keeps the manifest's current state, including
+    /// a runtime disable.
     /// </remarks>
-    public bool IsEnabled { get; set; } = true;
+    public bool IsEnabled
+    {
+        get => _isEnabled ?? true;
+        set => _isEnabled = value;
+    }
+
+    internal bool? _isEnabled;
 
     /// <summary>
     /// Gets or sets the maximum retry attempts before dead-lettering.

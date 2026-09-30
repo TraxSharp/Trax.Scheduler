@@ -8,6 +8,12 @@ namespace Trax.Scheduler.Configuration;
 /// Replaces the separate <c>configure</c>, <c>groupId</c>, <c>priority</c>, and <c>prunePrefix</c>
 /// optional parameters with a single <c>Action&lt;ScheduleOptions&gt;</c> callback.
 /// </summary>
+/// <remarks>
+/// Every host start schedules its manifests again. The schedule, the input and the train always
+/// come from code. <see cref="Enabled"/> and the group settings are written only when the options
+/// state them, so a manifest or group an operator disabled or retuned at runtime keeps that state
+/// across restarts unless the code says otherwise.
+/// </remarks>
 /// <example>
 /// <code>
 /// scheduler.Schedule&lt;IMyTrain&gt;(
@@ -25,8 +31,9 @@ namespace Trax.Scheduler.Configuration;
 public class ScheduleOptions
 {
     // Manifest-level state
-    internal int _priority;
-    internal bool _isEnabled = true;
+    // Nullable where "not stated" differs from any value: see the class remarks.
+    internal int? _priority;
+    internal bool? _isEnabled;
     internal int _maxRetries = 3;
     internal TimeSpan? _timeout;
     internal bool _isDormant;
@@ -57,6 +64,10 @@ public class ScheduleOptions
     /// <summary>
     /// Sets whether this manifest is enabled for scheduling.
     /// </summary>
+    /// <remarks>
+    /// Stated, it is written on every seed. Left unstated, a new manifest is enabled and an existing
+    /// one keeps whatever it is, including a runtime disable.
+    /// </remarks>
     public ScheduleOptions Enabled(bool enabled)
     {
         _isEnabled = enabled;
@@ -203,8 +214,8 @@ public class ScheduleOptions
     internal ManifestOptions ToManifestOptions() =>
         new()
         {
-            Priority = _priority,
-            IsEnabled = _isEnabled,
+            Priority = _priority ?? 0,
+            _isEnabled = _isEnabled,
             MaxRetries = _maxRetries,
             Timeout = _timeout,
             IsDormant = _isDormant,

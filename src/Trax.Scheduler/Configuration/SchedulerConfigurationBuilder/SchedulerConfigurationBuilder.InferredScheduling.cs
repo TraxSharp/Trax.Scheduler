@@ -28,6 +28,8 @@ public partial class SchedulerConfigurationBuilder
         options?.Invoke(resolved);
         _externalIdToGroupId[externalId] = resolved._groupId ?? externalId;
 
+        DeclareGroup(externalId, resolved);
+
         _configuration.PendingManifests.Add(
             new PendingManifest
             {
@@ -77,6 +79,8 @@ public partial class SchedulerConfigurationBuilder
         _externalIdToGroupId[externalId] = resolved._groupId ?? externalId;
         _dependencyEdges.Add((parentExternalId, externalId));
 
+        DeclareGroup(externalId, resolved);
+
         _configuration.PendingManifests.Add(
             new PendingManifest
             {
@@ -125,6 +129,8 @@ public partial class SchedulerConfigurationBuilder
         _externalIdToGroupId[externalId] = resolved._groupId ?? externalId;
         _dependencyEdges.Add((parentExternalId, externalId));
 
+        DeclareGroup(externalId, resolved);
+
         _configuration.PendingManifests.Add(
             new PendingManifest
             {
@@ -168,6 +174,8 @@ public partial class SchedulerConfigurationBuilder
         var resolved = new ScheduleOptions();
         options?.Invoke(resolved);
         _externalIdToGroupId[externalId] = resolved._groupId ?? externalId;
+
+        DeclareGroup(externalId, resolved);
 
         _configuration.PendingManifests.Add(
             new PendingManifest
@@ -217,6 +225,8 @@ public partial class SchedulerConfigurationBuilder
 
         foreach (var item in itemList)
             _externalIdToGroupId[item.Id] = resolved._groupId ?? item.Id;
+
+        DeclareBatchGroup(firstId, resolved);
 
         _configuration.PendingManifests.Add(
             new PendingManifest
@@ -310,6 +320,8 @@ public partial class SchedulerConfigurationBuilder
             _dependencyEdges.Add((parentExtId, item.Id));
         }
 
+        DeclareBatchGroup(firstId, resolved);
+
         _configuration.PendingManifests.Add(
             new PendingManifest
             {
@@ -390,6 +402,8 @@ public partial class SchedulerConfigurationBuilder
             _externalIdToGroupId[item.Id] = resolved._groupId ?? item.Id;
             _dependencyEdges.Add((item.DependsOn, item.Id));
         }
+
+        DeclareBatchGroup(firstId, resolved);
 
         _configuration.PendingManifests.Add(
             new PendingManifest

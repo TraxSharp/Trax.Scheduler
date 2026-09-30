@@ -36,7 +36,7 @@ public class DataContextExtensionsCoverageTests : TestSetup
             IntervalSchedule,
             new ManifestOptions { Priority = 1, MaxRetries = 1 },
             groupId: "g1",
-            groupPriority: 1
+            group: new ManifestGroupSeed(PriorityIfNew: 1)
         );
         await DataContext.SaveChanges(CancellationToken.None);
         DataContext.Reset();
@@ -55,7 +55,7 @@ public class DataContextExtensionsCoverageTests : TestSetup
                 MisfireThreshold = TimeSpan.FromMinutes(3),
             },
             groupId: "g1",
-            groupPriority: 1
+            group: new ManifestGroupSeed(PriorityIfNew: 1)
         );
         await DataContext.SaveChanges(CancellationToken.None);
 
@@ -83,7 +83,7 @@ public class DataContextExtensionsCoverageTests : TestSetup
             IntervalSchedule,
             new ManifestOptions(),
             groupId: "dep-group",
-            groupPriority: 0
+            group: new ManifestGroupSeed(PriorityIfNew: 0)
         );
         await DataContext.SaveChanges(CancellationToken.None);
 
@@ -97,7 +97,7 @@ public class DataContextExtensionsCoverageTests : TestSetup
             parent.Id,
             new ManifestOptions { IsDormant = false, Priority = 2 },
             groupId: "dep-group",
-            groupPriority: 0
+            group: new ManifestGroupSeed(PriorityIfNew: 0)
         );
         await DataContext.SaveChanges(CancellationToken.None);
         DataContext.Reset();
@@ -117,7 +117,7 @@ public class DataContextExtensionsCoverageTests : TestSetup
                 MisfirePolicy = MisfirePolicy.DoNothing,
             },
             groupId: "dep-group",
-            groupPriority: 0
+            group: new ManifestGroupSeed(PriorityIfNew: 0)
         );
         await DataContext.SaveChanges(CancellationToken.None);
 
@@ -150,7 +150,7 @@ public class DataContextExtensionsCoverageTests : TestSetup
             firstAt,
             new ManifestOptions { Priority = 1 },
             groupId: "once-group",
-            groupPriority: 0
+            group: new ManifestGroupSeed(PriorityIfNew: 0)
         );
         await DataContext.SaveChanges(CancellationToken.None);
         DataContext.Reset();
@@ -170,7 +170,7 @@ public class DataContextExtensionsCoverageTests : TestSetup
                 MisfireThreshold = TimeSpan.FromMinutes(1),
             },
             groupId: "once-group",
-            groupPriority: 0
+            group: new ManifestGroupSeed(PriorityIfNew: 0)
         );
         await DataContext.SaveChanges(CancellationToken.None);
 
@@ -205,7 +205,7 @@ public class DataContextExtensionsCoverageTests : TestSetup
                 schedule,
                 new ManifestOptions(),
                 groupId: "var-g",
-                groupPriority: 0
+                group: new ManifestGroupSeed(PriorityIfNew: 0)
             );
         };
 
@@ -228,7 +228,7 @@ public class DataContextExtensionsCoverageTests : TestSetup
                 },
                 new ManifestOptions(),
                 groupId: "var-g2",
-                groupPriority: 0
+                group: new ManifestGroupSeed(PriorityIfNew: 0)
             );
         };
 
@@ -250,7 +250,7 @@ public class DataContextExtensionsCoverageTests : TestSetup
             schedule,
             new ManifestOptions(),
             groupId: "var-g3",
-            groupPriority: 0
+            group: new ManifestGroupSeed(PriorityIfNew: 0)
         );
         await DataContext.SaveChanges(CancellationToken.None);
 
@@ -273,7 +273,7 @@ public class DataContextExtensionsCoverageTests : TestSetup
             },
             new ManifestOptions(),
             groupId: "var-g4",
-            groupPriority: 0
+            group: new ManifestGroupSeed(PriorityIfNew: 0)
         );
         await DataContext.SaveChanges(CancellationToken.None);
         DataContext.Reset();
@@ -285,7 +285,7 @@ public class DataContextExtensionsCoverageTests : TestSetup
             IntervalSchedule,
             new ManifestOptions(),
             groupId: "var-g4",
-            groupPriority: 0
+            group: new ManifestGroupSeed(PriorityIfNew: 0)
         );
         await DataContext.SaveChanges(CancellationToken.None);
 
@@ -303,17 +303,23 @@ public class DataContextExtensionsCoverageTests : TestSetup
 
         var firstId = await DataContext.EnsureManifestGroupAsync(
             name,
-            priority: 1,
-            maxActiveJobs: 5,
-            isEnabled: true
+            new ManifestGroupSeed(
+                Priority: 1,
+                MaxActiveJobsStated: true,
+                MaxActiveJobs: 5,
+                IsEnabled: true
+            )
         );
         await DataContext.SaveChanges(CancellationToken.None);
 
         var secondId = await DataContext.EnsureManifestGroupAsync(
             name,
-            priority: 9,
-            maxActiveJobs: 10,
-            isEnabled: false
+            new ManifestGroupSeed(
+                Priority: 9,
+                MaxActiveJobsStated: true,
+                MaxActiveJobs: 10,
+                IsEnabled: false
+            )
         );
         await DataContext.SaveChanges(CancellationToken.None);
 
@@ -323,6 +329,31 @@ public class DataContextExtensionsCoverageTests : TestSetup
             .FirstAsync(g => g.Id == firstId);
         reloaded.Priority.Should().Be(9);
         reloaded.MaxActiveJobs.Should().Be(10);
+        reloaded.IsEnabled.Should().BeFalse();
+    }
+
+    [Test]
+    public async Task EnsureManifestGroupAsync_ExistingGroup_KeepsSettingsTheSeedDoesNotState()
+    {
+        var name = $"keep-{Guid.NewGuid():N}";
+
+        var id = await DataContext.EnsureManifestGroupAsync(
+            name,
+            new ManifestGroupSeed(
+                Priority: 4,
+                MaxActiveJobsStated: true,
+                MaxActiveJobs: 3,
+                IsEnabled: false
+            )
+        );
+        await DataContext.SaveChanges(CancellationToken.None);
+
+        await DataContext.EnsureManifestGroupAsync(name, new ManifestGroupSeed(PriorityIfNew: 30));
+        await DataContext.SaveChanges(CancellationToken.None);
+
+        var reloaded = await DataContext.ManifestGroups.AsNoTracking().FirstAsync(g => g.Id == id);
+        reloaded.Priority.Should().Be(4);
+        reloaded.MaxActiveJobs.Should().Be(3);
         reloaded.IsEnabled.Should().BeFalse();
     }
 

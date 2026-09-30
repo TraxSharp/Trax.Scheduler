@@ -63,6 +63,8 @@ public partial class SchedulerConfigurationBuilder
             _externalIdToGroupId[extId] = resolved._groupId ?? extId;
         }
 
+        DeclareBatchGroup(firstId, resolved);
+
         _configuration.PendingManifests.Add(
             new PendingManifest
             {
@@ -198,6 +200,8 @@ public partial class SchedulerConfigurationBuilder
             _dependencyEdges.Add((parentExtId, extId));
         }
 
+        DeclareBatchGroup(firstId, resolved);
+
         _configuration.PendingManifests.Add(
             new PendingManifest
             {
@@ -329,6 +333,8 @@ public partial class SchedulerConfigurationBuilder
             _externalIdToGroupId[extId] = resolved._groupId ?? extId;
             _dependencyEdges.Add((rootExternalId, extId));
         }
+
+        DeclareBatchGroup(firstId, resolved);
 
         _configuration.PendingManifests.Add(
             new PendingManifest
@@ -462,6 +468,8 @@ public partial class SchedulerConfigurationBuilder
             _externalIdToGroupId[extId] = resolved._groupId ?? extId;
             _dependencyEdges.Add((parentExtId, extId));
         }
+
+        DeclareBatchGroup(firstId, resolved);
 
         _configuration.PendingManifests.Add(
             new PendingManifest
