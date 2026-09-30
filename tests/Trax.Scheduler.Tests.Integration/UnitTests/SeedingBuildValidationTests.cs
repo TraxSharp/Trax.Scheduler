@@ -14,7 +14,11 @@ namespace Trax.Scheduler.Tests.Integration.UnitTests;
 
 /// <summary>
 /// What the builder refuses about manifest groups and named batches, before any row is written.
+///
+/// <para>Enforces <c>docs/adr/0011-a-re-seed-writes-only-the-settings-the-code-states.md</c>: members of one group may not state different values for the same
+/// group setting.</para>
 /// </summary>
+[Property("adr", "docs/adr/0011-a-re-seed-writes-only-the-settings-the-code-states.md")]
 [TestFixture]
 public class SeedingBuildValidationTests
 {
@@ -40,7 +44,10 @@ public class SeedingBuildValidationTests
 
         act.Should()
             .Throw<InvalidOperationException>()
-            .WithMessage("*shared*MaxActiveJobs*member-a*member-b*");
+            .WithMessage(
+                "*shared*MaxActiveJobs*member-a*member-b*",
+                "conflicting stated group settings fail the build. See docs/adr/0011-a-re-seed-writes-only-the-settings-the-code-states.md."
+            );
     }
 
     [Test]
@@ -63,7 +70,12 @@ public class SeedingBuildValidationTests
                     )
             );
 
-        act.Should().Throw<InvalidOperationException>().WithMessage("*prio*Priority*p-a*p-b*");
+        act.Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage(
+                "*prio*Priority*p-a*p-b*",
+                "conflicting stated group settings fail the build. See docs/adr/0011-a-re-seed-writes-only-the-settings-the-code-states.md."
+            );
     }
 
     [Test]
@@ -92,7 +104,10 @@ public class SeedingBuildValidationTests
                     )
             );
 
-        act.Should().NotThrow();
+        act.Should()
+            .NotThrow(
+                "agreeing or silent members do not conflict. See docs/adr/0011-a-re-seed-writes-only-the-settings-the-code-states.md."
+            );
     }
 
     [Test]

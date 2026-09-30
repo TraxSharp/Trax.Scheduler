@@ -41,7 +41,7 @@ The format is `.claude/skills/recording-decisions/ADR-FORMAT.md`.
 | --- | --- |
 | `platform` | [0001](./0001-remote-execution-is-a-json-wire-contract.md), [0004](./0004-an-enqueue-refusal-is-a-result-an-infrastructure-failure-is-thrown.md), [0006](./0006-a-runner-requires-an-authorization-posture.md), [0009](./0009-a-runner-shares-its-accepted-nonces-through-the-database.md) |
 | `providers` | [0002](./0002-a-database-provider-is-interchangeable.md), [0007](./0007-the-operations-surface-runs-on-inmemory.md), [0009](./0009-a-runner-shares-its-accepted-nonces-through-the-database.md) |
-| `scheduling` | [0001](./0001-remote-execution-is-a-json-wire-contract.md), [0002](./0002-a-database-provider-is-interchangeable.md), [0003](./0003-a-runtime-retention-override-replaces-only-the-default.md), [0004](./0004-an-enqueue-refusal-is-a-result-an-infrastructure-failure-is-thrown.md), [0005](./0005-a-scheduled-runs-bookkeeping-lives-in-the-junction-that-ran-it.md), [0006](./0006-a-runner-requires-an-authorization-posture.md), [0007](./0007-the-operations-surface-runs-on-inmemory.md), [0009](./0009-a-runner-shares-its-accepted-nonces-through-the-database.md) |
+| `scheduling` | [0001](./0001-remote-execution-is-a-json-wire-contract.md), [0002](./0002-a-database-provider-is-interchangeable.md), [0003](./0003-a-runtime-retention-override-replaces-only-the-default.md), [0004](./0004-an-enqueue-refusal-is-a-result-an-infrastructure-failure-is-thrown.md), [0005](./0005-a-scheduled-runs-bookkeeping-lives-in-the-junction-that-ran-it.md), [0006](./0006-a-runner-requires-an-authorization-posture.md), [0007](./0007-the-operations-surface-runs-on-inmemory.md), [0009](./0009-a-runner-shares-its-accepted-nonces-through-the-database.md), [0011](./0011-a-re-seed-writes-only-the-settings-the-code-states.md) |
 
 ## All of them
 
@@ -55,3 +55,4 @@ The format is `.claude/skills/recording-decisions/ADR-FORMAT.md`.
 | [0006](./0006-a-runner-requires-an-authorization-posture.md) | A runner requires an authorization posture and runs only registered trains | scheduling, platform |
 | [0007](./0007-the-operations-surface-runs-on-inmemory.md) | The operations surface runs on the InMemory provider | scheduling, providers |
 | [0009](./0009-a-runner-shares-its-accepted-nonces-through-the-database.md) | A runner shares its accepted nonces through the database | scheduling, platform, providers |
+| [0011](./0011-a-re-seed-writes-only-the-settings-the-code-states.md) | A re-seed writes only the settings the code states | scheduling |

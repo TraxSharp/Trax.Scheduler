@@ -12,7 +12,10 @@ namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 /// <summary>
 /// Every host start schedules its manifests again. A re-seed writes only the fields the code
 /// states; a field it leaves unstated keeps whatever an operator set at runtime.
+///
+/// <para>Enforces <c>docs/adr/0011-a-re-seed-writes-only-the-settings-the-code-states.md</c>: code wins only for the settings it states.</para>
 /// </summary>
+[Property("adr", "docs/adr/0011-a-re-seed-writes-only-the-settings-the-code-states.md")]
 [TestFixture]
 public class SeedingPreservesOperatorStateTests
 {
@@ -31,7 +34,9 @@ public class SeedingPreservesOperatorStateTests
             .FirstAsync(m => m.ExternalId == "kill-switch");
         manifest
             .IsEnabled.Should()
-            .BeFalse("the code does not state Enabled, so the operator's switch stands");
+            .BeFalse(
+                "the code does not state Enabled, so the operator's switch stands. See docs/adr/0011-a-re-seed-writes-only-the-settings-the-code-states.md."
+            );
     }
 
     [Test]
@@ -47,7 +52,11 @@ public class SeedingPreservesOperatorStateTests
         var manifest = await fx
             .DataContext.Manifests.AsNoTracking()
             .FirstAsync(m => m.ExternalId == "stated-enabled");
-        manifest.IsEnabled.Should().BeTrue("the code states Enabled(true), and code wins");
+        manifest
+            .IsEnabled.Should()
+            .BeTrue(
+                "the code states Enabled(true), and code wins. See docs/adr/0011-a-re-seed-writes-only-the-settings-the-code-states.md."
+            );
     }
 
     [Test]
@@ -69,9 +78,11 @@ public class SeedingPreservesOperatorStateTests
         var group = await fx
             .DataContext.ManifestGroups.AsNoTracking()
             .FirstAsync(g => g.Name == "ops-edited");
-        group.MaxActiveJobs.Should().Be(5);
-        group.Priority.Should().Be(20);
-        group.IsEnabled.Should().BeFalse();
+        const string because =
+            "the code states no group settings, so runtime edits stand. See docs/adr/0011-a-re-seed-writes-only-the-settings-the-code-states.md.";
+        group.MaxActiveJobs.Should().Be(5, because);
+        group.Priority.Should().Be(20, because);
+        group.IsEnabled.Should().BeFalse(because);
     }
 
     [Test]
@@ -100,8 +111,18 @@ public class SeedingPreservesOperatorStateTests
         var group = await fx
             .DataContext.ManifestGroups.AsNoTracking()
             .FirstAsync(g => g.Name == "code-owned");
-        group.MaxActiveJobs.Should().Be(2, "the code states MaxActiveJobs(2)");
-        group.Priority.Should().Be(20, "the code does not state the group priority");
+        group
+            .MaxActiveJobs.Should()
+            .Be(
+                2,
+                "the code states MaxActiveJobs(2). See docs/adr/0011-a-re-seed-writes-only-the-settings-the-code-states.md."
+            );
+        group
+            .Priority.Should()
+            .Be(
+                20,
+                "the code does not state the group priority. See docs/adr/0011-a-re-seed-writes-only-the-settings-the-code-states.md."
+            );
     }
 
     private static Task<Effect.Models.Manifest.Manifest> ScheduleAsync(
