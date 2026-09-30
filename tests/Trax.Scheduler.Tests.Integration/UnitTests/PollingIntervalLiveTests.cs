@@ -7,11 +7,13 @@ using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Services.DeadLetterCleanupPollingService;
 using Trax.Scheduler.Services.JobDispatcherPollingService;
 using Trax.Scheduler.Services.ManifestManagerPollingService;
+using Trax.Scheduler.Services.MetadataCleanupPollingService;
 using Trax.Scheduler.Services.SchedulerLiveness;
 using Trax.Scheduler.Tests.Integration.Fakes;
 using Trax.Scheduler.Trains.DeadLetterCleanup;
 using Trax.Scheduler.Trains.JobDispatcher;
 using Trax.Scheduler.Trains.ManifestManager;
+using Trax.Scheduler.Trains.MetadataCleanup;
 
 namespace Trax.Scheduler.Tests.Integration.UnitTests;
 
@@ -148,6 +150,44 @@ public class PollingIntervalLiveTests
             first,
             second,
             () => config.DeadLetterCleanupInterval = TimeSpan.FromMilliseconds(50)
+        );
+    }
+
+    [Test]
+    public async Task Shortening_the_metadata_cleanup_interval_at_runtime_ends_the_current_wait()
+    {
+        var calls = 0;
+        var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var second = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var train = Substitute.For<IMetadataCleanupTrain>();
+        train
+            .When(t => t.Run(Arg.Any<MetadataCleanupRequest>(), Arg.Any<CancellationToken>()))
+            .Do(_ =>
+            {
+                if (Interlocked.Increment(ref calls) == 1)
+                    first.TrySetResult();
+                else
+                    second.TrySetResult();
+            });
+
+        var config = new SchedulerConfiguration
+        {
+            MetadataCleanup = new MetadataCleanupConfiguration
+            {
+                CleanupInterval = TimeSpan.FromHours(1),
+            },
+        };
+        var service = new MetadataCleanupPollingService(
+            Provide(typeof(IMetadataCleanupTrain), train),
+            config,
+            NullLogger<MetadataCleanupPollingService>.Instance
+        );
+
+        await AssertShorteningEndsTheWait(
+            service,
+            first,
+            second,
+            () => config.MetadataCleanup.CleanupInterval = TimeSpan.FromMilliseconds(50)
         );
     }
 
