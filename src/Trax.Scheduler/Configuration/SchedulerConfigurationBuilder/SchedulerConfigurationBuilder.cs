@@ -31,6 +31,11 @@ public partial class SchedulerConfigurationBuilder
 
     private readonly List<RoutedSubmitterRegistration> _routedSubmitterRegistrations = [];
 
+    // PollingInterval sets both polling intervals, so a range refusal at build names whichever
+    // method set the value.
+    private string _manifestManagerIntervalSetBy = nameof(ManifestManagerPollingInterval);
+    private string _jobDispatcherIntervalSetBy = nameof(JobDispatcherPollingInterval);
+
     // Legacy: supports UseInMemoryWorkers() and OverrideSubmitter()
     private Action<IServiceCollection>? _taskServerRegistration;
 

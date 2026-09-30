@@ -253,6 +253,86 @@ public class SchedulerBuilderValidationTests
     }
 
     #endregion
+
+    #region Range checks
+
+    // Each value a builder method or options property accepts is checked when the scheduler is
+    // built, against the ranges the operations service holds a runtime change to. Before, each
+    // of these built, and the host found out at runtime: a zero polling interval spun the
+    // dispatcher and could not be stopped.
+
+    private static Action Building(Action<SchedulerConfigurationBuilder> configure) =>
+        () =>
+        {
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddTrax(trax =>
+                trax.AddEffects(effects => effects.UseInMemory())
+                    .AddMediator(typeof(AssemblyMarker).Assembly)
+                    .AddScheduler(scheduler =>
+                    {
+                        configure(scheduler);
+                        return scheduler;
+                    })
+            );
+        };
+
+    private static readonly TestCaseData[] PollingIntervalsOutOfRange =
+    [
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(b => b.PollingInterval(TimeSpan.Zero)),
+            nameof(SchedulerConfigurationBuilder.PollingInterval)
+        ).SetName("PollingInterval zero"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(
+                b => b.PollingInterval(TimeSpan.FromSeconds(-1))
+            ),
+            nameof(SchedulerConfigurationBuilder.PollingInterval)
+        ).SetName("PollingInterval negative"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(
+                b => b.ManifestManagerPollingInterval(TimeSpan.Zero)
+            ),
+            nameof(SchedulerConfigurationBuilder.ManifestManagerPollingInterval)
+        ).SetName("ManifestManagerPollingInterval zero"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(
+                b => b.JobDispatcherPollingInterval(TimeSpan.FromMilliseconds(500))
+            ),
+            nameof(SchedulerConfigurationBuilder.JobDispatcherPollingInterval)
+        ).SetName("JobDispatcherPollingInterval under a second"),
+        new TestCaseData(
+            (Action<SchedulerConfigurationBuilder>)(
+                b => b.JobDispatcherPollingInterval(TimeSpan.FromDays(31))
+            ),
+            nameof(SchedulerConfigurationBuilder.JobDispatcherPollingInterval)
+        ).SetName("JobDispatcherPollingInterval over 30 days"),
+    ];
+
+    [TestCaseSource(nameof(PollingIntervalsOutOfRange))]
+    public void A_polling_interval_out_of_range_is_refused_at_build(
+        Action<SchedulerConfigurationBuilder> configure,
+        string method
+    )
+    {
+        Building(configure)
+            .Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage($"*{method} must be between*");
+    }
+
+    [Test]
+    public void Polling_intervals_at_their_limits_build()
+    {
+        Building(b =>
+                b.ManifestManagerPollingInterval(TimeSpan.FromSeconds(1))
+                    .JobDispatcherPollingInterval(TimeSpan.FromDays(30))
+            )
+            .Should()
+            .NotThrow();
+    }
+
+    #endregion
 }
 
 internal interface ITestTrain { }

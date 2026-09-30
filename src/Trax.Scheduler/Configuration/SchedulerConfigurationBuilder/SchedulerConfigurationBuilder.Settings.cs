@@ -16,34 +16,47 @@ public partial class SchedulerConfigurationBuilder
     /// Sets the polling interval for both ManifestManager and JobDispatcher.
     /// For independent control, use <see cref="ManifestManagerPollingInterval"/> and <see cref="JobDispatcherPollingInterval"/>.
     /// </summary>
-    /// <param name="interval">The polling interval (default: 5 seconds)</param>
+    /// <param name="interval">
+    /// The polling interval (default: 5 seconds for the ManifestManager, 2 for the JobDispatcher).
+    /// Must be between one second and 30 days; the scheduler refuses to build otherwise.
+    /// </param>
     /// <returns>The builder for method chaining</returns>
     public SchedulerConfigurationBuilder PollingInterval(TimeSpan interval)
     {
         _configuration.ManifestManagerPollingInterval = interval;
         _configuration.JobDispatcherPollingInterval = interval;
+        _manifestManagerIntervalSetBy = nameof(PollingInterval);
+        _jobDispatcherIntervalSetBy = nameof(PollingInterval);
         return this;
     }
 
     /// <summary>
     /// Sets the interval at which ManifestManagerPollingService evaluates manifests and writes to the work queue.
     /// </summary>
-    /// <param name="interval">The polling interval (default: 5 seconds)</param>
+    /// <param name="interval">
+    /// The polling interval (default: 5 seconds). Must be between one second and 30 days; the
+    /// scheduler refuses to build otherwise.
+    /// </param>
     /// <returns>The builder for method chaining</returns>
     public SchedulerConfigurationBuilder ManifestManagerPollingInterval(TimeSpan interval)
     {
         _configuration.ManifestManagerPollingInterval = interval;
+        _manifestManagerIntervalSetBy = nameof(ManifestManagerPollingInterval);
         return this;
     }
 
     /// <summary>
     /// Sets the interval at which JobDispatcherPollingService reads the work queue and dispatches jobs.
     /// </summary>
-    /// <param name="interval">The polling interval (default: 2 seconds)</param>
+    /// <param name="interval">
+    /// The polling interval (default: 2 seconds). Must be between one second and 30 days; the
+    /// scheduler refuses to build otherwise.
+    /// </param>
     /// <returns>The builder for method chaining</returns>
     public SchedulerConfigurationBuilder JobDispatcherPollingInterval(TimeSpan interval)
     {
         _configuration.JobDispatcherPollingInterval = interval;
+        _jobDispatcherIntervalSetBy = nameof(JobDispatcherPollingInterval);
         return this;
     }
 

@@ -31,6 +31,7 @@ public partial class SchedulerConfigurationBuilder
         ValidateSeedDeclarations();
         ValidateSubmitterRequirements();
         ValidateRoutedSubmitters();
+        ValidateLimits();
 
         _configuration.HasDatabaseProvider = _parentBuilder.HasDatabaseProvider;
         _configuration.IsSchedulerHost = true;
