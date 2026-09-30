@@ -15,6 +15,7 @@ using Trax.Effect.Utils;
 using Trax.Mediator.Services.TrainRegistry;
 using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Services.JobSubmitter;
+using Trax.Scheduler.Trains.JobDispatcher;
 using Trax.Scheduler.Utilities;
 
 namespace Trax.Scheduler.Trains.JobDispatcher.Junctions;
@@ -333,8 +334,20 @@ internal class DispatchJobsJunction(
                 token
             );
 
+            // An entry with attempts left is requeued, and its failed run is marked so it does
+            // not count as a failure of the manifest (see DispatchFailure).
+            var maxAttempts = schedulerConfiguration.MaxDispatchAttempts;
+            var attempts = (workQueueEntry?.DispatchAttempts ?? 0) + 1;
+            var requeue = maxAttempts > 0 && workQueueEntry is not null && attempts < maxAttempts;
+
             // 1. Fail the run only if no runner has started it.
             var failure = DescribeFailure(exception);
+            var failureException = requeue ? DispatchFailure.Requeued : failure.FailureException;
+            var failureReason = requeue
+                ? $"Dispatch attempt {attempts} of {maxAttempts} failed and the job was requeued: "
+                    + $"{failure.FailureException}: {failure.FailureReason}"
+                : failure.FailureReason;
+
             var now = DateTime.UtcNow;
             var failed = await dataContext
                 .Metadatas.Where(m => m.Id == metadataId && m.TrainState == TrainState.Pending)
@@ -342,9 +355,9 @@ internal class DispatchJobsJunction(
                     s =>
                         s.SetProperty(m => m.TrainState, TrainState.Failed)
                             .SetProperty(m => m.EndTime, now)
-                            .SetProperty(m => m.FailureException, failure.FailureException)
-                            .SetProperty(m => m.FailureReason, failure.FailureReason)
-                            .SetProperty(m => m.FailureJunction, failure.FailureJunction)
+                            .SetProperty(m => m.FailureException, failureException)
+                            .SetProperty(m => m.FailureReason, failureReason)
+                            .SetProperty(m => m.FailureJunction, nameof(DispatchJobsJunction))
                             .SetProperty(m => m.StackTrace, failure.StackTrace)
                             .SetProperty(m => m.FailureClass, failure.FailureClass),
                     token
@@ -364,25 +377,26 @@ internal class DispatchJobsJunction(
                 return;
             }
 
-            // 2. Requeue the work queue entry if attempts remain
-            var maxAttempts = schedulerConfiguration.MaxDispatchAttempts;
-
+            // 2. Requeue the work queue entry if attempts remain, after a backoff
             if (maxAttempts > 0 && workQueueEntry is not null)
             {
-                workQueueEntry.DispatchAttempts++;
+                workQueueEntry.DispatchAttempts = attempts;
 
-                if (workQueueEntry.DispatchAttempts < maxAttempts)
+                if (requeue)
                 {
+                    var backoff = DispatchFailure.Backoff(attempts);
                     workQueueEntry.Status = WorkQueueStatus.Queued;
                     workQueueEntry.MetadataId = null;
                     workQueueEntry.DispatchedAt = null;
+                    workQueueEntry.ScheduledAt = now + backoff;
 
                     logger.LogWarning(
                         "Requeued work queue entry {WorkQueueId} after dispatch failure "
-                            + "(attempt {Attempt}/{MaxAttempts})",
+                            + "(attempt {Attempt}/{MaxAttempts}); next attempt in {Backoff}",
                         workQueueId,
-                        workQueueEntry.DispatchAttempts,
-                        maxAttempts
+                        attempts,
+                        maxAttempts,
+                        backoff
                     );
                 }
                 else
@@ -391,7 +405,7 @@ internal class DispatchJobsJunction(
                         "Work queue entry {WorkQueueId} exhausted dispatch attempts "
                             + "({Attempts}/{MaxAttempts}). Leaving as Dispatched for dead letter handling",
                         workQueueId,
-                        workQueueEntry.DispatchAttempts,
+                        attempts,
                         maxAttempts
                     );
                 }

@@ -4,6 +4,7 @@ using Trax.Effect.Data.Services.DataContext;
 using Trax.Effect.Enums;
 using Trax.Effect.Models.DeadLetter;
 using Trax.Effect.Services.EffectJunction;
+using Trax.Scheduler.Trains.JobDispatcher;
 using Trax.Scheduler.Trains.ManifestManager;
 
 namespace Trax.Scheduler.Trains.ManifestManager.Junctions;
@@ -32,6 +33,8 @@ internal class LoadManifestsJunction(IDataContext dataContext)
                 ManifestGroup = m.ManifestGroup,
                 FailedCount = m.Metadatas.Count(md =>
                     md.TrainState == TrainState.Failed
+                    // A dispatch attempt that was requeued is not a failure of the job.
+                    && md.FailureException != DispatchFailure.Requeued
                     && !m.DeadLetters.Any(dl =>
                         (
                             dl.Status == DeadLetterStatus.Retried
