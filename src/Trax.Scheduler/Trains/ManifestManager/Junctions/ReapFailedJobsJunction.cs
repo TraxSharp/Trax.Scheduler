@@ -14,6 +14,9 @@ namespace Trax.Scheduler.Trains.ManifestManager.Junctions;
 /// <remarks>
 /// This junction receives manifests from LoadManifestsJunction and identifies those that have
 /// exceeded their max_retries count, moving them into the dead letter queue for manual intervention.
+/// <c>MaxRetries</c> is the number of retries after the first run, so a manifest is dead-lettered
+/// once its counted failures exceed it: <c>MaxRetries(0)</c> dead-letters on the first failure,
+/// <c>MaxRetries(3)</c> on the fourth. A manifest with no counted failure is never dead-lettered.
 ///
 /// Dead letters are persisted immediately via SaveChanges() to ensure they survive
 /// even if later junctions in the train fail.
@@ -49,7 +52,7 @@ internal class ReapFailedJobsJunction(
                 continue;
             }
 
-            if (view.FailedCount >= view.Manifest.MaxRetries)
+            if (view.FailedCount > view.Manifest.MaxRetries)
             {
                 logger.LogWarning(
                     "Manifest {ManifestId} (name: {ManifestName}) exceeds max retries ({FailedCount}/{MaxRetries}). Creating dead letter.",
@@ -64,7 +67,7 @@ internal class ReapFailedJobsJunction(
                     {
                         Manifest = view.Manifest,
                         Reason =
-                            $"Max retries exceeded: ({view.FailedCount}) failures >= ({view.Manifest.MaxRetries}) max retries",
+                            $"Max retries exceeded: ({view.FailedCount}) failures > ({view.Manifest.MaxRetries}) max retries",
                         RetryCount = view.FailedCount,
                     }
                 );

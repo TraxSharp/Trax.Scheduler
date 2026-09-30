@@ -139,10 +139,12 @@ public class SchedulerConfiguration
     internal List<string> ExcludedTrainTypeNames { get; } = [];
 
     /// <summary>
-    /// The default number of retry attempts before a job is dead-lettered.
+    /// The default number of retries after a failed first run before a job is dead-lettered.
     /// </summary>
     /// <remarks>
-    /// This can be overridden per-manifest via ManifestScheduleProperties.
+    /// A manifest is dead-lettered once its counted failures exceed its retry count, so the
+    /// default of 3 allows four attempts. This can be overridden per-manifest via
+    /// <see cref="ScheduleOptions.MaxRetries"/>.
     /// </remarks>
     public int DefaultMaxRetries
     {
@@ -176,6 +178,19 @@ public class SchedulerConfiguration
     /// Maximum retry delay to prevent unbounded backoff growth.
     /// </summary>
     public TimeSpan MaxRetryDelay { get; internal set; } = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// How far back a manifest's failed runs are counted toward its retry backoff and its
+    /// dead letter.
+    /// </summary>
+    /// <remarks>
+    /// A failed run counts while it started within this window before the current ManifestManager
+    /// cycle, and after the manifest's latest resolved dead letter. A failure older than the window
+    /// no longer delays the next run or counts toward <c>MaxRetries</c>, so occasional failures
+    /// spread over weeks do not dead-letter a healthy manifest. A success does not reset the count
+    /// inside the window. Defaults to 24 hours; must be positive.
+    /// </remarks>
+    public TimeSpan FailureCountWindow { get; internal set; } = TimeSpan.FromHours(24);
 
     /// <summary>
     /// Timeout after which a running job is considered stuck.

@@ -26,7 +26,14 @@ public record SchedulerConfigSnapshot(
     int? LocalWorkerCount,
     TimeSpan? MetadataCleanupInterval,
     TimeSpan? MetadataCleanupRetention
-);
+)
+{
+    /// <summary>
+    /// How far back a manifest's failed runs are counted toward its retry backoff and its dead
+    /// letter (<c>SchedulerConfiguration.FailureCountWindow</c>).
+    /// </summary>
+    public TimeSpan FailureCountWindow { get; init; }
+}
 
 /// <summary>
 /// Patch input for <see cref="IOperationsService.UpdateSchedulerConfigAsync"/>. Each
@@ -58,4 +65,15 @@ public record UpdateSchedulerConfigInput(
     bool ClearLocalWorkerCount = false,
     TimeSpan? MetadataCleanupInterval = null,
     TimeSpan? MetadataCleanupRetention = null
-);
+)
+{
+    /// <summary>
+    /// A new failure count window, or <c>null</c> to leave it unchanged. Must be between one
+    /// second and ten years.
+    /// </summary>
+    /// <remarks>
+    /// Applies to the running process only: the persisted scheduler settings row has no column
+    /// for it yet, so a restart returns to the value the host configured.
+    /// </remarks>
+    public TimeSpan? FailureCountWindow { get; init; }
+}

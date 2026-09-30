@@ -1,3 +1,4 @@
+using LanguageExt;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Trax.Effect.Data.Services.DataContext;
@@ -17,21 +18,33 @@ namespace Trax.Scheduler.Trains.ManifestManager.Junctions;
 /// will mark the metadata as Failed so it doesn't stay orphaned and block the
 /// DormantDependentContext concurrency guard or count against MaxActiveJobs capacity.
 ///
-/// This junction runs after ReapStalePendingMetadataJunction and before ReapFailedJobsJunction
-/// so that newly-failed metadata is visible to the reaper in the same ManifestManager cycle
-/// (enabling dead-lettering if retries are exhausted).
+/// A run whose manifest has a Timeout longer than <see cref="SchedulerConfiguration.DefaultJobTimeout"/>
+/// is given as much longer: it is reaped at the later of
+/// <see cref="SchedulerConfiguration.StaleInProgressTimeout"/> and its manifest's timeout plus the
+/// grace the defaults leave between the job timeout and the stale timeout
+/// (<c>StaleInProgressTimeout - DefaultJobTimeout</c>, never negative). A run still inside its own
+/// timeout is therefore never reaped while it runs, and one that overran it is first cancelled by
+/// CancelTimedOutJobsJunction and only then, once cancellation has had the same time to land,
+/// failed here.
+///
+/// This junction runs after ReapStalePendingMetadataJunction and before LoadManifestsJunction
+/// so that newly-failed metadata is counted in the same ManifestManager cycle (enabling
+/// dead-lettering if retries are exhausted).
 /// </remarks>
 internal class ReapStaleInProgressMetadataJunction(
     IDataContext dataContext,
     SchedulerConfiguration config,
     ILogger<ReapStaleInProgressMetadataJunction> logger
-) : EffectJunction<List<ManifestDispatchView>, List<ManifestDispatchView>>
+) : EffectJunction<Unit, Unit>
 {
-    public override async Task<List<ManifestDispatchView>> Run(List<ManifestDispatchView> views)
+    public override async Task<Unit> Run(Unit input)
     {
-        var cutoff = DateTime.UtcNow - config.StaleInProgressTimeout;
+        var now = DateTime.UtcNow;
+        var cutoff = now - config.StaleInProgressTimeout;
 
-        var staleMetadata = await dataContext
+        // Candidates are past the global stale timeout; a run whose manifest allows it longer
+        // is kept until its own threshold.
+        var candidates = await dataContext
             .Metadatas.Where(m =>
                 m.TrainState == TrainState.InProgress
                 && m.StartTime < cutoff
@@ -43,16 +56,21 @@ internal class ReapStaleInProgressMetadataJunction(
                 m.Name,
                 m.StartTime,
                 m.ManifestId,
+                TimeoutSeconds = m.Manifest != null ? m.Manifest.TimeoutSeconds : null,
             })
             .AsNoTracking()
             .ToListAsync(CancellationToken);
+
+        var staleMetadata = candidates
+            .Where(m => now - m.StartTime > StaleThreshold(m.TimeoutSeconds))
+            .ToList();
 
         if (staleMetadata.Count == 0)
         {
             logger.LogDebug(
                 "ReapStaleInProgressMetadataJunction: no stale in-progress metadata found"
             );
-            return views;
+            return Unit.Default;
         }
 
         var staleIds = new List<long>(staleMetadata.Count);
@@ -69,8 +87,6 @@ internal class ReapStaleInProgressMetadataJunction(
                 md.StartTime
             );
         }
-
-        var now = DateTime.UtcNow;
 
         await dataContext
             .Metadatas.Where(m => staleIds.Contains(m.Id) && m.TrainState == TrainState.InProgress)
@@ -95,6 +111,26 @@ internal class ReapStaleInProgressMetadataJunction(
             staleIds.Count
         );
 
-        return views;
+        return Unit.Default;
+    }
+
+    /// <summary>
+    /// How long a run may stay InProgress before it is failed: the stale in-progress timeout, or
+    /// its manifest's timeout plus the grace between the default job timeout and the stale timeout
+    /// when that is longer.
+    /// </summary>
+    private TimeSpan StaleThreshold(int? manifestTimeoutSeconds)
+    {
+        if (manifestTimeoutSeconds is not { } seconds)
+            return config.StaleInProgressTimeout;
+
+        var grace = config.StaleInProgressTimeout - config.DefaultJobTimeout;
+        if (grace < TimeSpan.Zero)
+            grace = TimeSpan.Zero;
+
+        var ownThreshold = TimeSpan.FromSeconds(seconds) + grace;
+        return ownThreshold > config.StaleInProgressTimeout
+            ? ownThreshold
+            : config.StaleInProgressTimeout;
     }
 }

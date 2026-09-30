@@ -1,3 +1,4 @@
+using LanguageExt;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Trax.Effect.Data.Services.DataContext;
@@ -17,16 +18,16 @@ namespace Trax.Scheduler.Trains.ManifestManager.Junctions;
 /// this junction will mark the metadata as Failed so it doesn't stay orphaned in Pending state
 /// forever and count against MaxActiveJobs capacity.
 ///
-/// This junction runs before ReapFailedJobsJunction so that newly-failed metadata is visible to
-/// the reaper in the same ManifestManager cycle (enabling dead-lettering if retries are exhausted).
+/// This junction runs before LoadManifestsJunction so that newly-failed metadata is counted in
+/// the same ManifestManager cycle (enabling dead-lettering if retries are exhausted).
 /// </remarks>
 internal class ReapStalePendingMetadataJunction(
     IDataContext dataContext,
     SchedulerConfiguration config,
     ILogger<ReapStalePendingMetadataJunction> logger
-) : EffectJunction<List<ManifestDispatchView>, List<ManifestDispatchView>>
+) : EffectJunction<Unit, Unit>
 {
-    public override async Task<List<ManifestDispatchView>> Run(List<ManifestDispatchView> views)
+    public override async Task<Unit> Run(Unit input)
     {
         var cutoff = DateTime.UtcNow - config.StalePendingTimeout;
 
@@ -49,7 +50,7 @@ internal class ReapStalePendingMetadataJunction(
         if (staleMetadata.Count == 0)
         {
             logger.LogDebug("ReapStalePendingMetadataJunction: no stale pending metadata found");
-            return views;
+            return Unit.Default;
         }
 
         var staleIds = new List<long>(staleMetadata.Count);
@@ -92,6 +93,6 @@ internal class ReapStalePendingMetadataJunction(
             staleIds.Count
         );
 
-        return views;
+        return Unit.Default;
     }
 }

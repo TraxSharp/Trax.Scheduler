@@ -4,6 +4,7 @@ using Trax.Effect.Data.Services.DataContext;
 using Trax.Effect.Enums;
 using Trax.Effect.Models.DeadLetter;
 using Trax.Effect.Services.EffectJunction;
+using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Trains.ManifestManager;
 
 namespace Trax.Scheduler.Trains.ManifestManager.Junctions;
@@ -20,18 +21,27 @@ namespace Trax.Scheduler.Trains.ManifestManager.Junctions;
 /// The projection pushes aggregation into the database via COUNT/EXISTS subqueries,
 /// keeping the query cost O(manifests) regardless of child table sizes.
 /// </remarks>
-internal class LoadManifestsJunction(IDataContext dataContext)
+internal class LoadManifestsJunction(IDataContext dataContext, SchedulerConfiguration config)
     : EffectJunction<Unit, List<ManifestDispatchView>>
 {
-    public override async Task<List<ManifestDispatchView>> Run(Unit input) =>
-        await dataContext
+    public override async Task<List<ManifestDispatchView>> Run(Unit input)
+    {
+        // A failed run counts toward the backoff and the dead letter only while it is recent.
+        var failureWindowStart = DateTime.UtcNow - config.FailureCountWindow;
+
+        return await dataContext
             .Manifests.Where(m => m.IsEnabled)
             .Select(m => new ManifestDispatchView
             {
                 Manifest = m,
                 ManifestGroup = m.ManifestGroup,
+                // Each condition below is one reason a failed run counts; add a new one as
+                // another `&&` term.
                 FailedCount = m.Metadatas.Count(md =>
                     md.TrainState == TrainState.Failed
+                    // Started inside the failure count window.
+                    && md.StartTime >= failureWindowStart
+                    // Started after the latest resolved (retried or acknowledged) dead letter.
                     && !m.DeadLetters.Any(dl =>
                         (
                             dl.Status == DeadLetterStatus.Retried
@@ -41,6 +51,9 @@ internal class LoadManifestsJunction(IDataContext dataContext)
                         && md.StartTime <= dl.ResolvedAt
                     )
                 ),
+                LastCancelledRun = m
+                    .Metadatas.Where(md => md.TrainState == TrainState.Cancelled)
+                    .Max(md => (DateTime?)(md.EndTime ?? md.StartTime)),
                 HasAwaitingDeadLetter = m.DeadLetters.Any(dl =>
                     dl.Status == DeadLetterStatus.AwaitingIntervention
                 ),
@@ -60,4 +73,5 @@ internal class LoadManifestsJunction(IDataContext dataContext)
             })
             .AsNoTracking()
             .ToListAsync(CancellationToken);
+    }
 }

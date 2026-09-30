@@ -38,14 +38,25 @@ public class ManifestOptions
     public bool IsEnabled { get; set; } = true;
 
     /// <summary>
-    /// Gets or sets the maximum retry attempts before dead-lettering.
+    /// Gets or sets how many times a failed run is retried before the manifest is dead-lettered.
     /// </summary>
     /// <remarks>
-    /// Each retry creates a new Metadata record. After this many failed attempts,
-    /// the job is moved to the dead letter queue for manual intervention.
-    /// Defaults to 3.
+    /// The count is of retries after the first run: each retry creates a new Metadata record, and
+    /// the failure after the last retry moves the manifest to the dead letter queue for manual
+    /// intervention. 0 runs once and dead-letters on the first failure; the default of 3 allows
+    /// four attempts. Failures count within <see cref="SchedulerConfiguration.FailureCountWindow"/>
+    /// and after the manifest's latest resolved dead letter.
     /// </remarks>
-    public int MaxRetries { get; set; } = 3;
+    /// <exception cref="ArgumentOutOfRangeException">The value set is negative.</exception>
+    public int MaxRetries
+    {
+        get;
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(value);
+            field = value;
+        }
+    } = 3;
 
     /// <summary>
     /// Gets or sets the timeout for job execution.

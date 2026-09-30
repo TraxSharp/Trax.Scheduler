@@ -62,7 +62,15 @@ internal class DetermineJobsToQueueJunction(
                 continue;
 
             // Check if this manifest is due for execution
-            if (SchedulingHelpers.ShouldRunNow(view.Manifest, now, config, logger))
+            if (
+                SchedulingHelpers.ShouldRunNow(
+                    view.Manifest,
+                    now,
+                    config,
+                    logger,
+                    view.LastCancelledRun
+                )
+            )
             {
                 logger.LogDebug(
                     "Manifest {ManifestId} (name: {ManifestName}) is due for execution",
@@ -123,13 +131,19 @@ internal class DetermineJobsToQueueJunction(
                     continue;
                 }
 
-                // Queue if the parent succeeded after the dependent's latest successful run
-                // started. Comparing against when that run started, not when it finished, means a
-                // parent success that landed while the dependent was running earns it another run:
-                // the dependent runs at least once after each parent success. With no run on
-                // record (history pruned), the dependent's own LastSuccessfulRun stands in.
-                var dependentBaseline =
+                // Queue if the parent succeeded after the dependent's latest run. That is when
+                // its latest successful run started, not when it finished, so a parent success
+                // that landed while the dependent was running earns it another run (with no run
+                // on record, history pruned, its own LastSuccessfulRun stands in); or its latest
+                // cancelled run, when later, because a cancelled run consumed the parent success
+                // it was started for.
+                var successBaseline =
                     dependent.LatestSuccessfulRunStart ?? dependent.Manifest.LastSuccessfulRun;
+                var dependentBaseline =
+                    dependent.LastCancelledRun is { } cancelled
+                    && (successBaseline == null || cancelled > successBaseline)
+                        ? cancelled
+                        : successBaseline;
                 if (
                     parent.Manifest.LastSuccessfulRun != null
                     && (
