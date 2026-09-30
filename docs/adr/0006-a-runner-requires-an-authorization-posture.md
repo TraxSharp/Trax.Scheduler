@@ -79,7 +79,7 @@ train that shares a scheduler train's short name still runs by that name.
 The scheduler's own stored names follow the same rule. The dispatcher resolves a work queue row's
 input type, and `LocalWorkerService` a background job's, among the registered trains' input types
 rather than by loading the name, so no path that turns a name back into a train input loads a type
-by it. `TypeResolver` is no longer called by Trax.
+by it. The `TypeResolver` that loaded one is deleted.
 
 ## What a runner sends back
 
@@ -148,6 +148,7 @@ Not covered: sharing nonces across runner instances is
 
 ## Changelog
 
+- **2026-09-30**: The unused `TypeResolver` is deleted.
 - **2026-09-27**: The per-process nonce memory is replaced by a shared store, recorded in
   [0009](./0009-a-runner-shares-its-accepted-nonces-through-the-database.md).
 - **2026-09-27**: A runner refuses the scheduler's own trains on the run path and the job path.
