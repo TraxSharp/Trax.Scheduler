@@ -28,6 +28,11 @@ public static class WorkerExtensions
         Action<LocalWorkerOptions>? configure = null
     )
     {
+        // A scheduler host already runs a worker pool with its own options; a second set would
+        // silently replace them (or be ignored), so the two are refused together.
+        if (services.Any(d => d.ServiceType == typeof(LocalWorkerOptions)))
+            throw new InvalidOperationException(LocalWorkerOptions.RegisteredTwiceMessage);
+
         // Register the execution pipeline
         services.AddTraxJobRunner();
 

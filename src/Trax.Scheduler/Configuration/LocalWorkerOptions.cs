@@ -6,7 +6,18 @@ namespace Trax.Scheduler.Configuration;
 public class LocalWorkerOptions
 {
     /// <summary>
-    /// Number of concurrent worker tasks polling for and executing background jobs.
+    /// The refusal when a host registers two worker pools: <c>AddTraxWorker()</c> beside an
+    /// <c>AddScheduler()</c> that already runs local workers.
+    /// </summary>
+    internal const string RegisteredTwiceMessage =
+        "This host registers two local worker pools: AddScheduler() already runs local workers "
+        + "(PostgresJobSubmitter), and AddTraxWorker() adds another with its own options, one of "
+        + "which would silently replace the other. Remove AddTraxWorker() and set the worker options "
+        + "on the scheduler instead: AddScheduler(scheduler => scheduler.ConfigureLocalWorkers(o => ...)).";
+
+    /// <summary>
+    /// Number of concurrent worker tasks polling for and executing background jobs. Read when the
+    /// worker pool starts, so a change made at runtime applies after a restart.
     /// </summary>
     public int WorkerCount { get; set; } = Environment.ProcessorCount;
 

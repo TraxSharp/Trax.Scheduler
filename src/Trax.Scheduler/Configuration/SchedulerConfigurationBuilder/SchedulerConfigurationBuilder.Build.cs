@@ -37,8 +37,9 @@ public partial class SchedulerConfigurationBuilder
         foreach (var name in AdminTrains.FullNames)
             _configuration.ExcludedTrainTypeNames.Add(name);
 
-        // Register the configuration
-        _parentBuilder.ServiceCollection.AddSingleton(_configuration);
+        // Register the configuration. Replace, not Add: AddTraxJobRunner registers an empty one
+        // for a runner-only host, and a host that called it first must still get this one.
+        _parentBuilder.ServiceCollection.Replace(ServiceDescriptor.Singleton(_configuration));
 
         // Liveness tracking: the JobDispatcher stamps this after each successful cycle so a
         // wedged scheduler (up but dispatching nothing) can be detected via
@@ -53,10 +54,9 @@ public partial class SchedulerConfigurationBuilder
         );
 
         // Register the cancellation registry (singleton — shared across all workers)
-        _parentBuilder.ServiceCollection.AddSingleton<
-            ICancellationRegistry,
-            CancellationRegistry
-        >();
+        _parentBuilder.ServiceCollection.Replace(
+            ServiceDescriptor.Singleton<ICancellationRegistry, CancellationRegistry>()
+        );
 
         // Register ITraxScheduler
         _parentBuilder.ServiceCollection.AddScoped<ITraxScheduler, TraxScheduler>();
@@ -116,6 +116,12 @@ public partial class SchedulerConfigurationBuilder
         else if (_parentBuilder.HasDatabaseProvider)
         {
             // Default: PostgresJobSubmitter + local worker threads
+            if (
+                _parentBuilder.ServiceCollection.Any(d =>
+                    d.ServiceType == typeof(LocalWorkerOptions)
+                )
+            )
+                throw new InvalidOperationException(LocalWorkerOptions.RegisteredTwiceMessage);
             _parentBuilder.ServiceCollection.AddSingleton(_localWorkerOptions);
             _parentBuilder.ServiceCollection.AddScoped<IJobSubmitter, PostgresJobSubmitter>();
             _parentBuilder.ServiceCollection.AddScopedTraxRoute<IJobRunnerTrain, JobRunnerTrain>();
