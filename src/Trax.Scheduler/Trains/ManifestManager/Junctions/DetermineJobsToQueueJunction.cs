@@ -123,12 +123,18 @@ internal class DetermineJobsToQueueJunction(
                     continue;
                 }
 
-                // Queue if parent's LastSuccessfulRun is newer than dependent's LastSuccessfulRun
+                // Queue if the parent succeeded after the dependent's latest successful run
+                // started. Comparing against when that run started, not when it finished, means a
+                // parent success that landed while the dependent was running earns it another run:
+                // the dependent runs at least once after each parent success. With no run on
+                // record (history pruned), the dependent's own LastSuccessfulRun stands in.
+                var dependentBaseline =
+                    dependent.LatestSuccessfulRunStart ?? dependent.Manifest.LastSuccessfulRun;
                 if (
                     parent.Manifest.LastSuccessfulRun != null
                     && (
-                        dependent.Manifest.LastSuccessfulRun == null
-                        || parent.Manifest.LastSuccessfulRun > dependent.Manifest.LastSuccessfulRun
+                        dependentBaseline == null
+                        || parent.Manifest.LastSuccessfulRun > dependentBaseline
                     )
                 )
                 {

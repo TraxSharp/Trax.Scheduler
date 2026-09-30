@@ -51,6 +51,12 @@ internal class LoadManifestsJunction(IDataContext dataContext)
                 HasSuccessfulMetadata = m.Metadatas.Any(md =>
                     md.TrainState == TrainState.Completed
                 ),
+                LatestSuccessfulRunStart =
+                    m.ScheduleType == ScheduleType.Dependent
+                        ? m
+                            .Metadatas.Where(md => md.TrainState == TrainState.Completed)
+                            .Max(md => (DateTime?)md.StartTime)
+                        : null,
             })
             .AsNoTracking()
             .ToListAsync(CancellationToken);
