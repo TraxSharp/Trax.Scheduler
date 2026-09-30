@@ -44,6 +44,12 @@ internal class DispatchJobsJunction(
     ITraxChangeSignal? changeSignal = null
 ) : EffectJunction<List<WorkQueue>, Unit>
 {
+    /// <summary>
+    /// How long recording a failed submit may take once the dispatcher's own token has been
+    /// cancelled.
+    /// </summary>
+    private static readonly TimeSpan FailureRecordingTimeout = TimeSpan.FromSeconds(30);
+
     public override async Task<Unit> Run(List<WorkQueue> entries)
     {
         var dispatchStartTime = DateTime.UtcNow;
@@ -306,16 +312,25 @@ internal class DispatchJobsJunction(
         Exception exception
     )
     {
+        // Not the dispatcher's token: that is the host's stopping token, and a shutdown is exactly
+        // when a submit fails because it was cancelled. The claim is already committed, so this is
+        // the only write that records the attempt and frees the entry; on a cancelled token it
+        // never landed, and the entry held its subject until the stale-pending reaper ran. Bounded
+        // rather than uncancellable so an unreachable database cannot hold shutdown open
+        // (effect/0005 records the same rule for a train's outcome).
+        using var bounded = new CancellationTokenSource(FailureRecordingTimeout);
+        var token = bounded.Token;
+
         try
         {
             using var scope = serviceProvider.CreateScope();
             var dataContext = scope.ServiceProvider.GetRequiredService<IDataContext>();
 
-            using var transaction = await dataContext.BeginTransaction(CancellationToken);
+            using var transaction = await dataContext.BeginTransaction(token);
 
             var workQueueEntry = await dataContext.WorkQueues.FirstOrDefaultAsync(
                 w => w.Id == workQueueId,
-                CancellationToken
+                token
             );
 
             // 1. Fail the run only if no runner has started it.
@@ -332,7 +347,7 @@ internal class DispatchJobsJunction(
                             .SetProperty(m => m.FailureJunction, failure.FailureJunction)
                             .SetProperty(m => m.StackTrace, failure.StackTrace)
                             .SetProperty(m => m.FailureClass, failure.FailureClass),
-                    CancellationToken
+                    token
                 );
 
             if (failed == 0)
@@ -382,7 +397,7 @@ internal class DispatchJobsJunction(
                 }
             }
 
-            await dataContext.SaveChanges(CancellationToken);
+            await dataContext.SaveChanges(token);
             await dataContext.CommitTransaction();
         }
         catch (Exception ex)
