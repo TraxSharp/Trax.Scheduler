@@ -17,10 +17,14 @@ public interface IOperationsService
     /// <c>OperationResult(false, ...)</c> with a populated <c>Message</c> for a missing
     /// <c>TrainName</c>, an unknown train, or invalid or oversized <c>InputJson</c>.
     /// <para>
-    /// A refusal of the enqueue is also returned as a failed result, with the message
-    /// <c>"The enqueue was refused: {exception message}"</c>: the <c>OnQueue</c> hook or
+    /// A refusal of the enqueue is also returned as a failed result: the <c>OnQueue</c> hook or
     /// <c>QueueSubjectKey</c> threw, the subject key was unusable, or a deferred entry was
-    /// cancelled before it was confirmed.
+    /// cancelled before it was confirmed. Its message is
+    /// <c>"The enqueue was refused: {exception message}"</c> only when the exception is a plain
+    /// <c>TrainException</c> (not a type derived from it), a <c>QueuedWorkCancelledException</c>
+    /// or a <c>QueueHookTimeoutException</c>; for any other type it is the fixed
+    /// <c>"The enqueue was refused."</c>, and the exception is logged at Warning. A hook that
+    /// refuses with a message for the caller throws <c>TrainException</c> (scheduler/0004).
     /// </para>
     /// </returns>
     /// <exception cref="System.Data.Common.DbException">

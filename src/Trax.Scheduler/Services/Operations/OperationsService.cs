@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Trax.Core.Exceptions;
 using Trax.Effect.Data.Services.DataContext;
 using Trax.Effect.Data.Services.IDataContextFactory;
 using Trax.Effect.Data.Services.SqlDialect;
@@ -201,9 +202,8 @@ public class OperationsService : IOperationsService
             when (ex is not UnauthorizedAccessException and not OperationCanceledException)
         {
             // A refusal: the train's OnQueue hook or QueueSubjectKey threw, the subject key could
-            // not be used, or a deferred entry was cancelled before it was confirmed. The message
-            // is the train author's or the mediator's, written for the caller.
-            return new OperationResult(false, Message: $"The enqueue was refused: {ex.Message}");
+            // not be used, or a deferred entry was cancelled before it was confirmed.
+            return Refused("The enqueue was refused", ex, registration.ServiceType.FullName!);
         }
 
         _changeSignal?.Notify(ChangeDomain.WorkQueue);
@@ -826,6 +826,31 @@ public class OperationsService : IOperationsService
             return $"At most {MaxBatchSize} ids can be given at once; {ids.Count} were.";
 
         return null;
+    }
+
+    /// <summary>
+    /// The failed result for a refusal. Only a message written for the caller is shown: a plain
+    /// <see cref="TrainException"/>'s, which the train author wrote (the rule central
+    /// <c>docs/0028</c> applies to a remote run), and the mediator's own refusals, a deferred entry
+    /// cancelled before it was confirmed and a hook that ran past <c>MaxQueueHookDuration</c>.
+    /// Any other exception is still a refusal, so it is a failed result, but with a fixed message;
+    /// its own is logged for an operator. See scheduler/0004.
+    /// </summary>
+    private OperationResult Refused(string refusal, Exception ex, string trainName)
+    {
+        if (
+            ex.GetType() == typeof(TrainException)
+            || ex is QueuedWorkCancelledException or QueueHookTimeoutException
+        )
+            return new OperationResult(false, Message: $"{refusal}: {ex.Message}");
+
+        _logger?.LogWarning(
+            ex,
+            "{TrainName} was refused with an exception whose message is not shown to the caller",
+            trainName
+        );
+
+        return new OperationResult(false, Message: $"{refusal}.");
     }
 
     /// <summary>

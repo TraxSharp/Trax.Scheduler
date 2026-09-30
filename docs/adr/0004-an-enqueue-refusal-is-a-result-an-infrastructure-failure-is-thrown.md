@@ -8,14 +8,17 @@ status: accepted
 
 `OperationsService.QueueTrainAsync` backs the GraphQL `queueTrain` and `requeueExecution`
 mutations and the dashboard's queue and re-queue buttons. It returns a failed
-`OperationResult` with `"The enqueue was refused: {message}"` only when the enqueue was
-refused. When the exception chain holds a database, EF Core, network, I/O or timeout failure,
+`OperationResult` only when the enqueue was refused, and the refusal's message reaches the
+caller only when it was written for the caller: `"The enqueue was refused: {message}"` for a
+plain `TrainException` and the mediator's own refusals, the fixed `"The enqueue was refused."`
+for anything else. When the exception chain holds a database, EF Core, network, I/O or timeout failure,
 or the enqueue failed because the host has no authorization enforcer, the service logs it and
 rethrows it unchanged, and its message never becomes a result.
 
 ## Status
 
-**Accepted.**
+**Accepted.** Refined 2026-09-30: which refusals show their message is an allow-list (see
+*What a refusal shows*).
 
 ## Why this is written down
 
@@ -31,9 +34,8 @@ back.
 
 **A refusal** is an answer the caller can act on: the train's `OnQueue` hook or
 `QueueSubjectKey` threw, the subject key was empty or too long, or a deferred entry was
-cancelled before it was confirmed (`QueuedWorkCancelledException`). The message comes from the
-train author or the mediator and is written for the caller. Invalid and oversized input keep
-their own messages ahead of this.
+cancelled before it was confirmed (`QueuedWorkCancelledException`). Invalid and oversized
+input keep their own messages ahead of this.
 
 **An infrastructure failure** is anything whose chain holds a `DbException` (so every
 `NpgsqlException` and `SqliteException`), a `DbUpdateException`, a `TimeoutException`, a
@@ -50,6 +52,19 @@ A data-layer exception is a failure even when a hook's own write caused it, a un
 violation included. A hook that means to refuse throws its own exception. Letting a
 constraint violation through as a refusal would put table and constraint names in the
 caller's message.
+
+## What a refusal shows
+
+A refusal is always a failed result, whatever type was thrown. Its message is shown only when
+something wrote it for the caller: a plain `TrainException` (its exact type, not a type derived
+from it), which is the train author's, and the mediator's `QueuedWorkCancelledException` and
+`QueueHookTimeoutException`, whose text the mediator builds from the train's name, an entry id
+or the configured limit. Every other type gets the fixed `"The enqueue was refused."`, and the
+exception is logged at Warning so an operator still sees it.
+
+This is the rule central `docs/0028` applies to a remote run's `PublicMessage`, for the same
+reason: a hook calls into whatever it depends on, and the message of an exception it lets
+through was written by that dependency for its own operator, not for the caller. A hook author who wants the caller to read the reason throws `TrainException`.
 
 ## A run follows the same rule
 
@@ -72,9 +87,11 @@ filter, which masks any type it does not know as `"Unexpected Execution Error"`.
 catches it and shows it to an operator, who is entitled to see it.
 
 **Allow-list the refusals instead of listing the failures.** A hook may throw any type to
-refuse, and consumers do, so an allow-list would turn their refusals into masked errors. The
-failure list is a closed set of infrastructure types, which a hook author has no reason to
-throw on purpose.
+refuse, and consumers do, so an allow-list deciding *whether* it is a refusal would turn their
+refusals into thrown, masked errors. The failure list is a closed set of infrastructure types,
+which a hook author has no reason to throw on purpose, so it still decides that. What is
+allow-listed instead, since 2026-09-30, is only which refusals *show their message*: a refusal
+of another type stays a refusal, with a fixed message.
 
 ## Consequences
 
@@ -98,7 +115,9 @@ already does for every other resolver.
   `NpgsqlException("Failed to connect to 10.0.0.5:5432")` and asserts it is thrown and logged,
   not returned. It also covers an EF-wrapped failure, a timeout wrapped by a hook, a missing
   enforcer that is thrown and logged, and a hook refusal and a cancelled deferred entry that
-  still come back as refusals.
+  still come back as refusals. It pins the allow-list too: a plain `TrainException` and a hook
+  timeout show their message, while an `InvalidOperationException` and a type derived from
+  `TrainException` come back with the fixed message and are logged.
 - [Mutations: queueTrain](/docs/sdk-reference/graphql-api/mutations#queuetrain) is the rule this
   produces for GraphQL clients.
 
@@ -109,6 +128,10 @@ contract, and Trax.Api's error filter tests pin it.
 
 ## Changelog
 
+- **2026-09-30**: A refusal shows its exception's message only for a plain `TrainException`,
+  `QueuedWorkCancelledException` and `QueueHookTimeoutException`; any other type is a refusal
+  with the fixed `"The enqueue was refused."`, logged at Warning. The same rule as central
+  `docs/0028`.
 - **2026-09-30**: A missing authorization enforcer is thrown on the queue path too, caught by
   the mediator's `TrainAuthorizationNotConfiguredException`; a run takes its authorization and
   input reading from the mediator's `PrepareAsync`.
