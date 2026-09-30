@@ -15,6 +15,7 @@ using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Extensions;
 using Trax.Scheduler.Services.CancellationRegistry;
 using Trax.Scheduler.Services.ManifestPruning;
+using Trax.Scheduler.Services.Operations;
 using Schedule = Trax.Scheduler.Services.Scheduling.Schedule;
 
 namespace Trax.Scheduler.Services.TraxScheduler;
@@ -1153,7 +1154,10 @@ public class TraxScheduler(
         CancellationToken ct = default
     )
     {
-        return await RequeueDeadLetterBatch(
+        if (OperationsService.BatchRefusal(deadLetterIds) is { } refused)
+            return new BatchDeadLetterResult(0, refused);
+
+        var counts = await RequeueDeadLetterBatch(
             context =>
                 context.DeadLetters.Where(d =>
                     deadLetterIds.Contains(d.Id)
@@ -1161,6 +1165,8 @@ public class TraxScheduler(
                 ),
             ct
         );
+
+        return counts.ToResult();
     }
 
     /// <inheritdoc />
@@ -1170,6 +1176,9 @@ public class TraxScheduler(
         CancellationToken ct = default
     )
     {
+        if (OperationsService.BatchRefusal(deadLetterIds) is { } refused)
+            return new BatchDeadLetterResult(0, refused);
+
         await using var context = CreateContext();
 
         var acknowledged = await AcknowledgeAwaitingAsync(
@@ -1194,11 +1203,75 @@ public class TraxScheduler(
         CancellationToken ct = default
     )
     {
-        return await RequeueDeadLetterBatch(
-            context =>
-                context.DeadLetters.Where(d => d.Status == DeadLetterStatus.AwaitingIntervention),
-            ct
-        );
+        // A page at a time, by manifest rather than by dead letter, so every dead letter for one
+        // manifest is in the same page and still folds into one entry. The cursor moves past a
+        // page's manifests whether or not they were requeued, so one already queued is skipped
+        // once rather than read again on every page.
+        var total = RequeueCounts.None;
+        var after = long.MinValue;
+
+        while (true)
+        {
+            List<long> manifestIds;
+            await using (var context = CreateContext())
+                manifestIds = await context
+                    .DeadLetters.Where(d =>
+                        d.Status == DeadLetterStatus.AwaitingIntervention && d.ManifestId > after
+                    )
+                    .Select(d => d.ManifestId)
+                    .Distinct()
+                    .OrderBy(id => id)
+                    .Take(RequeueAllPageSize)
+                    .ToListAsync(ct);
+
+            if (manifestIds.Count == 0)
+                break;
+
+            total += await RequeueDeadLetterBatch(
+                context =>
+                    context.DeadLetters.Where(d =>
+                        manifestIds.Contains(d.ManifestId)
+                        && d.Status == DeadLetterStatus.AwaitingIntervention
+                    ),
+                ct
+            );
+
+            after = manifestIds[^1];
+        }
+
+        return total.ToResult();
+    }
+
+    /// <summary>
+    /// How many manifests <see cref="RequeueAllDeadLettersAsync"/> requeues per page. Test seam;
+    /// one page is one batch, so it matches the operations surface's batch limit.
+    /// </summary>
+    internal int RequeueAllPageSize { get; set; } = OperationsService.MaxBatchSize;
+
+    /// <summary>What a dead-letter requeue did, summed across the pages of a requeue-all.</summary>
+    private readonly record struct RequeueCounts(int Resolved, int Entries, int Folded, int Skipped)
+    {
+        public static RequeueCounts None => default;
+
+        public static RequeueCounts operator +(RequeueCounts a, RequeueCounts b) =>
+            new(
+                a.Resolved + b.Resolved,
+                a.Entries + b.Entries,
+                a.Folded + b.Folded,
+                a.Skipped + b.Skipped
+            );
+
+        public BatchDeadLetterResult ToResult()
+        {
+            var message = $"{Resolved} dead letter(s) requeued";
+            if (Folded > 0)
+                message +=
+                    $"; {Folded} folded into another dead letter's entry for the same manifest";
+            if (Skipped > 0)
+                message += $"; {Skipped} skipped because their manifest already has a queued entry";
+
+            return new BatchDeadLetterResult(Resolved, message + ".");
+        }
     }
 
     /// <inheritdoc />
@@ -1272,7 +1345,7 @@ public class TraxScheduler(
     /// has a queued entry is skipped and stays awaiting intervention. Dead letters that share a
     /// manifest are folded into one entry: a requeue runs the manifest's own properties, so each
     /// would queue the same work. The newest one carries the entry's <c>DeadLetterId</c>, and every
-    /// one of them is resolved with a note naming the entry. The result's message counts both.
+    /// one of them is resolved with a note naming the entry. The counts returned include both.
     /// </summary>
     /// <remarks>
     /// The "already queued?" check and the insert are separate statements, so a concurrent
@@ -1282,7 +1355,7 @@ public class TraxScheduler(
     /// rolled back and rerun from a fresh read, which skips that manifest and no longer sees dead
     /// letters another requeue resolved. Any other failure is rethrown.
     /// </remarks>
-    private async Task<BatchDeadLetterResult> RequeueDeadLetterBatch(
+    private async Task<RequeueCounts> RequeueDeadLetterBatch(
         Func<IDataContext, IQueryable<Effect.Models.DeadLetter.DeadLetter>> select,
         CancellationToken ct
     )
@@ -1325,7 +1398,7 @@ public class TraxScheduler(
         );
     }
 
-    private async Task<BatchDeadLetterResult> RequeueDeadLetterBatchOnce(
+    private async Task<RequeueCounts> RequeueDeadLetterBatchOnce(
         IDataContext context,
         List<Effect.Models.DeadLetter.DeadLetter> deadLetters,
         bool firstAttempt,
@@ -1394,13 +1467,7 @@ public class TraxScheduler(
             skipped
         );
 
-        var message = $"{resolved} dead letter(s) requeued";
-        if (folded > 0)
-            message += $"; {folded} folded into another dead letter's entry for the same manifest";
-        if (skipped > 0)
-            message += $"; {skipped} skipped because their manifest already has a queued entry";
-
-        return new BatchDeadLetterResult(resolved, message + ".");
+        return new RequeueCounts(resolved, batches.Count, folded, skipped);
     }
 
     private static WorkQueue CreateWorkQueueFromDeadLetter(

@@ -807,17 +807,23 @@ public class OperationsService : IOperationsService
     /// The failed result for a batch that cannot be run as given: no ids, or more than
     /// <see cref="MaxBatchSize"/>. Null when the list is usable.
     /// </summary>
-    private static OperationResult? RefuseBatch(IReadOnlyCollection<long> ids)
+    private static OperationResult? RefuseBatch(IReadOnlyCollection<long> ids) =>
+        BatchRefusal(ids) is { } message
+            ? new OperationResult(false, Count: 0, Message: message)
+            : null;
+
+    /// <summary>
+    /// Why a batch of ids cannot be run as given (none, or more than <see cref="MaxBatchSize"/>),
+    /// or null when it can. Shared with the scheduler's dead-letter batch actions, so every batch
+    /// an operator can send is bounded the same way.
+    /// </summary>
+    internal static string? BatchRefusal(IReadOnlyCollection<long>? ids)
     {
         if (ids is null || ids.Count == 0)
-            return new OperationResult(false, Count: 0, Message: "No ids were given.");
+            return "No ids were given.";
 
         if (ids.Count > MaxBatchSize)
-            return new OperationResult(
-                false,
-                Count: 0,
-                Message: $"At most {MaxBatchSize} ids can be given at once; {ids.Count} were."
-            );
+            return $"At most {MaxBatchSize} ids can be given at once; {ids.Count} were.";
 
         return null;
     }

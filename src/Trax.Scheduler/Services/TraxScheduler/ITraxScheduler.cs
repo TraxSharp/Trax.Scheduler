@@ -344,7 +344,8 @@ public interface ITraxScheduler
     /// At most one work queue entry is created per manifest. A dead letter whose manifest already
     /// has a queued entry is skipped and left awaiting intervention; dead letters that share a
     /// manifest are folded into one entry and all resolved, since a requeue runs the manifest's
-    /// own properties.
+    /// own properties. An empty list, or one longer than <c>OperationsService.MaxBatchSize</c>
+    /// (1000) ids, is refused: the result counts nothing and its message says why.
     /// </remarks>
     Task<BatchDeadLetterResult> RequeueDeadLettersAsync(
         long[] deadLetterIds,
@@ -358,6 +359,10 @@ public interface ITraxScheduler
     /// <param name="note">A note explaining the acknowledgement.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The number of dead letters successfully acknowledged.</returns>
+    /// <remarks>
+    /// An empty list, or one longer than <c>OperationsService.MaxBatchSize</c> (1000) ids, is
+    /// refused: the result counts nothing and its message says why.
+    /// </remarks>
     Task<BatchDeadLetterResult> AcknowledgeDeadLettersAsync(
         long[] deadLetterIds,
         string note,
@@ -369,7 +374,11 @@ public interface ITraxScheduler
     /// </summary>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The number of dead letters resolved, and a message that also counts the folded and skipped ones.</returns>
-    /// <remarks>Creates at most one entry per manifest, as <see cref="RequeueDeadLettersAsync"/> does.</remarks>
+    /// <remarks>
+    /// Creates at most one entry per manifest, as <see cref="RequeueDeadLettersAsync"/> does. The
+    /// dead letters are read and requeued a page of manifests at a time, so a large backlog is
+    /// never loaded at once; every dead letter for one manifest is in the same page.
+    /// </remarks>
     Task<BatchDeadLetterResult> RequeueAllDeadLettersAsync(CancellationToken ct = default);
 
     /// <summary>
