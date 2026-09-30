@@ -295,6 +295,11 @@ public partial class SchedulerConfigurationBuilder
     /// Sets how long a resolved (retried or acknowledged) dead letter is kept before the automatic
     /// purge deletes it. Dead letters awaiting intervention are never purged.
     /// </summary>
+    /// <remarks>
+    /// A retention saved from the dashboard or the <c>updateScheduler</c> mutation can lengthen
+    /// this but not shorten it: when both state one, the longer applies, and the scheduler logs a
+    /// warning. Without this call a saved retention replaces the default.
+    /// </remarks>
     /// <param name="retention">
     /// The retention period (default: 30 days). Must be between zero and ten years; the scheduler
     /// refuses to build otherwise.
@@ -303,6 +308,7 @@ public partial class SchedulerConfigurationBuilder
     public SchedulerConfigurationBuilder DeadLetterRetentionPeriod(TimeSpan retention)
     {
         _configuration.DeadLetterRetentionPeriod = retention;
+        _configuration.ConfiguredDeadLetterRetentionPeriod = retention;
         return this;
     }
 
@@ -311,11 +317,18 @@ public partial class SchedulerConfigurationBuilder
     /// automatically. The purge reads this on every run, so it can also be turned off or on at
     /// runtime from the dashboard or the <c>updateScheduler</c> mutation.
     /// </summary>
+    /// <remarks>
+    /// The purge deletes, so it runs only when both this and a saved setting allow it: a saved
+    /// <c>true</c> does not turn on a purge this call turned off, and the scheduler logs a warning
+    /// when it ignores one. A saved <c>false</c> does turn it off. Without this call a saved
+    /// setting replaces the default.
+    /// </remarks>
     /// <param name="purge">True to purge resolved dead letters (default: true)</param>
     /// <returns>The builder for method chaining</returns>
     public SchedulerConfigurationBuilder AutoPurgeDeadLetters(bool purge = true)
     {
         _configuration.AutoPurgeDeadLetters = purge;
+        _configuration.ConfiguredAutoPurgeDeadLetters = purge;
         return this;
     }
 

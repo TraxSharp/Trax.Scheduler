@@ -466,6 +466,20 @@ public class SchedulerConfiguration
     internal bool IsSchedulerHost { get; set; }
 
     /// <summary>
+    /// The value <c>AutoPurgeDeadLetters(bool)</c> stated in code, or null when the builder left
+    /// the default. A saved setting may turn the purge off but never on over a code
+    /// <c>false</c>: the purge deletes, so it runs only when both allow it.
+    /// </summary>
+    internal bool? ConfiguredAutoPurgeDeadLetters { get; set; }
+
+    /// <summary>
+    /// The value <c>DeadLetterRetentionPeriod(TimeSpan)</c> stated in code, or null when the
+    /// builder left the default. A saved retention may lengthen it but never shorten it: the longer
+    /// of the two applies.
+    /// </summary>
+    internal TimeSpan? ConfiguredDeadLetterRetentionPeriod { get; set; }
+
+    /// <summary>
     /// How often a running scheduler checks the persisted settings row for a save made by another
     /// host (or this one) and applies it. Zero turns the check off; the row is then read only at
     /// startup.

@@ -478,6 +478,93 @@ public class SchedulerConfigFromApiHostTests
     }
 
     [Test]
+    public async Task A_saved_purge_does_not_override_a_purge_turned_off_in_code()
+    {
+        await using (var apiHost = ApiHost())
+        {
+            (
+                await Save(
+                    apiHost,
+                    new UpdateSchedulerConfigInput(DeadLetterRetentionPeriod: TimeSpan.FromDays(40))
+                )
+            )
+                .Success.Should()
+                .BeTrue();
+            // Stored as named even though true is the default: the API host cannot know the code value.
+            (await Save(apiHost, new UpdateSchedulerConfigInput(AutoPurgeDeadLetters: true)))
+                .Success.Should()
+                .BeTrue();
+        }
+
+        // A later deploy keeps resolved dead letters for an audit.
+        await using var scheduler = await SchedulerE2EFixture.CreateAsync(s =>
+            s.AutoPurgeDeadLetters(false)
+        );
+        var settings = SettingsService(scheduler);
+        await settings.StartAsync(CancellationToken.None);
+        await settings.StopAsync(CancellationToken.None);
+
+        scheduler
+            .Configuration.AutoPurgeDeadLetters.Should()
+            .BeFalse("a purge runs only when both the code and the saved setting allow it");
+        scheduler
+            .Configuration.DeadLetterRetentionPeriod.Should()
+            .Be(TimeSpan.FromDays(40), "the code states no retention, so the saved one applies");
+    }
+
+    [Test]
+    public async Task The_longer_of_a_saved_and_a_coded_dead_letter_retention_applies()
+    {
+        await using (var apiHost = ApiHost())
+            (
+                await Save(
+                    apiHost,
+                    new UpdateSchedulerConfigInput(DeadLetterRetentionPeriod: TimeSpan.FromDays(10))
+                )
+            )
+                .Success.Should()
+                .BeTrue();
+
+        await using (
+            var longerInCode = await SchedulerE2EFixture.CreateAsync(s =>
+                s.DeadLetterRetentionPeriod(TimeSpan.FromDays(60))
+            )
+        )
+        {
+            var settings = SettingsService(longerInCode);
+            await settings.StartAsync(CancellationToken.None);
+            await settings.StopAsync(CancellationToken.None);
+            longerInCode.Configuration.DeadLetterRetentionPeriod.Should().Be(TimeSpan.FromDays(60));
+        }
+
+        await using var shorterInCode = await SchedulerE2EFixture.CreateAsync(s =>
+            s.DeadLetterRetentionPeriod(TimeSpan.FromDays(5))
+        );
+        var shorter = SettingsService(shorterInCode);
+        await shorter.StartAsync(CancellationToken.None);
+        await shorter.StopAsync(CancellationToken.None);
+        shorterInCode.Configuration.DeadLetterRetentionPeriod.Should().Be(TimeSpan.FromDays(10));
+    }
+
+    [Test]
+    public async Task A_purge_turned_off_from_the_dashboard_applies_over_the_code_default()
+    {
+        await using (var apiHost = ApiHost())
+            (await Save(apiHost, new UpdateSchedulerConfigInput(AutoPurgeDeadLetters: false)))
+                .Success.Should()
+                .BeTrue();
+
+        await using var scheduler = await SchedulerE2EFixture.CreateAsync(s =>
+            s.AutoPurgeDeadLetters()
+        );
+        var settings = SettingsService(scheduler);
+        await settings.StartAsync(CancellationToken.None);
+        await settings.StopAsync(CancellationToken.None);
+
+        scheduler.Configuration.AutoPurgeDeadLetters.Should().BeFalse();
+    }
+
+    [Test]
     public async Task A_scheduler_whose_first_settings_read_fails_still_applies_a_later_save()
     {
         await using var apiHost = ApiHost();

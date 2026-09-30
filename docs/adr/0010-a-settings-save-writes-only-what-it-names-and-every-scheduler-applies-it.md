@@ -63,6 +63,15 @@ read as setting every setting it has a column for, as every save used to write t
 first save to it names each of those in `overrides` before applying the patch, so no operator's
 saved value is dropped on upgrade.
 
+**The dead-letter purge fails closed.** `AutoPurgeDeadLetters` and `DeadLetterRetentionPeriod`
+delete data, so for them a saved value does not simply win. When the builder states one in code
+and the row names one too, the purge runs only if both allow it, and the longer retention applies.
+A saved value may make the purge more cautious than the code, never less. The alternative, letting
+the row win as it does for every other setting, meant that a deploy adding
+`.AutoPurgeDeadLetters(false)` to keep dead letters for an audit had no effect on a host where an
+operator had once saved any setting, and nothing said so. Whenever a saved value replaces a
+different code value, for any setting, the scheduler logs a warning when it applies the row.
+
 **`LocalWorkerCount` applies at the next start of the worker pool.** It is stored and applied to
 the options at once, but the pool starts its workers once.
 
@@ -73,7 +82,8 @@ the options at once, but the pool starts its workers once.
   applies to a setting no save named, that a row written before `overrides` keeps its values
   through a save, that a change saved on one host (including the failure count window, which has
   no column) reaches a running scheduler on another, and that removing the row restores the
-  configured values.
+  configured values; and that a saved purge does not turn on a purge turned off in code, and the
+  longer of a saved and a coded retention applies.
 - [Mutations: config](/docs/sdk-reference/graphql-api/mutations) is the rule this produces.
 
 Not covered: nothing asserts that a new setting is added to `SchedulerSettings.All`; one left out
@@ -86,3 +96,5 @@ setting from `overrides` to return it to its code value; deleting the row return
 - **2026-09-30**: The sparse half is in force on Trax.Effect 1.57.4's `overrides`: the first-save
   refusal is gone, `FailureCountWindow` is stored, and a code change applies to every setting no
   save named.
+- **2026-09-30**: The dead-letter purge settings fail closed when code and the row both state
+  them, and a saved value replacing a different code value is logged.

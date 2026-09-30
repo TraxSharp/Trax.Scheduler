@@ -263,7 +263,12 @@ internal static class SchedulerSettings
             r => Set(r.DeadLetterRetentionPeriod),
             (r, v) => r.DeadLetterRetentionPeriod = v,
             t => t.Configuration.DeadLetterRetentionPeriod,
-            (t, v) => t.Configuration.DeadLetterRetentionPeriod = v,
+            // Fails closed: a retention stated in code is a floor a saved one cannot go under.
+            (t, v) =>
+                t.Configuration.DeadLetterRetentionPeriod =
+                    t.Configuration.ConfiguredDeadLetterRetentionPeriod is { } coded && coded > v
+                        ? coded
+                        : v,
             i => Patch(i.DeadLetterRetentionPeriod),
             (v, n) => Check(SchedulerConfigLimits.NonNegativeDuration, v, n)
         ),
@@ -272,7 +277,10 @@ internal static class SchedulerSettings
             r => Set(r.AutoPurgeDeadLetters),
             (r, v) => r.AutoPurgeDeadLetters = v,
             t => t.Configuration.AutoPurgeDeadLetters,
-            (t, v) => t.Configuration.AutoPurgeDeadLetters = v,
+            // Fails closed: a purge turned off in code stays off whatever is saved.
+            (t, v) =>
+                t.Configuration.AutoPurgeDeadLetters =
+                    v && t.Configuration.ConfiguredAutoPurgeDeadLetters != false,
             i => Patch(i.AutoPurgeDeadLetters)
         ),
         // A null column leaves the host's configured count; ClearLocalWorkerCount resets the

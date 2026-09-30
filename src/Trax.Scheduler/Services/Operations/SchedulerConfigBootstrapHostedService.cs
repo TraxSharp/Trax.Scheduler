@@ -228,6 +228,8 @@ internal class SchedulerConfigBootstrapHostedService : IHostedService, IDisposab
             )
                 continue;
 
+            var configured = value;
+            var fromRow = false;
             if (row is not null && setting.TryReadRow(row, out var stored))
             {
                 if (setting.Check(stored) is { } problem)
@@ -238,11 +240,36 @@ internal class SchedulerConfigBootstrapHostedService : IHostedService, IDisposab
                         problem
                     );
                 else
+                {
                     value = stored;
+                    fromRow = true;
+                }
             }
 
             if (!Equals(setting.ReadLive(target), value))
                 setting.WriteLive(target, value);
+
+            if (!fromRow || Equals(value, configured))
+                continue;
+
+            // A saved value replacing a different one in code is what a save is for, but a
+            // deploy that changes that setting in code then has no effect, so say so.
+            var effective = setting.ReadLive(target);
+            if (Equals(effective, value))
+                _logger.LogWarning(
+                    "The saved scheduler setting {Setting} ({Saved}) replaces the value configured in code ({Configured}).",
+                    setting.Name,
+                    value,
+                    configured
+                );
+            else
+                _logger.LogWarning(
+                    "The saved scheduler setting {Setting} ({Saved}) is less cautious than the value configured in code ({Configured}), so the scheduler runs with {Effective}.",
+                    setting.Name,
+                    value,
+                    configured,
+                    effective
+                );
         }
     }
 }
