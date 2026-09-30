@@ -370,19 +370,56 @@ public class OperationsService : IOperationsService
     /// ways to get here. A failure to write it is logged and dropped, so the caller still sees
     /// why the submit failed; the stale-pending reaper fails the row later.
     /// </summary>
+    /// <remarks>
+    /// A submitter that throws may still have delivered the job: a remote runner that ran it and
+    /// answered with an error, or that is still running it when the HTTP call times out, owns the
+    /// row and moves it out of <c>Pending</c>. So the row is failed by a write that matches it
+    /// only while it is still <c>Pending</c>. Reading it first and saving afterwards could land
+    /// after the runner's claim and record <c>Failed</c> over a run that is in progress.
+    /// </remarks>
     private async Task FailUnsubmittedRunAsync(long metadataId, Exception submitFailure)
     {
         try
         {
             using var db = await _dataContextFactory.CreateDbContextAsync(CancellationToken.None);
-            var metadata = await db.Metadatas.FirstOrDefaultAsync(m => m.Id == metadataId);
-            if (metadata is null || metadata.TrainState != TrainState.Pending)
-                return;
+            var pending = db.Metadatas.Where(m =>
+                m.Id == metadataId && m.TrainState == TrainState.Pending
+            );
 
-            metadata.TrainState = TrainState.Failed;
-            metadata.EndTime = DateTime.UtcNow;
-            metadata.AddException(submitFailure);
-            await db.SaveChanges(CancellationToken.None);
+            var failure = Metadata.Create(
+                new CreateMetadata
+                {
+                    Name = nameof(OperationsService),
+                    ExternalId = string.Empty,
+                    Input = null,
+                }
+            );
+            failure.AddException(submitFailure);
+            var endTime = DateTime.UtcNow;
+
+            if (db.SupportsSetUpdates())
+                await pending.ExecuteUpdateAsync(
+                    u =>
+                        u.SetProperty(m => m.TrainState, TrainState.Failed)
+                            .SetProperty(m => m.EndTime, endTime)
+                            .SetProperty(m => m.FailureException, failure.FailureException)
+                            .SetProperty(m => m.FailureReason, failure.FailureReason)
+                            .SetProperty(m => m.FailureJunction, failure.FailureJunction)
+                            .SetProperty(m => m.StackTrace, failure.StackTrace)
+                            .SetProperty(m => m.FailureClass, failure.FailureClass),
+                    CancellationToken.None
+                );
+            else
+                await db.UpdateEachAsync(
+                    pending,
+                    m =>
+                    {
+                        m.TrainState = TrainState.Failed;
+                        m.EndTime = endTime;
+                        m.AddException(submitFailure);
+                    },
+                    CancellationToken.None
+                );
         }
         catch (Exception ex)
         {
