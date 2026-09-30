@@ -19,10 +19,11 @@ namespace Trax.Scheduler.Services.Operations;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Each setting the row sets replaces the value configured in code; a setting it leaves unset
-/// (the nullable worker count and metadata cleanup columns) keeps the configured value. The
-/// configured values are captured when the service starts, so a row that is deleted at runtime
-/// returns every setting to them.
+/// Each setting the row names in its <c>overrides</c> replaces the value configured in code; every
+/// other setting keeps the configured value, so a later change in code applies to it. A row
+/// written before <c>overrides</c> existed sets every setting it has a column for. The configured
+/// values are captured when the service starts, so a row that is deleted at runtime, or stops
+/// naming a setting, returns it to them.
 /// </para>
 /// <para>
 /// A persisted value outside <see cref="SchedulerConfigLimits"/> is skipped and logged, and the
@@ -207,12 +208,8 @@ internal class SchedulerConfigBootstrapHostedService : IHostedService, IDisposab
     {
         foreach (var setting in SchedulerSettings.All)
         {
-            // A live-only setting is never in the row; applying the configured value here would
-            // undo a runtime change on every refresh.
             if (
-                !setting.IsPersisted
-                || !setting.AppliesTo(target)
-                || !_configured!.TryGetValue(setting.Name, out var value)
+                !setting.AppliesTo(target) || !_configured!.TryGetValue(setting.Name, out var value)
             )
                 continue;
 

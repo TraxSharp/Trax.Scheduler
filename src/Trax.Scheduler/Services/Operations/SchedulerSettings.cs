@@ -17,31 +17,39 @@ internal sealed record SchedulerSettingsTarget(
 /// <c>trax.scheduler_config</c> row, from and to the running host, from a patch, and the range it
 /// must stay in. <see cref="SchedulerSettings.All"/> lists every one, and the operations service's
 /// save, the startup load and the live refresh all work through that list, so adding a setting
-/// means adding its column, its patch and snapshot fields, and one entry there.
+/// means adding its patch and snapshot fields and one entry there. The row stores a setting in
+/// its <c>overrides</c> object, so a new setting needs no column.
 /// </summary>
 internal interface ISchedulerSetting
 {
-    /// <summary>The setting's name, as the patch input and the snapshot spell it.</summary>
+    /// <summary>
+    /// The setting's name, as the patch input and the snapshot spell it, and the key it is stored
+    /// under in the row's <c>overrides</c>.
+    /// </summary>
     string Name { get; }
 
     /// <summary>Whether this host has the setting to apply (local workers, metadata cleanup).</summary>
     bool AppliesTo(SchedulerSettingsTarget target);
 
     /// <summary>
-    /// Whether the settings row has a column for it. A setting without one is live-only: a patch
-    /// changes the host that received it until that host restarts, and the row never sets it, so
-    /// neither the startup load nor the refresh touches it.
-    /// </summary>
-    bool IsPersisted { get; }
-
-    /// <summary>
     /// The stored value, or false when the row does not set it and the host's configured value
-    /// stands.
+    /// stands. A row with <c>overrides</c> sets exactly the settings it names. A row written before
+    /// that column existed (<c>overrides</c> null) sets every setting it has a column for, as every
+    /// save used to write them all.
     /// </summary>
     bool TryReadRow(SchedulerConfig row, out object? value);
 
-    /// <summary>Stores <paramref name="value"/> in the row.</summary>
+    /// <summary>
+    /// Names the setting in the row's <c>overrides</c> with <paramref name="value"/>, and keeps its
+    /// column, when it has one, in step for a host still reading the columns.
+    /// </summary>
     void WriteRow(SchedulerConfig row, object? value);
+
+    /// <summary>
+    /// Reads the setting from a row written before <c>overrides</c> existed, from its column.
+    /// False when it has no column, or the column leaves it unset.
+    /// </summary>
+    bool TryReadLegacyRow(SchedulerConfig row, out object? value);
 
     /// <summary>The value the host runs with now.</summary>
     object? ReadLive(SchedulerSettingsTarget target);
@@ -59,8 +67,8 @@ internal interface ISchedulerSetting
 /// <summary>A setting of type <typeparamref name="T"/>, built from delegates.</summary>
 internal sealed class SchedulerSetting<T>(
     string name,
-    Func<SchedulerConfig, (bool IsSet, T Value)>? readRow,
-    Action<SchedulerConfig, T>? writeRow,
+    Func<SchedulerConfig, (bool IsSet, T Value)>? readColumn,
+    Action<SchedulerConfig, T>? writeColumn,
     Func<SchedulerSettingsTarget, T> readLive,
     Action<SchedulerSettingsTarget, T> writeLive,
     Func<UpdateSchedulerConfigInput, (bool IsSet, T Value)> readPatch,
@@ -72,22 +80,34 @@ internal sealed class SchedulerSetting<T>(
 
     public bool AppliesTo(SchedulerSettingsTarget target) => appliesTo?.Invoke(target) ?? true;
 
-    public bool IsPersisted => readRow is not null;
-
     public bool TryReadRow(SchedulerConfig row, out object? value)
     {
-        if (readRow is null)
+        if (row.Overrides is null)
+            return TryReadLegacyRow(row, out value);
+
+        var isSet = row.TryGetOverride<T>(name, out var stored);
+        value = stored;
+        return isSet;
+    }
+
+    public void WriteRow(SchedulerConfig row, object? value)
+    {
+        row.SetOverride(name, (T)value!);
+        writeColumn?.Invoke(row, (T)value!);
+    }
+
+    public bool TryReadLegacyRow(SchedulerConfig row, out object? value)
+    {
+        if (readColumn is null)
         {
             value = null;
             return false;
         }
 
-        var (isSet, v) = readRow(row);
+        var (isSet, v) = readColumn(row);
         value = v;
         return isSet;
     }
-
-    public void WriteRow(SchedulerConfig row, object? value) => writeRow?.Invoke(row, (T)value!);
 
     public object? ReadLive(SchedulerSettingsTarget target) => readLive(target);
 
@@ -174,17 +194,16 @@ internal static class SchedulerSettings
             i => Patch(i.DefaultMaxRetries),
             (v, n) => Check(SchedulerConfigLimits.NotNegative, v, n)
         ),
-        // Live-only: the row has no column for it yet, so a change applies to the host that
-        // received it until that host restarts. With no stored value there is nothing for a
-        // check to screen (a patch is validated by the operations service), so it has none;
-        // give it PositiveDuration when it gains a column.
+        // No column: stored only in the row's overrides, so a row written before them never
+        // sets it.
         new SchedulerSetting<TimeSpan>(
             nameof(UpdateSchedulerConfigInput.FailureCountWindow),
             null,
             null,
             t => t.Configuration.FailureCountWindow,
             (t, v) => t.Configuration.FailureCountWindow = v,
-            i => Patch(i.FailureCountWindow)
+            i => Patch(i.FailureCountWindow),
+            (v, n) => Check(SchedulerConfigLimits.PositiveDuration, v, n)
         ),
         new SchedulerSetting<TimeSpan>(
             nameof(SchedulerConfig.DefaultRetryDelay),
@@ -292,6 +311,23 @@ internal static class SchedulerSettings
             t => t.Configuration.MetadataCleanup is not null
         ),
     ];
+
+    /// <summary>
+    /// Turns a row written before <c>overrides</c> existed into one that names every setting its
+    /// columns set, so the first save to it keeps every value an operator stored then rather than
+    /// narrowing the row to the one setting the save names. A row that already has
+    /// <c>overrides</c> is left alone.
+    /// </summary>
+    public static void UpgradeLegacyRow(SchedulerConfig row)
+    {
+        if (row.Overrides is not null)
+            return;
+
+        row.Overrides = "{}";
+        foreach (var setting in All)
+            if (setting.TryReadLegacyRow(row, out var value))
+                setting.WriteRow(row, value);
+    }
 
     /// <summary>
     /// What the host runs with now, for each setting it has: the baseline the live refresh

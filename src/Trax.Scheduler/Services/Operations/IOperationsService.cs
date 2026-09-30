@@ -300,9 +300,12 @@ public interface IOperationsService
     /// is the exception and applies when the worker pool next starts.
     /// </summary>
     /// <remarks>
-    /// The row stores every setting, so the first save, which creates it, records this host's
-    /// values for the settings it does not name. A host that does not run the scheduler cannot know
-    /// those values, so there the first save is refused; make it on a scheduler host.
+    /// The row records which settings a save named. Those replace the values configured in code
+    /// on every scheduler host; every other setting keeps each host's code value, so a later change
+    /// in code applies to it. Any host may make the first save. A field counts as changed when it
+    /// differs from the stored value, or, for a setting no save has named, from the value a
+    /// scheduler host runs with; a host that does not run the scheduler cannot know that value, so
+    /// there every field the patch sets is stored.
     /// </remarks>
     /// <returns>
     /// <c>OperationResult(true, Count: N, ...)</c> where <c>N</c> is the number of
@@ -311,9 +314,8 @@ public interface IOperationsService
     /// outside 1 second to 30 days; a job timeout, stale-pending timeout or metadata retention
     /// under 1 second; a negative retry count, retry delay or dead-letter retention; any duration
     /// over ten years; a <c>MaxActiveJobs</c> below 1; a <c>LocalWorkerCount</c> outside 1 to
-    /// 256; or a backoff multiplier below 1 or
-    /// not finite; or, when no settings have been saved yet, when this host does not run the
-    /// scheduler. A refused patch applies nothing.
+    /// 256; a failure count window outside 1 second to ten years; or a backoff multiplier below 1
+    /// or not finite. A refused patch applies nothing.
     /// </returns>
     Task<OperationResult> UpdateSchedulerConfigAsync(
         UpdateSchedulerConfigInput input,

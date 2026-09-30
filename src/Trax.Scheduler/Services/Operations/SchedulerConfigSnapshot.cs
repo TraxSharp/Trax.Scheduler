@@ -77,10 +77,5 @@ public record UpdateSchedulerConfigInput(
     /// A new failure count window, or <c>null</c> to leave it unchanged. Must be between one
     /// second and ten years.
     /// </summary>
-    /// <remarks>
-    /// Applies to the running process that received the change only: the persisted scheduler
-    /// settings row has no column for it yet, so other scheduler hosts do not pick it up, and a
-    /// restart returns to the value the host configured.
-    /// </remarks>
     public TimeSpan? FailureCountWindow { get; init; }
 }

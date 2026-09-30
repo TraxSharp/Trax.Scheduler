@@ -127,20 +127,52 @@ public class SchedulerConfigFromApiHostTests
     }
 
     [Test]
-    public async Task The_first_change_from_a_host_that_runs_no_scheduler_is_refused()
+    public async Task An_api_host_saves_first_and_the_scheduler_keeps_its_other_configured_settings()
     {
-        await using var apiHost = ApiHost();
+        await using (var apiHost = ApiHost())
+            (await Save(apiHost, new UpdateSchedulerConfigInput(MaxActiveJobs: 20)))
+                .Success.Should()
+                .BeTrue("the row stores only what a save names, so any host may create it");
 
-        var result = await Save(apiHost, new UpdateSchedulerConfigInput(MaxActiveJobs: 20));
+        await using var scheduler = await Scheduler();
+        var settings = SettingsService(scheduler);
+        await settings.StartAsync(CancellationToken.None);
+        await settings.StopAsync(CancellationToken.None);
 
-        result.Success.Should().BeFalse();
-        result.Message.Should().Contain("AddScheduler");
+        scheduler
+            .Configuration.MaxActiveJobs.Should()
+            .Be(20, "that is the change the operator made");
+        scheduler
+            .Configuration.StalePendingTimeout.Should()
+            .Be(
+                TimeSpan.FromMinutes(5),
+                $"the API host's default was never saved, so the code value applies ({AdrPath})"
+            );
+        scheduler
+            .Configuration.JobDispatcherPollingInterval.Should()
+            .Be(TimeSpan.FromSeconds(10), "nobody changed the dispatcher polling interval");
+    }
 
-        var factory = apiHost.GetRequiredService<IDataContextProviderFactory>();
-        using var db = await factory.CreateDbContextAsync(CancellationToken.None);
-        (await db.SchedulerConfigs.AnyAsync())
-            .Should()
-            .BeFalse("the API host's defaults would have become every scheduler's settings");
+    [Test]
+    public async Task A_later_change_in_code_applies_to_every_setting_no_save_named()
+    {
+        await using (var apiHost = ApiHost())
+            (await Save(apiHost, new UpdateSchedulerConfigInput(MaxActiveJobs: 20)))
+                .Success.Should()
+                .BeTrue();
+
+        // A later deploy changes the stale pending timeout in code.
+        await using var scheduler = await SchedulerE2EFixture.CreateAsync(s =>
+            s.StalePendingTimeout(TimeSpan.FromMinutes(7))
+        );
+        var settings = SettingsService(scheduler);
+        await settings.StartAsync(CancellationToken.None);
+        await settings.StopAsync(CancellationToken.None);
+
+        scheduler.Configuration.MaxActiveJobs.Should().Be(20);
+        scheduler
+            .Configuration.StalePendingTimeout.Should()
+            .Be(TimeSpan.FromMinutes(7), "no save named it, so the code value stands");
     }
 
     [Test]
@@ -245,7 +277,7 @@ public class SchedulerConfigFromApiHostTests
     }
 
     [Test]
-    public async Task A_live_only_setting_changes_this_host_writes_no_row_and_survives_the_refresh()
+    public async Task A_failure_count_window_saved_on_an_api_host_reaches_a_running_scheduler()
     {
         await using var running = await Scheduler();
         running.Configuration.SettingsRefreshInterval = TimeSpan.FromMilliseconds(100);
@@ -253,41 +285,64 @@ public class SchedulerConfigFromApiHostTests
         await settings.StartAsync(CancellationToken.None);
         try
         {
-            var result = await Save(
-                running.Services,
-                new UpdateSchedulerConfigInput { FailureCountWindow = TimeSpan.FromHours(2) }
-            );
-            result.Success.Should().BeTrue();
-            result.Count.Should().Be(1);
-            running.Configuration.FailureCountWindow.Should().Be(TimeSpan.FromHours(2));
+            await using (var apiHost = ApiHost())
+                (
+                    await Save(
+                        apiHost,
+                        new UpdateSchedulerConfigInput
+                        {
+                            FailureCountWindow = TimeSpan.FromHours(2),
+                        }
+                    )
+                )
+                    .Success.Should()
+                    .BeTrue();
 
-            var factory = running.Services.GetRequiredService<IDataContextProviderFactory>();
-            using (var db = await factory.CreateDbContextAsync(CancellationToken.None))
-                (await db.SchedulerConfigs.AnyAsync())
-                    .Should()
-                    .BeFalse("the row has no column for a live-only setting");
-
-            (await Save(running.Services, new UpdateSchedulerConfigInput(MaxActiveJobs: 7)))
-                .Success.Should()
-                .BeTrue();
             await WaitFor(
-                () => running.Configuration.MaxActiveJobs == 7,
-                "the refresh applies the stored change"
+                () => running.Configuration.FailureCountWindow == TimeSpan.FromHours(2),
+                "the failure count window is stored in the row's overrides like any other setting"
             );
-            await Save(running.Services, new UpdateSchedulerConfigInput(MaxActiveJobs: 8));
-            await WaitFor(
-                () => running.Configuration.MaxActiveJobs == 8,
-                "the refresh applies the second stored change"
-            );
-
             running
-                .Configuration.FailureCountWindow.Should()
-                .Be(TimeSpan.FromHours(2), "applying the row does not reset a live-only setting");
+                .Configuration.StalePendingTimeout.Should()
+                .Be(TimeSpan.FromMinutes(5), "the save named only the failure count window");
         }
         finally
         {
             await settings.StopAsync(CancellationToken.None);
         }
+    }
+
+    [Test]
+    public async Task A_row_saved_before_overrides_existed_keeps_every_stored_value_through_a_later_save()
+    {
+        // Written by a version that stored every column and had no overrides.
+        await using (var apiHost = ApiHost())
+        {
+            var factory = apiHost.GetRequiredService<IDataContextProviderFactory>();
+            using var db = await factory.CreateDbContextAsync(CancellationToken.None);
+            db.SchedulerConfigs.Add(
+                new Trax.Effect.Models.SchedulerConfig.SchedulerConfig
+                {
+                    StalePendingTimeout = TimeSpan.FromMinutes(3),
+                    UpdatedAt = DateTime.UtcNow,
+                }
+            );
+            await db.SaveChanges(CancellationToken.None);
+
+            (await Save(apiHost, new UpdateSchedulerConfigInput(MaxActiveJobs: 20)))
+                .Success.Should()
+                .BeTrue();
+        }
+
+        await using var scheduler = await Scheduler();
+        var settings = SettingsService(scheduler);
+        await settings.StartAsync(CancellationToken.None);
+        await settings.StopAsync(CancellationToken.None);
+
+        scheduler.Configuration.MaxActiveJobs.Should().Be(20);
+        scheduler
+            .Configuration.StalePendingTimeout.Should()
+            .Be(TimeSpan.FromMinutes(3), "every column of an older row is an operator's value");
     }
 
     [Test]

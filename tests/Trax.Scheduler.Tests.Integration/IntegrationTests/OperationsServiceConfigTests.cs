@@ -252,9 +252,9 @@ public class OperationsServiceConfigTests : TestSetup
     }
 
     [Test]
-    public async Task UpdateSchedulerConfig_LiveOnlySettingBesideAStoredRow_ComparesWithTheLiveValue()
+    public async Task UpdateSchedulerConfig_SettingTheRowDoesNotName_ComparesWithTheLiveValue()
     {
-        // A stored row exists, but it has no column for the live-only FailureCountWindow.
+        // A stored row exists, but it does not name FailureCountWindow.
         (
             await _operations.UpdateSchedulerConfigAsync(
                 new UpdateSchedulerConfigInput(MaxActiveJobs: 20),

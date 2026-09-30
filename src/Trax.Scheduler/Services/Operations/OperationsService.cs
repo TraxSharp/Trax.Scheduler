@@ -1416,60 +1416,46 @@ public class OperationsService : IOperationsService
                 Message: "Scheduler config: no changes."
             );
 
-        // Read the stored row and change only the fields the patch sets. A save used to write
-        // every field of the saving host's configuration, so a save from an API-only host (whose
-        // configuration is the empty one AddTraxJobRunner registers) replaced the scheduler's
-        // settings with defaults, and a save on one scheduler host carried its values for every
-        // field to the others.
+        // Read the stored row and name only the settings the patch sets in its overrides; every
+        // other setting keeps the value each scheduler host configures in code. A save used to
+        // write every field of the saving host's configuration, so a save from an API-only host
+        // (whose configuration is the empty one AddTraxJobRunner registers) replaced the
+        // scheduler's settings with defaults.
         using var db = await _dataContextFactory.CreateDbContextAsync(ct);
         var row = await db.SchedulerConfigs.FindAsync(
             new object[] { SchedulerConfig.SingletonId },
             ct
         );
 
-        // A field counts as changed when the patch differs from what the scheduler runs with:
-        // the stored value when the row sets it, this host's value otherwise.
         var changes = patch
-            .Where(p =>
-                !Equals(
-                    row is not null && p.Setting.TryReadRow(row, out var stored)
-                        ? stored
-                        : p.Setting.ReadLive(target),
-                    p.Value
-                )
-            )
+            .Where(p => IsSchedulerConfigChange(row, p.Setting, p.Value, target))
             .ToList();
 
-        // A live-only setting (no column yet) changes this host and is never written.
-        var stored = changes.Where(c => c.Setting.IsPersisted).ToList();
-
-        if (stored.Count > 0)
+        if (changes.Count > 0)
         {
             if (row is null)
             {
-                // The row stores every setting, so creating it records a value for each. Only a
-                // host running the scheduler knows the values the scheduler runs with; an API-only
-                // host would store its defaults, which every scheduler then applies.
-                if (!_schedulerConfiguration.IsSchedulerHost)
-                    return new OperationResult(
-                        false,
-                        Id: SchedulerConfig.SingletonId,
-                        Message: "Scheduler config not updated: no scheduler settings have been "
-                            + "saved yet, and this host does not run the scheduler, so it cannot tell "
-                            + "which values the scheduler runs with for the settings this change "
-                            + "leaves alone. Make the first change on a host that calls AddScheduler."
-                    );
-
                 // We use DbSet.Add directly (rather than db.Track) because Track infers
                 // Added/Modified from `Id > 0`, which would misclassify the singleton row
                 // (Id is fixed at 1) as an update on first persist.
-                row = new SchedulerConfig { Id = SchedulerConfig.SingletonId };
-                foreach (var setting in SchedulerSettings.All.Where(s => s.AppliesTo(target)))
-                    setting.WriteRow(row, setting.ReadLive(target));
+                row = new SchedulerConfig { Id = SchedulerConfig.SingletonId, Overrides = "{}" };
+
+                // Only the overrides decide what applies. The columns are also kept for a host
+                // still on a version that reads them, and a scheduler host fills them with the
+                // values it runs with, as a save always did.
+                if (_schedulerConfiguration.IsSchedulerHost)
+                    foreach (var setting in SchedulerSettings.All.Where(s => s.AppliesTo(target)))
+                    {
+                        setting.WriteRow(row, setting.ReadLive(target));
+                        row.RemoveOverride(setting.Name);
+                    }
+
                 db.SchedulerConfigs.Add(row);
             }
+            else
+                SchedulerSettings.UpgradeLegacyRow(row);
 
-            foreach (var (setting, value) in stored)
+            foreach (var (setting, value) in changes)
                 setting.WriteRow(row, value);
             row.UpdatedAt = DateTime.UtcNow;
 
@@ -1494,6 +1480,26 @@ public class OperationsService : IOperationsService
                 ? "Scheduler config: no changes."
                 : $"Scheduler config: {changes.Count} field(s) updated."
         );
+    }
+
+    /// <summary>
+    /// Whether saving <paramref name="value"/> changes what the scheduler runs with. A setting the
+    /// row names changes when the value differs from the stored one. A setting it does not name
+    /// runs with each scheduler's code value: a scheduler host knows it, and the save changes
+    /// something only when the value differs from it. Any other host does not know it, so naming
+    /// the setting is always a change there.
+    /// </summary>
+    private bool IsSchedulerConfigChange(
+        SchedulerConfig? row,
+        ISchedulerSetting setting,
+        object? value,
+        SchedulerSettingsTarget target
+    )
+    {
+        if (row is not null && setting.TryReadRow(row, out var stored))
+            return !Equals(stored, value);
+
+        return !_schedulerConfiguration.IsSchedulerHost || !Equals(setting.ReadLive(target), value);
     }
 
     /// <summary>

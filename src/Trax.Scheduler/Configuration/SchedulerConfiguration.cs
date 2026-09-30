@@ -387,7 +387,8 @@ public class SchedulerConfiguration
     /// <summary>
     /// Whether this configuration is the one <c>AddScheduler</c> built, rather than the empty one
     /// <c>AddTraxJobRunner</c> registers on a runner or API-only host. Only a scheduler host knows
-    /// the values the scheduler runs with, so only it may create the persisted settings row.
+    /// the values the scheduler runs with, so only there can a settings save tell that a value is
+    /// already in effect and leave it out of the persisted row.
     /// </summary>
     internal bool IsSchedulerHost { get; set; }
 
