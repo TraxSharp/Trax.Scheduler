@@ -37,6 +37,12 @@ public record SchedulerConfigSnapshot(
 /// "no limit"), set the corresponding <c>Clear*</c> flag to <c>true</c>. Without that
 /// flag, a <c>null</c> value means "no change" because <c>int?</c> can't distinguish
 /// "unset" from "set to null" in a patch record.
+/// <para>
+/// A change applies to the running scheduler without a restart: the pollers read their interval
+/// before each wait, and the other settings are read each time they are used. The exception is
+/// <see cref="LocalWorkerCount"/>: the worker pool starts that many workers when the host starts,
+/// so a new count is stored at once but applies after a restart.
+/// </para>
 /// </remarks>
 public record UpdateSchedulerConfigInput(
     bool? ManifestManagerEnabled = null,

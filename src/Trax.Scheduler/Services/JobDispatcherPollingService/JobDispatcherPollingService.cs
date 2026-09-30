@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Services.SchedulerLiveness;
 using Trax.Scheduler.Trains.JobDispatcher;
+using Trax.Scheduler.Utilities;
 
 namespace Trax.Scheduler.Services.JobDispatcherPollingService;
 
@@ -26,11 +27,15 @@ internal class JobDispatcherPollingService(
             configuration.JobDispatcherPollingInterval
         );
 
-        using var timer = new PeriodicTimer(configuration.JobDispatcherPollingInterval);
-
         await RunJobDispatcher(stoppingToken);
 
-        while (await timer.WaitForNextTickAsync(stoppingToken))
+        // The interval is read each cycle, so a runtime change applies to the next wait.
+        while (
+            await PollingDelay.WaitAsync(
+                () => configuration.JobDispatcherPollingInterval,
+                stoppingToken
+            )
+        )
         {
             await RunJobDispatcher(stoppingToken);
         }

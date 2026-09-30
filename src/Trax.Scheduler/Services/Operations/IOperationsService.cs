@@ -284,8 +284,10 @@ public interface IOperationsService
 
     /// <summary>
     /// Patches the live scheduler runtime settings. Writes are applied to both the
-    /// in-memory singleton (so changes take effect immediately) and to the persisted
-    /// <c>trax.scheduler_config</c> row (so changes survive restart).
+    /// in-memory singleton and to the persisted <c>trax.scheduler_config</c> row (so changes
+    /// survive restart). A running scheduler applies a change without a restart, from its next
+    /// polling cycle; <see cref="UpdateSchedulerConfigInput.LocalWorkerCount"/> is the exception
+    /// and applies when the worker pool next starts.
     /// </summary>
     /// <returns>
     /// <c>OperationResult(true, Count: N, ...)</c> where <c>N</c> is the number of

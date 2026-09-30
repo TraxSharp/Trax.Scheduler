@@ -283,7 +283,9 @@ public class SchedulerConfiguration
     public TimeSpan DeadLetterRetentionPeriod { get; internal set; } = TimeSpan.FromDays(30);
 
     /// <summary>
-    /// Whether to enable automatic purging of old dead letter records.
+    /// Whether resolved dead letters older than <see cref="DeadLetterRetentionPeriod"/> are deleted
+    /// automatically. Read on each cleanup run, so turning it off at runtime keeps them from the
+    /// next run on.
     /// </summary>
     public bool AutoPurgeDeadLetters { get; internal set; } = true;
 

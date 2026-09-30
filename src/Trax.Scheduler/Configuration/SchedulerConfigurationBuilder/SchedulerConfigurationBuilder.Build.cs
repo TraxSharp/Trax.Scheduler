@@ -168,8 +168,9 @@ public partial class SchedulerConfigurationBuilder
                 _parentBuilder.ServiceCollection.AddHostedService<MetadataCleanupPollingService>();
             }
 
-            if (_configuration.AutoPurgeDeadLetters)
-                _parentBuilder.ServiceCollection.AddHostedService<Services.DeadLetterCleanupPollingService.DeadLetterCleanupPollingService>();
+            // Always registered: AutoPurgeDeadLetters can be switched on at runtime, and the
+            // cleanup reads it on every run rather than here.
+            _parentBuilder.ServiceCollection.AddHostedService<Services.DeadLetterCleanupPollingService.DeadLetterCleanupPollingService>();
         }
     }
 
