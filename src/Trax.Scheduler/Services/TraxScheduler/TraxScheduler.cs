@@ -9,6 +9,7 @@ using Trax.Effect.Models.WorkQueue;
 using Trax.Effect.Models.WorkQueue.DTOs;
 using Trax.Effect.Services.ChangeSignal;
 using Trax.Effect.Services.ServiceTrain;
+using Trax.Mediator.Services.TrainDiscovery;
 using Trax.Mediator.Services.TrainRegistry;
 using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Extensions;
@@ -29,6 +30,29 @@ public class TraxScheduler(
     ITraxChangeSignal? changeSignal = null
 ) : ITraxScheduler
 {
+    private readonly ITrainDiscoveryService? _trainDiscovery;
+
+    /// <summary>
+    /// The constructor dependency injection uses. The discovery service lets scheduling check
+    /// that the train itself is registered, not only a train taking its input type: a scheduled
+    /// run runs the train it names.
+    /// </summary>
+    public TraxScheduler(
+        IDataContextProviderFactory dataContextFactory,
+        ITrainRegistry trainRegistry,
+        ITrainDiscoveryService trainDiscovery,
+        ICancellationRegistry cancellationRegistry,
+        ILogger<TraxScheduler> logger,
+        ITraxChangeSignal? changeSignal = null
+    )
+        : this(dataContextFactory, trainRegistry, cancellationRegistry, logger, changeSignal)
+    {
+        _trainDiscovery = trainDiscovery;
+    }
+
+    private void ValidateTrain(Type trainType, Type inputType) =>
+        trainRegistry.ValidateTrainRegistration(_trainDiscovery, trainType, inputType);
+
     /// <inheritdoc />
     public async Task<Manifest> ScheduleAsync<TTrain, TInput, TOutput>(
         string externalId,
@@ -40,7 +64,7 @@ public class TraxScheduler(
         where TTrain : IServiceTrain<TInput, TOutput>
         where TInput : IManifestProperties
     {
-        trainRegistry.ValidateTrainRegistration<TInput>();
+        ValidateTrain(typeof(TTrain), typeof(TInput));
 
         var resolved = ResolveOptions(options);
 
@@ -81,7 +105,7 @@ public class TraxScheduler(
         where TTrain : IServiceTrain<TInput, TOutput>
         where TInput : IManifestProperties
     {
-        trainRegistry.ValidateTrainRegistration<TInput>();
+        ValidateTrain(typeof(TTrain), typeof(TInput));
 
         var resolved = ResolveOptions(options);
         var sourceList = sources.ToList();
@@ -161,7 +185,7 @@ public class TraxScheduler(
         where TTrain : IServiceTrain<TInput, TOutput>
         where TInput : IManifestProperties
     {
-        trainRegistry.ValidateTrainRegistration<TInput>();
+        ValidateTrain(typeof(TTrain), typeof(TInput));
 
         var resolved = ResolveOptions(options);
 
@@ -218,7 +242,7 @@ public class TraxScheduler(
         where TTrain : IServiceTrain<TInput, TOutput>
         where TInput : IManifestProperties
     {
-        trainRegistry.ValidateTrainRegistration<TInput>();
+        ValidateTrain(typeof(TTrain), typeof(TInput));
 
         var resolved = ResolveOptions(options);
         var sourceList = sources.ToList();
@@ -414,7 +438,7 @@ public class TraxScheduler(
         where TTrain : IServiceTrain<TInput, TOutput>
         where TInput : IManifestProperties
     {
-        trainRegistry.ValidateTrainRegistration<TInput>();
+        ValidateTrain(typeof(TTrain), typeof(TInput));
 
         var resolved = ResolveOptions(options);
 
@@ -551,7 +575,7 @@ public class TraxScheduler(
         CancellationToken ct = default
     )
     {
-        trainRegistry.ValidateTrainRegistration(inputType);
+        ValidateTrain(trainType, inputType);
 
         var resolved = ResolveOptions(options);
 
@@ -591,7 +615,7 @@ public class TraxScheduler(
         CancellationToken ct = default
     )
     {
-        trainRegistry.ValidateTrainRegistration(inputType);
+        ValidateTrain(trainType, inputType);
 
         var resolved = ResolveOptions(options);
 
@@ -632,7 +656,7 @@ public class TraxScheduler(
         CancellationToken ct = default
     )
     {
-        trainRegistry.ValidateTrainRegistration(inputType);
+        ValidateTrain(trainType, inputType);
 
         var resolved = ResolveOptions(options);
 
@@ -684,7 +708,7 @@ public class TraxScheduler(
         CancellationToken ct = default
     )
     {
-        trainRegistry.ValidateTrainRegistration(inputType);
+        ValidateTrain(trainType, inputType);
 
         var resolved = ResolveOptions(options);
         var sourceList = sources.ToList();
@@ -765,7 +789,7 @@ public class TraxScheduler(
         CancellationToken ct = default
     )
     {
-        trainRegistry.ValidateTrainRegistration(inputType);
+        ValidateTrain(trainType, inputType);
 
         var resolved = ResolveOptions(options);
         var sourceList = sources.ToList();
