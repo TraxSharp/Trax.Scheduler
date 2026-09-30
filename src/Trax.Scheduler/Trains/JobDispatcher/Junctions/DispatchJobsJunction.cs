@@ -281,15 +281,24 @@ internal class DispatchJobsJunction(
     }
 
     /// <summary>
-    /// Handles a dispatch failure by marking the orphaned Metadata as Failed and optionally
-    /// requeuing the work queue entry for retry on the next dispatcher cycle.
+    /// Handles a submitter failure: when the job was not delivered, records the attempt as Failed
+    /// and requeues the entry if attempts remain; when the runner already started it, leaves the
+    /// run to the runner.
     /// </summary>
     /// <remarks>
-    /// The Metadata record is always marked as Failed (it represents one failed dispatch attempt).
-    /// If <see cref="SchedulerConfiguration.MaxDispatchAttempts"/> is greater than 0 and the
-    /// entry hasn't exhausted its attempts, the work queue entry is reset to Queued status
-    /// so the next dispatcher cycle creates a new Metadata and retries. The failed Metadata
-    /// stays as an immutable audit record.
+    /// A submitter that throws has not always failed to deliver. A runner that ran the job and
+    /// reported its failure, or that is still running it when the HTTP call times out, already
+    /// owns the run, and its outcome is (or will be) recorded on the run's row. Only a row that is
+    /// still <c>Pending</c> is a job no runner started, so the row is failed with a conditional
+    /// write that matches only while it is still <c>Pending</c>. If that write matches nothing,
+    /// the job was delivered: the entry stays Dispatched and no attempt is counted. If it matches,
+    /// a runner that receives the job later loses its claim to the Failed row and does not run it,
+    /// so a requeued entry cannot run twice.
+    /// <para>
+    /// If <see cref="SchedulerConfiguration.MaxDispatchAttempts"/> is greater than 0 and the entry
+    /// has not exhausted its attempts, the entry is reset to Queued so a later cycle creates a new
+    /// Metadata and retries. The failed Metadata stays as an immutable audit record.
+    /// </para>
     /// </remarks>
     private async Task HandleDispatchFailureAsync(
         long workQueueId,
@@ -302,61 +311,79 @@ internal class DispatchJobsJunction(
             using var scope = serviceProvider.CreateScope();
             var dataContext = scope.ServiceProvider.GetRequiredService<IDataContext>();
 
-            // 1. Mark orphaned metadata as Failed
-            var metadata = await dataContext.Metadatas.FirstOrDefaultAsync(
-                m => m.Id == metadataId,
+            using var transaction = await dataContext.BeginTransaction(CancellationToken);
+
+            var workQueueEntry = await dataContext.WorkQueues.FirstOrDefaultAsync(
+                w => w.Id == workQueueId,
                 CancellationToken
             );
 
-            if (metadata is not null && metadata.TrainState == TrainState.Pending)
+            // 1. Fail the run only if no runner has started it.
+            var failure = DescribeFailure(exception);
+            var now = DateTime.UtcNow;
+            var failed = await dataContext
+                .Metadatas.Where(m => m.Id == metadataId && m.TrainState == TrainState.Pending)
+                .ExecuteUpdateAsync(
+                    s =>
+                        s.SetProperty(m => m.TrainState, TrainState.Failed)
+                            .SetProperty(m => m.EndTime, now)
+                            .SetProperty(m => m.FailureException, failure.FailureException)
+                            .SetProperty(m => m.FailureReason, failure.FailureReason)
+                            .SetProperty(m => m.FailureJunction, failure.FailureJunction)
+                            .SetProperty(m => m.StackTrace, failure.StackTrace)
+                            .SetProperty(m => m.FailureClass, failure.FailureClass),
+                    CancellationToken
+                );
+
+            if (failed == 0)
             {
-                metadata.TrainState = TrainState.Failed;
-                metadata.EndTime = DateTime.UtcNow;
-                metadata.AddException(exception);
+                await dataContext.RollbackTransaction();
+                logger.LogWarning(
+                    exception,
+                    "The submitter reported a failure for work queue entry {WorkQueueId}, but a runner "
+                        + "has already started Metadata {MetadataId}; the run's outcome is the runner's "
+                        + "to record, so the entry is not requeued",
+                    workQueueId,
+                    metadataId
+                );
+                return;
             }
 
             // 2. Requeue the work queue entry if attempts remain
             var maxAttempts = schedulerConfiguration.MaxDispatchAttempts;
 
-            if (maxAttempts > 0)
+            if (maxAttempts > 0 && workQueueEntry is not null)
             {
-                var workQueueEntry = await dataContext.WorkQueues.FirstOrDefaultAsync(
-                    w => w.Id == workQueueId,
-                    CancellationToken
-                );
+                workQueueEntry.DispatchAttempts++;
 
-                if (workQueueEntry is not null)
+                if (workQueueEntry.DispatchAttempts < maxAttempts)
                 {
-                    workQueueEntry.DispatchAttempts++;
+                    workQueueEntry.Status = WorkQueueStatus.Queued;
+                    workQueueEntry.MetadataId = null;
+                    workQueueEntry.DispatchedAt = null;
 
-                    if (workQueueEntry.DispatchAttempts < maxAttempts)
-                    {
-                        workQueueEntry.Status = WorkQueueStatus.Queued;
-                        workQueueEntry.MetadataId = null;
-                        workQueueEntry.DispatchedAt = null;
-
-                        logger.LogWarning(
-                            "Requeued work queue entry {WorkQueueId} after dispatch failure "
-                                + "(attempt {Attempt}/{MaxAttempts})",
-                            workQueueId,
-                            workQueueEntry.DispatchAttempts,
-                            maxAttempts
-                        );
-                    }
-                    else
-                    {
-                        logger.LogError(
-                            "Work queue entry {WorkQueueId} exhausted dispatch attempts "
-                                + "({Attempts}/{MaxAttempts}). Leaving as Dispatched for dead letter handling",
-                            workQueueId,
-                            workQueueEntry.DispatchAttempts,
-                            maxAttempts
-                        );
-                    }
+                    logger.LogWarning(
+                        "Requeued work queue entry {WorkQueueId} after dispatch failure "
+                            + "(attempt {Attempt}/{MaxAttempts})",
+                        workQueueId,
+                        workQueueEntry.DispatchAttempts,
+                        maxAttempts
+                    );
+                }
+                else
+                {
+                    logger.LogError(
+                        "Work queue entry {WorkQueueId} exhausted dispatch attempts "
+                            + "({Attempts}/{MaxAttempts}). Leaving as Dispatched for dead letter handling",
+                        workQueueId,
+                        workQueueEntry.DispatchAttempts,
+                        maxAttempts
+                    );
                 }
             }
 
             await dataContext.SaveChanges(CancellationToken);
+            await dataContext.CommitTransaction();
         }
         catch (Exception ex)
         {
@@ -369,6 +396,24 @@ internal class DispatchJobsJunction(
                 metadataId
             );
         }
+    }
+
+    /// <summary>
+    /// The failure fields <see cref="Trax.Effect.Models.Metadata.Metadata.AddException"/> would
+    /// record for <paramref name="exception"/>, for a write that sets them without loading the row.
+    /// </summary>
+    private static Trax.Effect.Models.Metadata.Metadata DescribeFailure(Exception exception)
+    {
+        var description = Trax.Effect.Models.Metadata.Metadata.Create(
+            new CreateMetadata
+            {
+                Name = nameof(DispatchJobsJunction),
+                ExternalId = string.Empty,
+                Input = null,
+            }
+        );
+        description.AddException(exception);
+        return description;
     }
 
     /// <summary>

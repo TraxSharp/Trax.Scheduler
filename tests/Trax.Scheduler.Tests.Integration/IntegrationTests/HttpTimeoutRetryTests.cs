@@ -71,6 +71,13 @@ public class HttpTimeoutRetryTests
             );
         queuedAgain.Should().Be(1, "a timed-out run is a failure, and a failure is retried");
 
+        // The retry is queued behind the retry delay; stand in for that time passing.
+        await fx
+            .DataContext.WorkQueues.Where(w =>
+                w.Manifest!.ExternalId == "http-timeout-retry" && w.Status == WorkQueueStatus.Queued
+            )
+            .ExecuteUpdateAsync(u => u.SetProperty(w => w.ScheduledAt, (DateTime?)null));
+
         // The retry times out too, which reaches MaxRetries: the next cycle dead-letters it.
         await fx.RunJobDispatcherAsync();
         await fx.RunManifestManagerAsync();
