@@ -5,6 +5,7 @@ using Trax.Effect.Data.Services.DataContext;
 using Trax.Effect.Enums;
 using Trax.Effect.Services.EffectJunction;
 using Trax.Scheduler.Configuration;
+using Trax.Scheduler.Trains.ManifestManager.Utilities;
 
 namespace Trax.Scheduler.Trains.ManifestManager.Junctions;
 
@@ -18,11 +19,14 @@ namespace Trax.Scheduler.Trains.ManifestManager.Junctions;
 /// will mark the metadata as Failed so it doesn't stay orphaned and block the
 /// DormantDependentContext concurrency guard or count against MaxActiveJobs capacity.
 ///
-/// A run whose manifest has a Timeout longer than <see cref="SchedulerConfiguration.DefaultJobTimeout"/>
-/// is given as much longer: it is reaped at the later of
-/// <see cref="SchedulerConfiguration.StaleInProgressTimeout"/> and its manifest's timeout plus the
-/// grace the defaults leave between the job timeout and the stale timeout
-/// (<c>StaleInProgressTimeout - DefaultJobTimeout</c>, never negative). A run still inside its own
+/// A run is reaped at the later of <see cref="SchedulerConfiguration.StaleInProgressTimeout"/> and
+/// its own timeout plus the grace the defaults leave between the job timeout and the stale
+/// timeout (<c>StaleInProgressTimeout - DefaultJobTimeout</c>, never negative). Its own timeout is
+/// resolved as CancelTimedOutJobsJunction resolves it (see <see cref="RunTimeouts"/>): the
+/// manifest timeout of the run at the root of its ParentId chain, or
+/// <see cref="SchedulerConfiguration.DefaultJobTimeout"/> when a scheduler dispatched that root, so
+/// a nested run is kept as long as the scheduled run it belongs to and a
+/// <see cref="SchedulerConfiguration.DefaultJobTimeout"/> longer than the stale timeout is honoured. A run still inside its own
 /// timeout is therefore never reaped while it runs, and one that overran it is first cancelled by
 /// CancelTimedOutJobsJunction and only then, once cancellation has had the same time to land,
 /// failed here.
@@ -50,19 +54,29 @@ internal class ReapStaleInProgressMetadataJunction(
                 && m.StartTime < cutoff
                 && !config.ExcludedTrainTypeNames.Contains(m.Name)
             )
-            .Select(m => new
-            {
+            .Select(m => new TimedRun(
                 m.Id,
+                m.ParentId,
                 m.Name,
                 m.StartTime,
                 m.ManifestId,
-                TimeoutSeconds = m.Manifest != null ? m.Manifest.TimeoutSeconds : null,
-            })
+                m.Manifest != null ? m.Manifest.TimeoutSeconds : null
+            ))
             .AsNoTracking()
             .ToListAsync(CancellationToken);
 
+        var bounds =
+            candidates.Count == 0
+                ? []
+                : await RunTimeouts.ResolveAsync(
+                    dataContext,
+                    config,
+                    candidates,
+                    CancellationToken
+                );
+
         var staleMetadata = candidates
-            .Where(m => now - m.StartTime > StaleThreshold(m.TimeoutSeconds))
+            .Where(m => now - m.StartTime > StaleThreshold(bounds[m.Id].Timeout))
             .ToList();
 
         if (staleMetadata.Count == 0)
@@ -116,19 +130,19 @@ internal class ReapStaleInProgressMetadataJunction(
 
     /// <summary>
     /// How long a run may stay InProgress before it is failed: the stale in-progress timeout, or
-    /// its manifest's timeout plus the grace between the default job timeout and the stale timeout
+    /// the run's own timeout plus the grace between the default job timeout and the stale timeout
     /// when that is longer.
     /// </summary>
-    private TimeSpan StaleThreshold(int? manifestTimeoutSeconds)
+    private TimeSpan StaleThreshold(TimeSpan? effectiveTimeout)
     {
-        if (manifestTimeoutSeconds is not { } seconds)
+        if (effectiveTimeout is not { } timeout)
             return config.StaleInProgressTimeout;
 
         var grace = config.StaleInProgressTimeout - config.DefaultJobTimeout;
         if (grace < TimeSpan.Zero)
             grace = TimeSpan.Zero;
 
-        var ownThreshold = TimeSpan.FromSeconds(seconds) + grace;
+        var ownThreshold = timeout + grace;
         return ownThreshold > config.StaleInProgressTimeout
             ? ownThreshold
             : config.StaleInProgressTimeout;

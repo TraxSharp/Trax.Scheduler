@@ -199,11 +199,14 @@ public class SchedulerConfiguration
     public TimeSpan FailureCountWindow { get; internal set; } = TimeSpan.FromHours(24);
 
     /// <summary>
-    /// Timeout after which a running job is considered stuck.
+    /// Timeout after which a running job is cancelled when its manifest sets no Timeout.
     /// </summary>
     /// <remarks>
-    /// Jobs that have been in "InProgress" state longer than this duration
-    /// may be automatically failed and potentially retried.
+    /// Applies to a run a scheduler dispatched (it has a manifest, a work queue entry or a
+    /// background job) whose manifest sets no TimeoutSeconds. A train nested inside a run takes
+    /// the timeout of the run at the root of its chain. A run started on the train bus by a host
+    /// that shares the database is not bounded by it; <see cref="StaleInProgressTimeout"/> still
+    /// fails it if it never finishes.
     /// </remarks>
     public TimeSpan DefaultJobTimeout
     {
@@ -231,8 +234,9 @@ public class SchedulerConfiguration
     /// Acts as a safety net for worker crashes, Lambda hard-kills, or OOM events where the
     /// process dies without reaching FinishServiceTrain. If a job remains in InProgress state
     /// longer than this duration, the ManifestManager's ReapStaleInProgressMetadataJunction
-    /// will mark it as Failed. This should be longer than <see cref="DefaultJobTimeout"/>
-    /// to allow cooperative cancellation to propagate before force-failing.
+    /// will mark it as Failed. A run whose own timeout (its root manifest's Timeout, or
+    /// <see cref="DefaultJobTimeout"/>) is longer is kept until that timeout plus the grace between
+    /// the two defaults, so cooperative cancellation can land before the run is force-failed.
     /// </remarks>
     public TimeSpan StaleInProgressTimeout { get; internal set; } = TimeSpan.FromMinutes(60);
 

@@ -242,7 +242,9 @@ public partial class SchedulerConfigurationBuilder
     }
 
     /// <summary>
-    /// Sets the timeout after which a running job is considered stuck.
+    /// Sets the timeout after which a running job is cancelled, for a run a scheduler dispatched
+    /// whose manifest sets no Timeout of its own. A train nested inside a run shares that run's
+    /// timeout; a run a scheduler did not dispatch is not bounded by it.
     /// </summary>
     /// <param name="timeout">The job timeout (default: 20 minutes)</param>
     /// <returns>The builder for method chaining</returns>
@@ -290,6 +292,8 @@ public partial class SchedulerConfigurationBuilder
 
     /// <summary>
     /// Sets the timeout after which an InProgress job that never completed is automatically failed.
+    /// A run whose own timeout is longer (its manifest's Timeout, or a longer
+    /// <see cref="DefaultJobTimeout"/>) is kept until that timeout has passed as well.
     /// </summary>
     /// <param name="timeout">The stale in-progress timeout (default: 60 minutes)</param>
     /// <returns>The builder for method chaining</returns>
