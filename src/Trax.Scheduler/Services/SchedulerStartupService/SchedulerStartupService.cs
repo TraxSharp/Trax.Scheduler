@@ -34,6 +34,8 @@ internal class SchedulerStartupService(
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        configuration.Owner ??= ResolveOwner(serviceProvider);
+
         // RecoverStuckJobs only makes sense with a real database — in-memory data is
         // lost on restart, so there are no stuck jobs to recover.
         if (configuration.RecoverStuckJobsOnStartup && configuration.HasDatabaseProvider)
@@ -43,6 +45,20 @@ internal class SchedulerStartupService(
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    /// <summary>
+    /// The name this application's manifests carry as their owner: the host environment's
+    /// <c>ApplicationName</c>, or the entry assembly's name when no host environment is
+    /// registered. Null when neither gives a name, in which case the startup prune deletes nothing.
+    /// </summary>
+    internal static string? ResolveOwner(IServiceProvider services)
+    {
+        var name =
+            services.GetService<IHostEnvironment>()?.ApplicationName
+            ?? System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name;
+
+        return string.IsNullOrWhiteSpace(name) ? null : name;
+    }
 
     /// <summary>
     /// Fails every <c>InProgress</c> run in the shared database whose <c>StartTime</c> precedes
@@ -251,15 +267,16 @@ internal class SchedulerStartupService(
     internal const int PruneBatchSize = ManifestPruner.BatchSize;
 
     /// <summary>
-    /// Deletes the manifests in the database that this host's configuration does not declare.
+    /// Deletes this application's manifests that its configuration no longer declares.
     /// </summary>
     /// <remarks>
     /// A host that declares no manifests prunes nothing: an API or worker host that calls
     /// <c>AddScheduler</c> only to reach the scheduler services has no basis for calling another
-    /// host's manifests orphaned. A manifest with a pending or running run is kept until the run
-    /// finishes (see <see cref="ManifestPruner"/>). Nothing on a manifest records which
-    /// application declared it, so between hosts that each declare schedules, the prune still
-    /// compares the whole table against this host's set.
+    /// host's manifests orphaned. Only manifests whose <c>Owner</c> is this application's name are
+    /// candidates, so a manifest another application declares against the same database, or one
+    /// with no owner at all (written before owners were recorded and not declared since), is never
+    /// deleted here; when this application's name cannot be found, nothing is. A manifest with a
+    /// pending or running run is kept until the run finishes (see <see cref="ManifestPruner"/>).
     /// </remarks>
     private async Task PruneOrphanedManifestsAsync(
         IDataContext dataContext,
@@ -271,6 +288,14 @@ internal class SchedulerStartupService(
         {
             logger.LogInformation(
                 "Skipping orphaned manifest pruning: this host declares no manifests, so it has no basis to call any manifest orphaned"
+            );
+            return;
+        }
+
+        if (configuration.Owner is not { } owner)
+        {
+            logger.LogWarning(
+                "Skipping orphaned manifest pruning: this host has no application name, so it cannot tell its own manifests from another application's"
             );
             return;
         }
@@ -288,7 +313,8 @@ internal class SchedulerStartupService(
         // where it's a trivial O(n) HashSet lookup. The database only sees simple queries
         // with small IN(...) clauses during the batched deletes.
         var allManifests = await dataContext
-            .Manifests.Select(m => new { m.Id, m.ExternalId })
+            .Manifests.Where(m => m.Owner == owner)
+            .Select(m => new { m.Id, m.ExternalId })
             .ToListAsync(cancellationToken);
 
         var orphanedManifestIds = allManifests
@@ -303,9 +329,10 @@ internal class SchedulerStartupService(
         }
 
         logger.LogInformation(
-            "Found {OrphanCount} orphaned manifest(s) to prune (of {TotalCount} total)",
+            "Found {OrphanCount} orphaned manifest(s) to prune (of {TotalCount} owned by {Owner})",
             orphanedManifestIds.Count,
-            allManifests.Count
+            allManifests.Count,
+            owner
         );
 
         var (pruned, kept) = await ManifestPruner.PruneAsync(

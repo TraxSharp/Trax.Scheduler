@@ -25,6 +25,8 @@ namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 [TestFixture]
 public class PruneWithNestedRunsTests : TestSetup
 {
+    private const string Owner = "prune-with-nested-runs-tests";
+
     [Test]
     public async Task Startup_prune_removes_a_manifest_whose_run_started_a_nested_train()
     {
@@ -38,6 +40,7 @@ public class PruneWithNestedRunsTests : TestSetup
             PruneOrphanedManifests = true,
             RecoverStuckJobsOnStartup = false,
             HasDatabaseProvider = true,
+            Owner = Owner,
         };
         configuration.PendingManifests.Add(
             new PendingManifest
@@ -150,6 +153,7 @@ public class PruneWithNestedRunsTests : TestSetup
             PruneOrphanedManifests = true,
             RecoverStuckJobsOnStartup = false,
             HasDatabaseProvider = true,
+            Owner = Owner,
         };
         configuration.PendingManifests.Add(
             new PendingManifest
@@ -188,6 +192,7 @@ public class PruneWithNestedRunsTests : TestSetup
         );
         manifest.ExternalId = externalId;
         manifest.ManifestGroupId = group.Id;
+        manifest.Owner = Owner;
 
         await DataContext.Track(manifest);
         await DataContext.SaveChanges(CancellationToken.None);

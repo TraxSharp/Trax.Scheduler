@@ -72,6 +72,16 @@ public class TraxScheduler(
             changeSignal
         ) { }
 
+    /// <summary>
+    /// Records this application as the manifest's owner, so only this application's startup prune
+    /// ever considers it. Leaves the owner alone when the application has no name.
+    /// </summary>
+    private void StampOwner(Manifest manifest)
+    {
+        if (configuration?.Owner is { } owner)
+            manifest.Owner = owner;
+    }
+
     private void ValidateTrain(Type trainType, Type inputType) =>
         trainRegistry.ValidateTrainRegistration(trainDiscovery, trainType, inputType);
 
@@ -101,6 +111,8 @@ public class TraxScheduler(
             group: resolved.Group,
             ct: ct
         );
+
+        StampOwner(manifest);
 
         await context.SaveChanges(ct);
 
@@ -161,6 +173,8 @@ public class TraxScheduler(
                     group: resolved.Group,
                     ct: ct
                 );
+
+                StampOwner(manifest);
                 results.Add(manifest);
             }
 
@@ -233,6 +247,8 @@ public class TraxScheduler(
             group: resolved.Group,
             ct: ct
         );
+
+        StampOwner(manifest);
 
         await context.SaveChanges(ct);
 
@@ -313,6 +329,8 @@ public class TraxScheduler(
                     group: resolved.Group,
                     ct: ct
                 );
+
+                StampOwner(manifest);
                 results.Add(manifest);
             }
 
@@ -562,6 +580,8 @@ public class TraxScheduler(
             ct: ct
         );
 
+        StampOwner(manifest);
+
         await context.SaveChanges(ct);
 
         logger.LogInformation(
@@ -691,6 +711,8 @@ public class TraxScheduler(
             ct: ct
         );
 
+        StampOwner(manifest);
+
         await context.SaveChanges(ct);
 
         logger.LogInformation(
@@ -728,6 +750,8 @@ public class TraxScheduler(
             group: resolved.Group,
             ct: ct
         );
+
+        StampOwner(manifest);
 
         await context.SaveChanges(ct);
 
@@ -777,6 +801,8 @@ public class TraxScheduler(
             group: resolved.Group,
             ct: ct
         );
+
+        StampOwner(manifest);
 
         await context.SaveChanges(ct);
 
@@ -838,6 +864,8 @@ public class TraxScheduler(
                     group: resolved.Group,
                     ct: ct
                 );
+
+                StampOwner(manifest);
                 results.Add(manifest);
             }
 
@@ -936,6 +964,8 @@ public class TraxScheduler(
                     group: resolved.Group,
                     ct: ct
                 );
+
+                StampOwner(manifest);
                 results.Add(manifest);
             }
 

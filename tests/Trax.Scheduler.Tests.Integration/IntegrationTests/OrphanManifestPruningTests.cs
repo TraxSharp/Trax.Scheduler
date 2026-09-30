@@ -33,6 +33,8 @@ namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 [TestFixture]
 public class OrphanManifestPruningTests : TestSetup
 {
+    private const string Owner = "orphan-pruning-tests";
+
     #region Orphan Pruning Tests
 
     [Test]
@@ -625,6 +627,7 @@ public class OrphanManifestPruningTests : TestSetup
             PruneOrphanedManifests = pruneOrphanedManifests,
             RecoverStuckJobsOnStartup = false,
             HasDatabaseProvider = true,
+            Owner = Owner,
         };
 
         // Add a no-op PendingManifest that carries the ExpectedExternalIds
@@ -648,7 +651,8 @@ public class OrphanManifestPruningTests : TestSetup
 
     private async Task<Manifest> CreateAndSaveManifestWithExternalId(
         string externalId,
-        long? groupId = null
+        long? groupId = null,
+        string? owner = Owner
     )
     {
         if (groupId is null)
@@ -674,6 +678,7 @@ public class OrphanManifestPruningTests : TestSetup
 
         manifest.ExternalId = externalId;
         manifest.ManifestGroupId = groupId.Value;
+        manifest.Owner = owner;
 
         await DataContext.Track(manifest);
         await DataContext.SaveChanges(CancellationToken.None);
@@ -703,6 +708,7 @@ public class OrphanManifestPruningTests : TestSetup
 
         manifest.ExternalId = externalId;
         manifest.ManifestGroupId = group.Id;
+        manifest.Owner = Owner;
 
         await DataContext.Track(manifest);
         await DataContext.SaveChanges(CancellationToken.None);

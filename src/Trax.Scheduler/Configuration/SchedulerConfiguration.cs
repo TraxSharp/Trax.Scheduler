@@ -371,8 +371,24 @@ public class SchedulerConfiguration
     /// definition from code also removes it from the database on the next startup.
     /// Disable this if you create manifests dynamically at runtime via
     /// <see cref="Services.TraxScheduler.ITraxScheduler"/>.
+    ///
+    /// Only this application's manifests are considered. Every manifest the scheduler writes
+    /// records the application that declared it (<c>Manifest.Owner</c>, the host's
+    /// <c>IHostEnvironment.ApplicationName</c>, or the entry assembly's name when there is no host
+    /// environment), and the prune compares only the manifests carrying this application's name.
+    /// A manifest another application owns, and one with no owner (written before the column
+    /// existed and not declared since), is never deleted by it. A host that declares no manifests,
+    /// or whose application name cannot be found, prunes nothing, and a manifest with a pending or
+    /// running run is kept until the run finishes.
     /// </remarks>
     public bool PruneOrphanedManifests { get; internal set; } = true;
+
+    /// <summary>
+    /// The application name every manifest this scheduler writes records as its owner, and the
+    /// only owner the startup prune deletes from. Set by the startup service from the host
+    /// environment; null until then, and when no name can be found.
+    /// </summary>
+    internal string? Owner { get; set; }
 
     /// <summary>
     /// Whether a real database provider (e.g. PostgreSQL) is configured.
