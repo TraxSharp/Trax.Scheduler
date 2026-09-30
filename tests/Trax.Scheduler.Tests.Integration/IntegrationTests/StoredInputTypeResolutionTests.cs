@@ -66,11 +66,12 @@ public class StoredInputTypeResolutionTests : TestSetup
 
         DataContext.Reset();
         var row = await DataContext.WorkQueues.FirstAsync(q => q.Id == entry.Id);
-        row.Status.Should().Be(WorkQueueStatus.Queued);
-        row.MetadataId.Should().BeNull();
-        (await DataContext.Metadatas.CountAsync(m => m.Name == typeof(SchedulerTestTrain).FullName))
-            .Should()
-            .Be(0);
+        row.Status.Should()
+            .Be(WorkQueueStatus.Dispatched, "an unreadable input is settled, not retried");
+        row.MetadataId.Should().NotBeNull();
+        var run = await DataContext.Metadatas.FirstAsync(m => m.Id == row.MetadataId);
+        run.TrainState.Should().Be(TrainState.Failed, "the refusal is recorded as the entry's run");
+        run.FailureReason.Should().Contain(typeof(NotATrainInput).FullName!);
         NotATrainInput
             .Constructed.Should()
             .Be(

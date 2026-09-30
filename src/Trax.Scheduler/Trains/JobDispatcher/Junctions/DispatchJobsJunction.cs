@@ -177,19 +177,26 @@ internal class DispatchJobsJunction(
         object? deserializedInput = null;
         if (claimed is { Input: not null, InputTypeName: not null })
         {
-            // Resolved among the registered trains' inputs only. A name that is not one of them
-            // throws inside the claim transaction, which rolls back and leaves the entry Queued.
-            var inputType =
-                RegisteredInputTypes.Find(trainRegistry, claimed.InputTypeName)
-                ?? throw new TrainException(
-                    $"Work queue entry {claimed.Id} names input type '{claimed.InputTypeName}', "
-                        + "which is not the input of any registered train."
+            try
+            {
+                // Resolved among the registered trains' inputs only.
+                var inputType =
+                    RegisteredInputTypes.Find(trainRegistry, claimed.InputTypeName)
+                    ?? throw new TrainException(
+                        $"'{claimed.InputTypeName}' is not the input of any registered train."
+                    );
+                deserializedInput = JsonSerializer.Deserialize(
+                    claimed.Input,
+                    inputType,
+                    TraxJsonSerializationOptions.ManifestProperties
                 );
-            deserializedInput = JsonSerializer.Deserialize(
-                claimed.Input,
-                inputType,
-                TraxJsonSerializationOptions.ManifestProperties
-            );
+            }
+            catch (Exception ex)
+                when (ex is TrainException or JsonException or NotSupportedException)
+            {
+                await RecordUnreadableInputAsync(dataContext, claimed, ex);
+                return false;
+            }
         }
 
         // Create a new Metadata record for this execution.
@@ -285,6 +292,62 @@ internal class DispatchJobsJunction(
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Settles an entry whose stored input cannot be read, inside the claim transaction: records a
+    /// Failed run for it with the reason and marks the entry Dispatched to that run.
+    /// </summary>
+    /// <remarks>
+    /// The input of an entry is fixed when it is queued, so an input this host cannot read (its
+    /// type was renamed or removed, or its JSON no longer fits the type) will not be readable on
+    /// any later cycle either. Left Queued, the entry stayed at the head of its subject and kept
+    /// its manifest from scheduling, and failed again every cycle. Settled, it is a failure of its
+    /// manifest like any other, so retries and dead-lettering apply, and the next entry for its
+    /// subject can be dispatched.
+    /// </remarks>
+    private async Task RecordUnreadableInputAsync(
+        IDataContext dataContext,
+        WorkQueue claimed,
+        Exception exception
+    )
+    {
+        var failure = new TrainException(
+            $"The input of work queue entry {claimed.Id} could not be read as "
+                + $"'{claimed.InputTypeName}', so it was not dispatched: {exception.Message}"
+        );
+
+        var metadata = Trax.Effect.Models.Metadata.Metadata.Create(
+            new CreateMetadata
+            {
+                Name = claimed.TrainName,
+                ExternalId = claimed.ExternalId,
+                Input = null,
+                ManifestId = claimed.ManifestId,
+            }
+        );
+        metadata.TrainState = TrainState.Failed;
+        metadata.EndTime = DateTime.UtcNow;
+        metadata.AddException(failure);
+
+        await dataContext.Track(metadata);
+        await dataContext.SaveChanges(CancellationToken);
+
+        claimed.Status = WorkQueueStatus.Dispatched;
+        claimed.MetadataId = metadata.Id;
+        claimed.DispatchedAt = DateTime.UtcNow;
+        await dataContext.SaveChanges(CancellationToken);
+        await dataContext.CommitTransaction();
+
+        logger.LogError(
+            exception,
+            "Work queue entry {WorkQueueId} (train: {TrainName}) has an input that cannot be read "
+                + "as {InputType}; recorded it as failed run {MetadataId} and did not dispatch it",
+            claimed.Id,
+            claimed.TrainName,
+            claimed.InputTypeName,
+            metadata.Id
+        );
     }
 
     /// <summary>
