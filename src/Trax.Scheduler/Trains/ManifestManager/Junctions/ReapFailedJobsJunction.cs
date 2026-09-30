@@ -18,8 +18,10 @@ namespace Trax.Scheduler.Trains.ManifestManager.Junctions;
 /// once its counted failures exceed it: <c>MaxRetries(0)</c> dead-letters on the first failure,
 /// <c>MaxRetries(3)</c> on the fourth. A manifest with no counted failure is never dead-lettered.
 ///
-/// Dead letters are persisted immediately via SaveChanges() to ensure they survive
-/// even if later junctions in the train fail.
+/// Dead letters are saved here rather than at the end of the train, but the polling service
+/// runs the whole ManifestManager cycle inside one transaction (the one holding the leader
+/// lock), so they commit or roll back with the rest of the cycle. On InMemory there is no
+/// transaction and the save is final.
 ///
 /// The returned List&lt;DeadLetter&gt; is stored in the train's Memory and made available
 /// to DetermineJobsToQueueJunction so it can exclude just-dead-lettered manifests.
@@ -77,7 +79,7 @@ internal class ReapFailedJobsJunction(
             }
         }
 
-        // Persist all changes immediately to ensure dead letters survive train failure
+        // Saved within the cycle's transaction: a later junction's failure rolls these back too.
         await dataContext.SaveChanges(CancellationToken);
 
         if (deadLettersCreated.Count > 0)

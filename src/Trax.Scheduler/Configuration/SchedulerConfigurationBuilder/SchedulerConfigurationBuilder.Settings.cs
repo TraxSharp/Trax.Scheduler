@@ -96,11 +96,12 @@ public partial class SchedulerConfigurationBuilder
     /// <summary>
     /// Sets the maximum number of active jobs (Pending + InProgress) allowed across all manifests.
     /// </summary>
-    /// <param name="maxJobs">The maximum active jobs (default: 100, null = unlimited)</param>
+    /// <param name="maxJobs">The maximum active jobs (default: 10, null = unlimited)</param>
     /// <returns>The builder for method chaining</returns>
     /// <remarks>
-    /// When the total number of active jobs reaches this limit, no new jobs will be enqueued
-    /// until existing jobs complete.
+    /// When the total number of active jobs reaches this limit, the JobDispatcher dispatches no
+    /// new work queue entries until existing jobs complete. The limit is approximate: each
+    /// dispatching host counts active jobs on its own, so N hosts can reach N times the limit.
     /// </remarks>
     public SchedulerConfigurationBuilder MaxActiveJobs(int? maxJobs)
     {

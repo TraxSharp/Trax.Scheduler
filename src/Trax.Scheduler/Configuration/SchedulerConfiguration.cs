@@ -92,11 +92,16 @@ public class SchedulerConfiguration
     /// <remarks>
     /// Enforced by the JobDispatcher at dispatch time. Metadata whose train name appears in
     /// <see cref="ExcludedTrainTypeNames"/> is excluded from the count. By default, internal
-    /// scheduler trains (JobDispatcher, JobRunner, ManifestManager, MetadataCleanup)
-    /// are excluded. When the total number of active jobs reaches this limit, the JobDispatcher
-    /// will not dispatch new work queue entries until existing jobs complete.
+    /// scheduler trains (JobDispatcher, JobRunner, ManifestManager, MetadataCleanup,
+    /// DeadLetterCleanup) are excluded. When the total number of active jobs reaches this limit,
+    /// the JobDispatcher will not dispatch new work queue entries until existing jobs complete.
     /// Work queue entries remain in Queued status as a buffer.
     /// Set to null to disable this limit (unlimited).
+    ///
+    /// <para>The limit is approximate, not a hard ceiling. Each dispatcher counts active jobs at
+    /// the start of its cycle without a lock shared with other hosts, so with N hosts dispatching
+    /// against the same database the number of active jobs can reach N times the limit. The same
+    /// holds for a group's own limit.</para>
     /// </remarks>
     public int? MaxActiveJobs
     {
