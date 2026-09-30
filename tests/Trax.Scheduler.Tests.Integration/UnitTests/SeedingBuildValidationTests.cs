@@ -294,6 +294,84 @@ public class SeedingBuildValidationTests
             );
     }
 
+    [Test]
+    public void A_schedule_inside_a_named_batchs_group_and_prefix_fails_the_build()
+    {
+        var act = () =>
+            Build(scheduler =>
+                scheduler
+                    .ScheduleMany<ISchedulerTestTrain, SchedulerTestInput, Unit, string>(
+                        "sync",
+                        ["orders"],
+                        id => (id, new SchedulerTestInput { Value = id }),
+                        Every.Minutes(5)
+                    )
+                    .Schedule<ISchedulerTestTrain, SchedulerTestInput, Unit>(
+                        "sync-extra",
+                        new SchedulerTestInput(),
+                        Every.Minutes(5),
+                        o => o.Group("sync")
+                    )
+            );
+
+        act.Should()
+            .Throw<InvalidOperationException>(
+                "the batch's prune would delete 'sync-extra' and its seed would recreate it every start"
+            )
+            .WithMessage(
+                "Batch 'sync' prunes manifests whose external ID starts with 'sync-'*'sync-extra'*"
+            );
+    }
+
+    [Test]
+    public void A_schedule_matching_an_unnamed_batchs_prune_prefix_fails_the_build_in_any_group()
+    {
+        var act = () =>
+            Build(scheduler =>
+                scheduler
+                    .ScheduleMany<ISchedulerTestTrain, SchedulerTestInput, Unit, string>(
+                        ["sync-users"],
+                        id => (id, new SchedulerTestInput { Value = id }),
+                        Every.Minutes(5),
+                        o => o.PrunePrefix("sync-")
+                    )
+                    .Schedule<ISchedulerTestTrain, SchedulerTestInput, Unit>(
+                        "sync-extra",
+                        new SchedulerTestInput(),
+                        Every.Minutes(5)
+                    )
+            );
+
+        act.Should()
+            .Throw<InvalidOperationException>(
+                "an unnamed batch's prune is not limited to its group"
+            )
+            .WithMessage("*'sync-'*'sync-extra'*");
+    }
+
+    [Test]
+    public void A_schedule_with_a_batchs_prefix_in_another_group_builds_when_the_batch_is_named()
+    {
+        var act = () =>
+            Build(scheduler =>
+                scheduler
+                    .ScheduleMany<ISchedulerTestTrain, SchedulerTestInput, Unit, string>(
+                        "sync",
+                        ["orders"],
+                        id => (id, new SchedulerTestInput { Value = id }),
+                        Every.Minutes(5)
+                    )
+                    .Schedule<ISchedulerTestTrain, SchedulerTestInput, Unit>(
+                        "sync-extra",
+                        new SchedulerTestInput(),
+                        Every.Minutes(5),
+                        o => o.Group("elsewhere")
+                    )
+            );
+
+        act.Should().NotThrow("a named batch prunes only within its own group");
+    }
+
     private static void Build(
         Func<SchedulerConfigurationBuilder, SchedulerConfigurationBuilder> configure
     )

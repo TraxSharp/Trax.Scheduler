@@ -5,6 +5,7 @@ public partial class SchedulerConfigurationBuilder
     // What each schedule or batch declares about its group and its prune, checked at build time.
     private readonly List<GroupDeclaration> _groupDeclarations = [];
     private readonly List<BatchPruneDeclaration> _batchPrunes = [];
+    private readonly List<SingleScheduleDeclaration> _singleSchedules = [];
 
     private sealed record GroupDeclaration(
         string Group,
@@ -22,17 +23,23 @@ public partial class SchedulerConfigurationBuilder
         bool ScopedToGroup
     );
 
+    private sealed record SingleScheduleDeclaration(string ExternalId, string Group);
+
     /// <summary>
-    /// Records the group settings a single manifest's options state, for
-    /// <see cref="ValidateSeedDeclarations"/>.
+    /// Records the group settings a single manifest's options state, and its external ID and
+    /// group, for <see cref="ValidateSeedDeclarations"/>.
     /// </summary>
-    private void DeclareGroup(string externalId, ScheduleOptions resolved) =>
+    private void DeclareGroup(string externalId, ScheduleOptions resolved)
+    {
+        var group = resolved._groupId ?? externalId;
         AddGroupDeclaration(
-            resolved._groupId ?? externalId,
+            group,
             $"'{externalId}'",
             resolved,
             ownsGroup: resolved._groupId is null
         );
+        _singleSchedules.Add(new SingleScheduleDeclaration(externalId, group));
+    }
 
     /// <summary>
     /// Records a batch's group settings and prune, for <see cref="ValidateSeedDeclarations"/>.
@@ -84,14 +91,17 @@ public partial class SchedulerConfigurationBuilder
 
     /// <summary>
     /// Fails the build when two members of one manifest group state different values for the same
-    /// group setting, or when one batch's prune could delete another batch's manifests.
+    /// group setting, or when a batch's prune could delete another batch's manifests or a manifest
+    /// scheduled on its own.
     /// </summary>
     /// <remarks>
     /// A group setting is written whenever a member's options state it, so two members stating
     /// different values would overwrite each other at every start, and which one held would depend
     /// on seeding order. A batch's prune deletes the manifests whose external ID starts with its
     /// prefix and that the batch no longer declares; a named batch prunes only within its own
-    /// group, so overlapping prefixes are refused only where the groups do not tell them apart.
+    /// group, so overlapping prefixes are refused only where the groups do not tell them apart. A
+    /// single schedule the prune reaches is never among the batch's own manifests, so the prune
+    /// would delete it, with its history, and its seed would recreate it, at every start.
     /// </remarks>
     private void ValidateSeedDeclarations()
     {
@@ -140,6 +150,33 @@ public partial class SchedulerConfigurationBuilder
                     + "manifests and their history.\n\n"
                     + "Give the batches names where neither plus '-' starts the other, or put them "
                     + "in different groups."
+            );
+        }
+
+        RejectSingleSchedulesInsideBatchPrunes();
+    }
+
+    private void RejectSingleSchedulesInsideBatchPrunes()
+    {
+        foreach (var prune in _batchPrunes)
+        foreach (var single in _singleSchedules)
+        {
+            if (!single.ExternalId.StartsWith(prune.Prefix, StringComparison.Ordinal))
+                continue;
+
+            // A group-scoped prune never reaches outside its group.
+            if (prune.ScopedToGroup && prune.Group != single.Group)
+                continue;
+
+            throw new InvalidOperationException(
+                $"{Capitalise(prune.DeclaredBy)} prunes manifests whose external ID starts with "
+                    + $"'{prune.Prefix}', which includes '{single.ExternalId}', scheduled on its own. "
+                    + "Each start, the batch would delete it and its history, and its own schedule "
+                    + "would create it again.\n\n"
+                    + $"Give '{single.ExternalId}' an external ID that does not start with "
+                    + $"'{prune.Prefix}'"
+                    + (prune.ScopedToGroup ? ", put it in a different group," : "")
+                    + " or make it one of the batch's items."
             );
         }
     }
