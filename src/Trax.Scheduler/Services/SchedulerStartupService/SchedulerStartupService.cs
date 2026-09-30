@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Trax.Effect.Data.Services.DataContext;
 using Trax.Effect.Enums;
 using Trax.Scheduler.Configuration;
+using Trax.Scheduler.Services.ManifestPruning;
 using Trax.Scheduler.Services.TraxScheduler;
 
 namespace Trax.Scheduler.Services.SchedulerStartupService;
@@ -151,11 +152,22 @@ internal class SchedulerStartupService(
                     .PendingManifests.SelectMany(p => p.ExpectedExternalIds)
                     .ToHashSet();
 
-                await PruneOrphanedManifestsAsync(
-                    dataContext,
-                    expectedExternalIds,
-                    cancellationToken
-                );
+                // Pruning is housekeeping: a failure is logged and the host still starts.
+                try
+                {
+                    await PruneOrphanedManifestsAsync(
+                        dataContext,
+                        expectedExternalIds,
+                        cancellationToken
+                    );
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogError(
+                        ex,
+                        "Pruning orphaned manifests failed; the host starts anyway and the prune runs again at the next start"
+                    );
+                }
             }
 
             // Clean up orphaned ManifestGroups (groups with no manifests remaining)
@@ -234,14 +246,33 @@ internal class SchedulerStartupService(
     /// Maximum number of orphaned manifests to delete per batch. Keeps the SQL IN(...)
     /// clause small enough to avoid command timeouts on large prune operations.
     /// </summary>
-    internal const int PruneBatchSize = 500;
+    internal const int PruneBatchSize = ManifestPruner.BatchSize;
 
+    /// <summary>
+    /// Deletes the manifests in the database that this host's configuration does not declare.
+    /// </summary>
+    /// <remarks>
+    /// A host that declares no manifests prunes nothing: an API or worker host that calls
+    /// <c>AddScheduler</c> only to reach the scheduler services has no basis for calling another
+    /// host's manifests orphaned. A manifest with a pending or running run is kept until the run
+    /// finishes (see <see cref="ManifestPruner"/>). Nothing on a manifest records which
+    /// application declared it, so between hosts that each declare schedules, the prune still
+    /// compares the whole table against this host's set.
+    /// </remarks>
     private async Task PruneOrphanedManifestsAsync(
         IDataContext dataContext,
         HashSet<string> expectedExternalIds,
         CancellationToken cancellationToken
     )
     {
+        if (expectedExternalIds.Count == 0)
+        {
+            logger.LogInformation(
+                "Skipping orphaned manifest pruning: this host declares no manifests, so it has no basis to call any manifest orphaned"
+            );
+            return;
+        }
+
         // --- Server compute: load lightweight ID pairs, compute orphan set in C# ---
         //
         // Why not filter in the database?
@@ -275,60 +306,17 @@ internal class SchedulerStartupService(
             allManifests.Count
         );
 
-        // --- Database compute: delete orphans in batches by integer PK ---
-        //
-        // Each batch generates WHERE id IN (1, 2, ..., 500) — 500 integer PKs is a
-        // trivial query plan for Postgres regardless of instance size.
-        var totalPruned = 0;
-
-        foreach (var batch in orphanedManifestIds.Chunk(PruneBatchSize))
-        {
-            var batchIds = batch.ToList();
-
-            // Clear self-referencing FK (DependsOnManifestId) for any manifest pointing to
-            // an orphan in this batch. Handles both orphan→orphan and kept→orphan references.
-            await dataContext
-                .Manifests.Where(m =>
-                    m.DependsOnManifestId.HasValue && batchIds.Contains(m.DependsOnManifestId.Value)
-                )
-                .ExecuteUpdateAsync(
-                    s => s.SetProperty(m => m.DependsOnManifestId, (long?)null),
-                    cancellationToken
-                );
-
-            // Delete in FK-dependency order: WorkQueues → DeadLetters → Metadata → Manifests
-            await dataContext
-                .WorkQueues.Where(w =>
-                    w.ManifestId.HasValue && batchIds.Contains(w.ManifestId.Value)
-                )
-                .ExecuteDeleteAsync(cancellationToken);
-
-            await dataContext
-                .DeadLetters.Where(d => batchIds.Contains(d.ManifestId))
-                .ExecuteDeleteAsync(cancellationToken);
-
-            await dataContext
-                .Metadatas.Where(m =>
-                    m.ManifestId.HasValue && batchIds.Contains(m.ManifestId.Value)
-                )
-                .ExecuteDeleteAsync(cancellationToken);
-
-            var pruned = await dataContext
-                .Manifests.Where(m => batchIds.Contains(m.Id))
-                .ExecuteDeleteAsync(cancellationToken);
-
-            totalPruned += pruned;
-
-            logger.LogInformation(
-                "Pruned batch of {BatchCount} orphaned manifest(s) ({TotalCount} total so far)",
-                pruned,
-                totalPruned
-            );
-        }
+        var (pruned, kept) = await ManifestPruner.PruneAsync(
+            dataContext,
+            orphanedManifestIds,
+            logger,
+            cancellationToken
+        );
 
         logger.LogInformation(
-            "Finished pruning {Count} orphaned manifest(s) from the database",
-            totalPruned
+            "Finished pruning {Count} orphaned manifest(s) from the database ({Kept} kept until their runs finish)",
+            pruned,
+            kept
         );
     }
 }

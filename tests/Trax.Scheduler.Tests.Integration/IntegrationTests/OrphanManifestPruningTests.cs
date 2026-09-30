@@ -231,10 +231,12 @@ public class OrphanManifestPruningTests : TestSetup
     }
 
     [Test]
-    public async Task StartAsync_WithNoPendingManifestsAndPruningEnabled_DeletesAllManifests()
+    public async Task StartAsync_WithNoPendingManifestsAndPruningEnabled_LeavesExistingManifests()
     {
-        // Arrange: Manifests exist in DB but no PendingManifests configured (all schedules removed)
-        await CreateAndSaveManifestWithExternalId("leftover-manifest");
+        // Arrange: Manifests exist in DB but this host declares no schedules (an API or worker
+        // host that calls AddScheduler only to reach the scheduler services).
+        var leftover = await CreateAndSaveManifestWithExternalId("leftover-manifest");
+        await CreateAndSaveMetadata(leftover, TrainState.Completed);
 
         var configuration = new SchedulerConfiguration
         {
@@ -242,7 +244,6 @@ public class OrphanManifestPruningTests : TestSetup
             RecoverStuckJobsOnStartup = false,
             HasDatabaseProvider = true,
         };
-        // PendingManifests is empty → expectedExternalIds is empty → all manifests are orphans
 
         var startupService = CreateStartupService(configuration);
 
@@ -251,11 +252,46 @@ public class OrphanManifestPruningTests : TestSetup
 
         // Assert
         DataContext.Reset();
-        var remaining = await DataContext.Manifests.ToListAsync();
-
+        var remaining = await DataContext.Manifests.Select(m => m.ExternalId).ToListAsync();
         remaining
             .Should()
-            .BeEmpty("all manifests should be pruned when no schedules are configured");
+            .Contain(
+                "leftover-manifest",
+                "a host that declares no schedules has no basis to call any manifest orphaned"
+            );
+        (await DataContext.Metadatas.AnyAsync(m => m.ManifestId == leftover.Id)).Should().BeTrue();
+    }
+
+    [TestCase(TrainState.InProgress)]
+    [TestCase(TrainState.Pending)]
+    public async Task StartAsync_WithAnOrphanWhoseRunIsActive_KeepsTheOrphanAndItsRun(
+        TrainState state
+    )
+    {
+        // Arrange: the orphan has a run that has not finished
+        await CreateAndSaveManifestWithExternalId("keep-me");
+        var orphan = await CreateAndSaveManifestWithExternalId("orphan-running");
+        var run = await CreateAndSaveMetadata(orphan, state);
+        var finishedOrphan = await CreateAndSaveManifestWithExternalId("orphan-finished");
+        await CreateAndSaveMetadata(finishedOrphan, TrainState.Completed);
+
+        var configuration = CreateConfiguration(expectedExternalIds: ["keep-me"]);
+        var startupService = CreateStartupService(configuration);
+
+        // Act
+        await startupService.StartAsync(CancellationToken.None);
+
+        // Assert
+        DataContext.Reset();
+        (await DataContext.Metadatas.AnyAsync(m => m.Id == run.Id))
+            .Should()
+            .BeTrue("a prune never deletes a run that has not finished");
+        (await DataContext.Manifests.AnyAsync(m => m.Id == orphan.Id))
+            .Should()
+            .BeTrue("the manifest is kept until its run finishes, and pruned at a later start");
+        (await DataContext.Manifests.AnyAsync(m => m.Id == finishedOrphan.Id))
+            .Should()
+            .BeFalse("an orphan with only finished runs is still pruned");
     }
 
     [Test]

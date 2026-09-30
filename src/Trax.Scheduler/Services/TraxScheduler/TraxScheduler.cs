@@ -13,6 +13,7 @@ using Trax.Mediator.Services.TrainRegistry;
 using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Extensions;
 using Trax.Scheduler.Services.CancellationRegistry;
+using Trax.Scheduler.Services.ManifestPruning;
 using Schedule = Trax.Scheduler.Services.Scheduling.Schedule;
 
 namespace Trax.Scheduler.Services.TraxScheduler;
@@ -1317,6 +1318,10 @@ public class TraxScheduler(
         }
     }
 
+    /// <summary>
+    /// Deletes the manifests whose external ID starts with <paramref name="prunePrefix"/> and that
+    /// this batch no longer declares.
+    /// </summary>
     private async Task PruneStaleManifestsAsync(
         IDataContext context,
         string prunePrefix,
@@ -1340,31 +1345,13 @@ public class TraxScheduler(
         if (staleManifestIds.Count == 0)
             return;
 
-        // Database compute: delete by integer PK — small IN(...) clause per query.
-        await context
-            .WorkQueues.Where(w =>
-                w.ManifestId.HasValue && staleManifestIds.Contains(w.ManifestId.Value)
-            )
-            .ExecuteDeleteAsync(ct);
-
-        await context
-            .DeadLetters.Where(d => staleManifestIds.Contains(d.ManifestId))
-            .ExecuteDeleteAsync(ct);
-
-        await context
-            .Metadatas.Where(m =>
-                m.ManifestId.HasValue && staleManifestIds.Contains(m.ManifestId.Value)
-            )
-            .ExecuteDeleteAsync(ct);
-
-        var pruned = await context
-            .Manifests.Where(m => staleManifestIds.Contains(m.Id))
-            .ExecuteDeleteAsync(ct);
+        var (pruned, kept) = await ManifestPruner.PruneAsync(context, staleManifestIds, logger, ct);
 
         logger.LogInformation(
-            "Pruned {Count} stale manifests with prefix '{Prefix}'",
+            "Pruned {Count} stale manifests with prefix '{Prefix}' ({Kept} kept until their runs finish)",
             pruned,
-            prunePrefix
+            prunePrefix,
+            kept
         );
     }
 
