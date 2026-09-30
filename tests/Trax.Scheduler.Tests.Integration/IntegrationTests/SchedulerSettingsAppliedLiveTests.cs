@@ -68,4 +68,45 @@ public class SchedulerSettingsAppliedLiveTests
                     + "says a change takes effect immediately"
             );
     }
+
+    [Test]
+    public async Task AutoPurgeDeadLetters_false_in_code_keeps_resolved_dead_letters()
+    {
+        await using var fx = await SchedulerE2EFixture.CreateAsync(s =>
+            s.AutoPurgeDeadLetters(false)
+                .DeadLetterRetentionPeriod(TimeSpan.FromDays(7))
+                .Schedule<ISchedulerTestTrain>(
+                    "purge-off-in-code",
+                    new SchedulerTestInput { Value = "x" },
+                    Every.Minutes(5)
+                )
+        );
+        await fx.MaterializePendingManifestsAsync();
+
+        fx.Configuration.AutoPurgeDeadLetters.Should().BeFalse();
+        fx.Configuration.DeadLetterRetentionPeriod.Should().Be(TimeSpan.FromDays(7));
+
+        var manifest = await fx.DataContext.Manifests.FirstAsync(m =>
+            m.ExternalId == "purge-off-in-code"
+        );
+        var deadLetter = DeadLetter.Create(
+            new CreateDeadLetter
+            {
+                Manifest = manifest,
+                Reason = "kept",
+                RetryCount = 3,
+            }
+        );
+        deadLetter.Acknowledge("resolved long ago");
+        deadLetter.ResolvedAt = DateTime.UtcNow.AddDays(-60);
+        await fx.DataContext.Track(deadLetter);
+        await fx.DataContext.SaveChanges(CancellationToken.None);
+        fx.DataContext.Reset();
+
+        await fx.RunDeadLetterCleanupAsync();
+
+        (await fx.DataContext.DeadLetters.AsNoTracking().AnyAsync(d => d.Id == deadLetter.Id))
+            .Should()
+            .BeTrue();
+    }
 }
