@@ -207,4 +207,50 @@ public class SchedulerConfigFromApiHostTests
             await settings.StopAsync(CancellationToken.None);
         }
     }
+
+    [Test]
+    public async Task A_live_only_setting_changes_this_host_writes_no_row_and_survives_the_refresh()
+    {
+        await using var running = await Scheduler();
+        running.Configuration.SettingsRefreshInterval = TimeSpan.FromMilliseconds(100);
+        var settings = SettingsService(running);
+        await settings.StartAsync(CancellationToken.None);
+        try
+        {
+            var result = await Save(
+                running.Services,
+                new UpdateSchedulerConfigInput { FailureCountWindow = TimeSpan.FromHours(2) }
+            );
+            result.Success.Should().BeTrue();
+            result.Count.Should().Be(1);
+            running.Configuration.FailureCountWindow.Should().Be(TimeSpan.FromHours(2));
+
+            var factory = running.Services.GetRequiredService<IDataContextProviderFactory>();
+            using (var db = await factory.CreateDbContextAsync(CancellationToken.None))
+                (await db.SchedulerConfigs.AnyAsync())
+                    .Should()
+                    .BeFalse("the row has no column for a live-only setting");
+
+            (await Save(running.Services, new UpdateSchedulerConfigInput(MaxActiveJobs: 7)))
+                .Success.Should()
+                .BeTrue();
+            await WaitFor(
+                () => running.Configuration.MaxActiveJobs == 7,
+                "the refresh applies the stored change"
+            );
+            await Save(running.Services, new UpdateSchedulerConfigInput(MaxActiveJobs: 8));
+            await WaitFor(
+                () => running.Configuration.MaxActiveJobs == 8,
+                "the refresh applies the second stored change"
+            );
+
+            running
+                .Configuration.FailureCountWindow.Should()
+                .Be(TimeSpan.FromHours(2), "applying the row does not reset a live-only setting");
+        }
+        finally
+        {
+            await settings.StopAsync(CancellationToken.None);
+        }
+    }
 }

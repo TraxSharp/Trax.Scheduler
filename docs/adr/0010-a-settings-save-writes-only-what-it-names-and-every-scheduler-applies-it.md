@@ -52,6 +52,10 @@ running scheduler to its configured values within one refresh.
 than one scheduler host and no row yet, the first save records that host's values for every
 setting, and the others apply them within seconds rather than at their next restart.
 
+**A setting without a column is live-only.** `FailureCountWindow` has no column yet, so its
+entry in `SchedulerSettings` has no row mapping: a patch changes the host that received it until
+that host restarts, writes nothing, and the startup load and the refresh leave it alone.
+
 **`LocalWorkerCount` applies at the next start of the worker pool.** It is stored and applied to
 the options at once, but the pool starts its workers once.
 
