@@ -183,8 +183,13 @@ internal static class SchedulingHelpers
 
     /// <summary>
     /// Evaluates a cron-based schedule with misfire policy support.
-    /// Uses Cronos for precise next-occurrence calculation.
+    /// Uses Cronos for precise next-occurrence calculation, in UTC.
     /// </summary>
+    /// <remarks>
+    /// A cron that has never succeeded is due at <see cref="Manifest.NextScheduledRun"/>, which
+    /// scheduling it set to its first occurrence. One with neither value, written before that
+    /// was stamped, is due at once.
+    /// </remarks>
     private static bool EvaluateCronSchedule(
         Manifest manifest,
         DateTime now,
@@ -192,11 +197,11 @@ internal static class SchedulingHelpers
         ILogger logger
     )
     {
-        // If never run, always due
-        if (manifest.LastSuccessfulRun is null)
+        // Never run and no first occurrence recorded: due at once.
+        if (manifest.LastSuccessfulRun is null && manifest.NextScheduledRun is null)
             return true;
 
-        // Use pre-computed next run time if available (variance-aware)
+        // Use pre-computed next run time if available (variance-aware, or the first occurrence)
         DateTime nextDueValue;
         if (manifest.NextScheduledRun.HasValue)
         {
@@ -216,7 +221,7 @@ internal static class SchedulingHelpers
             }
 
             var nextDue = parsed.GetNextOccurrence(
-                manifest.LastSuccessfulRun.Value,
+                manifest.LastSuccessfulRun!.Value,
                 TimeZoneInfo.Utc
             );
             if (nextDue is null)
@@ -250,9 +255,14 @@ internal static class SchedulingHelpers
         if (cronParsed is null)
             return false;
 
+        // Occurrences after the last success count; a cron that never succeeded counts from its
+        // first occurrence, inclusive.
+        var countFrom = manifest.LastSuccessfulRun ?? nextDueValue.AddTicks(-1);
+
         return EvaluateCronBoundary(
             cronParsed,
             manifest,
+            countFrom,
             now,
             thresholdSeconds,
             overdueSeconds,
@@ -262,31 +272,20 @@ internal static class SchedulingHelpers
 
     /// <summary>
     /// For DoNothing misfire policy on cron schedules: finds the most recent cron occurrence
-    /// before now and checks if we're within threshold of it.
+    /// at or before now (see <see cref="LatestOccurrence"/>) and checks if we're within threshold
+    /// of it.
     /// </summary>
     private static bool EvaluateCronBoundary(
         Cronos.CronExpression parsed,
         Manifest manifest,
+        DateTime countFrom,
         DateTime now,
         int thresholdSeconds,
         double overdueSeconds,
         ILogger logger
     )
     {
-        // Walk forward from last successful run to find the most recent occurrence <= now
-        var candidate = manifest.LastSuccessfulRun!.Value;
-        DateTime? mostRecent = null;
-        const int maxIterations = 100_000;
-
-        for (var i = 0; i < maxIterations; i++)
-        {
-            var next = parsed.GetNextOccurrence(candidate, TimeZoneInfo.Utc);
-            if (next is null || next.Value > now)
-                break;
-
-            mostRecent = next.Value;
-            candidate = next.Value;
-        }
+        var mostRecent = LatestOccurrence(parsed, countFrom, now);
 
         if (mostRecent is null)
             return false;
@@ -314,6 +313,52 @@ internal static class SchedulingHelpers
             nextIn
         );
         return false;
+    }
+
+    /// <summary>
+    /// Finds the latest occurrence of <paramref name="parsed"/> that is later than
+    /// <paramref name="after"/> and no later than <paramref name="now"/>, evaluated in UTC.
+    /// </summary>
+    /// <remarks>
+    /// Cronos only searches forward, so this bisects on the instant a forward search starts from:
+    /// an inclusive search from any instant up to the latest occurrence lands at or before
+    /// <paramref name="now"/>, and one from any later instant lands after it. That takes about
+    /// fifty cron evaluations whatever the gap, where walking forward one occurrence at a time
+    /// took one per missed occurrence: a year of a minutely cron is half a million.
+    /// </remarks>
+    /// <returns>The latest occurrence in <c>(after, now]</c>, or null when there is none.</returns>
+    internal static DateTime? LatestOccurrence(
+        Cronos.CronExpression parsed,
+        DateTime after,
+        DateTime now
+    )
+    {
+        var first = parsed.GetNextOccurrence(after, TimeZoneInfo.Utc);
+        if (first is null || first.Value > now)
+            return null;
+
+        // lo always starts a search that lands at or before now; hi never does.
+        var lo = first.Value.Ticks;
+        var hi = now.Ticks + 1;
+        while (hi - lo > 1)
+        {
+            var mid = lo + (hi - lo) / 2;
+            var next = parsed.GetNextOccurrence(
+                new DateTime(mid, DateTimeKind.Utc),
+                TimeZoneInfo.Utc,
+                inclusive: true
+            );
+            if (next is not null && next.Value <= now)
+                lo = mid;
+            else
+                hi = mid;
+        }
+
+        return parsed.GetNextOccurrence(
+            new DateTime(lo, DateTimeKind.Utc),
+            TimeZoneInfo.Utc,
+            inclusive: true
+        );
     }
 
     /// <summary>
