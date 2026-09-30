@@ -184,14 +184,24 @@ public class OperationsService : IOperationsService
             );
             throw;
         }
+        catch (TrainAuthorizationNotConfiguredException ex)
+        {
+            // The train declares [TraxAuthorize] and the host registered no enforcer. The host is
+            // misconfigured; that is not an answer about this enqueue, so it is logged and thrown
+            // like an infrastructure failure, never reported as a refusal. See scheduler/0004.
+            _logger?.LogError(
+                ex,
+                "Queueing {TrainName} failed: the host has no ITrainAuthorizationService",
+                registration.ServiceType.FullName
+            );
+            throw;
+        }
         catch (Exception ex)
             when (ex is not UnauthorizedAccessException and not OperationCanceledException)
         {
             // A refusal: the train's OnQueue hook or QueueSubjectKey threw, the subject key could
             // not be used, or a deferred entry was cancelled before it was confirmed. The message
-            // is the train author's or the mediator's, written for the caller. The mediator's
-            // missing-enforcer InvalidOperationException also lands here, because nothing tells
-            // it apart from a subject key refusal but its text.
+            // is the train author's or the mediator's, written for the caller.
             return new OperationResult(false, Message: $"The enqueue was refused: {ex.Message}");
         }
 

@@ -20,8 +20,7 @@ public interface IOperationsService
     /// A refusal of the enqueue is also returned as a failed result, with the message
     /// <c>"The enqueue was refused: {exception message}"</c>: the <c>OnQueue</c> hook or
     /// <c>QueueSubjectKey</c> threw, the subject key was unusable, or a deferred entry was
-    /// cancelled before it was confirmed. The mediator's <see cref="InvalidOperationException"/>
-    /// for a train that declares authorization on a host with no enforcer arrives the same way.
+    /// cancelled before it was confirmed.
     /// </para>
     /// </returns>
     /// <exception cref="System.Data.Common.DbException">
@@ -33,6 +32,11 @@ public interface IOperationsService
     /// <exception cref="UnauthorizedAccessException">
     /// The caller may not run the train (a <c>TrainAuthorizationException</c> when the API's
     /// authorization is registered). It propagates rather than becoming a failed result.
+    /// </exception>
+    /// <exception cref="Trax.Mediator.Exceptions.TrainAuthorizationNotConfiguredException">
+    /// The train declares <c>[TraxAuthorize]</c> and the host registered no
+    /// <c>ITrainAuthorizationService</c>. A host misconfiguration, so it is logged and thrown
+    /// rather than reported as a refusal (scheduler/0004).
     /// </exception>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="ct"/> was cancelled. It propagates rather than becoming a failed result.
