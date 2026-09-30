@@ -428,6 +428,14 @@ public partial class SchedulerConfigurationBuilder
     /// authorization policy expects.
     ///
     /// Set up the remote side with <c>AddTraxJobRunner(runner => ...)</c> and <c>UseTraxJobRunner()</c>.
+    ///
+    /// Call it once per endpoint to route different trains to different runners. Each call keeps
+    /// its own options and its own HTTP client, so a train is sent only to the endpoint it is
+    /// routed to, signed with that endpoint's key and carrying only the headers its
+    /// <see cref="RemoteWorkerOptions.ConfigureHttpClient"/> added. A train routed by two calls
+    /// is refused when the scheduler is built. A <c>[TraxRemote]</c> train that no call routes
+    /// explicitly goes to the first routed registration (this one, <c>UseSqsWorkers</c> or
+    /// <c>UseLambdaWorkers</c>, whichever was added first).
     /// </remarks>
     /// <param name="configure">Action to configure the remote endpoint URL and HTTP client</param>
     /// <param name="routing">Action to specify which trains should be dispatched remotely</param>
@@ -448,22 +456,35 @@ public partial class SchedulerConfigurationBuilder
         var submitterRouting = new SubmitterRouting();
         routing?.Invoke(submitterRouting);
 
+        // Each call has its own named client, so its base address, timeout and headers, and its
+        // own options, including its signing key, stay with the endpoint they were given for.
+        var clientName = $"Trax.RemoteWorkers.{_routedSubmitterRegistrations.Count}";
+
         _routedSubmitterRegistrations.Add(
             new RoutedSubmitterRegistration(
                 submitterRouting,
                 typeof(Services.JobSubmitter.HttpJobSubmitter),
                 services =>
                 {
-                    services.AddSingleton(options);
-
-                    services.AddHttpClient<Services.JobSubmitter.HttpJobSubmitter>(client =>
-                    {
-                        client.BaseAddress = new Uri(options.BaseUrl);
-                        client.Timeout = options.Timeout;
-                        options.ConfigureHttpClient?.Invoke(client);
-                    });
+                    services.AddHttpClient(
+                        clientName,
+                        client =>
+                        {
+                            client.BaseAddress = new Uri(options.BaseUrl);
+                            client.Timeout = options.Timeout;
+                            options.ConfigureHttpClient?.Invoke(client);
+                        }
+                    );
                 }
             )
+            {
+                CreateSubmitter = services => new Services.JobSubmitter.HttpJobSubmitter(
+                    services.GetRequiredService<IHttpClientFactory>().CreateClient(clientName),
+                    options,
+                    services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Services.JobSubmitter.HttpJobSubmitter>>()
+                ),
+                Description = $"UseRemoteWorkers({options.BaseUrl})",
+            }
         );
         return this;
     }

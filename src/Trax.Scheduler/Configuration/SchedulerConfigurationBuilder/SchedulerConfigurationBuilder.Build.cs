@@ -185,19 +185,20 @@ public partial class SchedulerConfigurationBuilder
         if (_routedSubmitterRegistrations.Count == 0)
             return;
 
-        Type? firstSubmitterType = null;
+        RoutedSubmitterRegistration? first = null;
 
         foreach (var registration in _routedSubmitterRegistrations)
         {
-            // Register the concrete submitter type with its dependencies (HttpClient, options, etc.)
+            // Register the submitter with its dependencies (HttpClient, options, etc.)
             registration.Register(_parentBuilder.ServiceCollection);
 
-            firstSubmitterType ??= registration.SubmitterType;
+            first ??= registration;
 
-            // Add explicit ForTrain routes
+            // Add explicit ForTrain routes, to this registration rather than to its type: two
+            // registrations of one submitter type each submit to their own endpoint.
             foreach (var trainName in registration.Routing.TrainNames)
             {
-                _routingConfiguration.AddRoute(trainName, registration.SubmitterType);
+                _routingConfiguration.AddRoute(trainName, registration);
             }
         }
 
@@ -210,10 +211,10 @@ public partial class SchedulerConfigurationBuilder
             _routingConfiguration.AddAttributeRemoteTrain(train.ServiceType.FullName!);
         }
 
-        // Set the attribute default submitter to the first registered remote submitter
-        if (firstSubmitterType is not null)
+        // [TraxRemote] trains go to the first routed registration, of whatever kind
+        if (first is not null)
         {
-            _routingConfiguration.SetAttributeDefaultSubmitter(firstSubmitterType);
+            _routingConfiguration.SetAttributeDefaultSubmitter(first);
         }
     }
 
@@ -288,7 +289,7 @@ public partial class SchedulerConfigurationBuilder
         var seen = new Dictionary<string, string>();
         foreach (var registration in _routedSubmitterRegistrations)
         {
-            var submitterName = registration.SubmitterType.Name;
+            var submitterName = registration.Description ?? registration.SubmitterType.Name;
             foreach (var trainName in registration.Routing.TrainNames)
             {
                 if (seen.TryGetValue(trainName, out var existingSubmitter))

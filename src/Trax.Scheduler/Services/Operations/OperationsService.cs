@@ -358,16 +358,11 @@ public class OperationsService : IOperationsService
     /// The submitter the job dispatcher would use for this train: its builder or
     /// <c>[TraxRemote]</c> route when it has one, otherwise the default <see cref="IJobSubmitter"/>.
     /// </summary>
-    private static IJobSubmitter ResolveSubmitter(IServiceProvider services, string trainName)
-    {
-        var routed = services
+    private static IJobSubmitter ResolveSubmitter(IServiceProvider services, string trainName) =>
+        services
             .GetService<JobSubmitterRoutingConfiguration>()
-            ?.GetSubmitterType(trainName);
-
-        return routed is not null
-            ? (IJobSubmitter)services.GetRequiredService(routed)
-            : services.GetRequiredService<IJobSubmitter>();
-    }
+            ?.ResolveSubmitter(services, trainName)
+        ?? services.GetRequiredService<IJobSubmitter>();
 
     /// <summary>
     /// Fails a run whose job was never submitted. Bookkeeping for a run that already failed, so

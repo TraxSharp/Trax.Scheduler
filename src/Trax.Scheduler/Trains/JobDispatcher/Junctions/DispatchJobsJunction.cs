@@ -15,6 +15,7 @@ using Trax.Effect.Utils;
 using Trax.Mediator.Services.TrainRegistry;
 using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Services.JobSubmitter;
+using Trax.Scheduler.Trains.JobDispatcher;
 using Trax.Scheduler.Utilities;
 
 namespace Trax.Scheduler.Trains.JobDispatcher.Junctions;
@@ -44,6 +45,12 @@ internal class DispatchJobsJunction(
     ITraxChangeSignal? changeSignal = null
 ) : EffectJunction<List<WorkQueue>, Unit>
 {
+    /// <summary>
+    /// How long recording a failed submit may take once the dispatcher's own token has been
+    /// cancelled.
+    /// </summary>
+    private static readonly TimeSpan FailureRecordingTimeout = TimeSpan.FromSeconds(30);
+
     public override async Task<Unit> Run(List<WorkQueue> entries)
     {
         var dispatchStartTime = DateTime.UtcNow;
@@ -170,19 +177,26 @@ internal class DispatchJobsJunction(
         object? deserializedInput = null;
         if (claimed is { Input: not null, InputTypeName: not null })
         {
-            // Resolved among the registered trains' inputs only. A name that is not one of them
-            // throws inside the claim transaction, which rolls back and leaves the entry Queued.
-            var inputType =
-                RegisteredInputTypes.Find(trainRegistry, claimed.InputTypeName)
-                ?? throw new TrainException(
-                    $"Work queue entry {claimed.Id} names input type '{claimed.InputTypeName}', "
-                        + "which is not the input of any registered train."
+            try
+            {
+                // Resolved among the registered trains' inputs only.
+                var inputType =
+                    RegisteredInputTypes.Find(trainRegistry, claimed.InputTypeName)
+                    ?? throw new TrainException(
+                        $"'{claimed.InputTypeName}' is not the input of any registered train."
+                    );
+                deserializedInput = JsonSerializer.Deserialize(
+                    claimed.Input,
+                    inputType,
+                    TraxJsonSerializationOptions.ManifestProperties
                 );
-            deserializedInput = JsonSerializer.Deserialize(
-                claimed.Input,
-                inputType,
-                TraxJsonSerializationOptions.ManifestProperties
-            );
+            }
+            catch (Exception ex)
+                when (ex is TrainException or JsonException or NotSupportedException)
+            {
+                await RecordUnreadableInputAsync(dataContext, claimed, ex);
+                return false;
+            }
         }
 
         // Create a new Metadata record for this execution.
@@ -281,15 +295,80 @@ internal class DispatchJobsJunction(
     }
 
     /// <summary>
-    /// Handles a dispatch failure by marking the orphaned Metadata as Failed and optionally
-    /// requeuing the work queue entry for retry on the next dispatcher cycle.
+    /// Settles an entry whose stored input cannot be read, inside the claim transaction: records a
+    /// Failed run for it with the reason and marks the entry Dispatched to that run.
     /// </summary>
     /// <remarks>
-    /// The Metadata record is always marked as Failed (it represents one failed dispatch attempt).
-    /// If <see cref="SchedulerConfiguration.MaxDispatchAttempts"/> is greater than 0 and the
-    /// entry hasn't exhausted its attempts, the work queue entry is reset to Queued status
-    /// so the next dispatcher cycle creates a new Metadata and retries. The failed Metadata
-    /// stays as an immutable audit record.
+    /// The input of an entry is fixed when it is queued, so an input this host cannot read (its
+    /// type was renamed or removed, or its JSON no longer fits the type) will not be readable on
+    /// any later cycle either. Left Queued, the entry stayed at the head of its subject and kept
+    /// its manifest from scheduling, and failed again every cycle. Settled, it is a failure of its
+    /// manifest like any other, so retries and dead-lettering apply, and the next entry for its
+    /// subject can be dispatched.
+    /// </remarks>
+    private async Task RecordUnreadableInputAsync(
+        IDataContext dataContext,
+        WorkQueue claimed,
+        Exception exception
+    )
+    {
+        var failure = new TrainException(
+            $"The input of work queue entry {claimed.Id} could not be read as "
+                + $"'{claimed.InputTypeName}', so it was not dispatched: {exception.Message}"
+        );
+
+        var metadata = Trax.Effect.Models.Metadata.Metadata.Create(
+            new CreateMetadata
+            {
+                Name = claimed.TrainName,
+                ExternalId = claimed.ExternalId,
+                Input = null,
+                ManifestId = claimed.ManifestId,
+            }
+        );
+        metadata.TrainState = TrainState.Failed;
+        metadata.EndTime = DateTime.UtcNow;
+        metadata.AddException(failure);
+
+        await dataContext.Track(metadata);
+        await dataContext.SaveChanges(CancellationToken);
+
+        claimed.Status = WorkQueueStatus.Dispatched;
+        claimed.MetadataId = metadata.Id;
+        claimed.DispatchedAt = DateTime.UtcNow;
+        await dataContext.SaveChanges(CancellationToken);
+        await dataContext.CommitTransaction();
+
+        logger.LogError(
+            exception,
+            "Work queue entry {WorkQueueId} (train: {TrainName}) has an input that cannot be read "
+                + "as {InputType}; recorded it as failed run {MetadataId} and did not dispatch it",
+            claimed.Id,
+            claimed.TrainName,
+            claimed.InputTypeName,
+            metadata.Id
+        );
+    }
+
+    /// <summary>
+    /// Handles a submitter failure: when the job was not delivered, records the attempt as Failed
+    /// and requeues the entry if attempts remain; when the runner already started it, leaves the
+    /// run to the runner.
+    /// </summary>
+    /// <remarks>
+    /// A submitter that throws has not always failed to deliver. A runner that ran the job and
+    /// reported its failure, or that is still running it when the HTTP call times out, already
+    /// owns the run, and its outcome is (or will be) recorded on the run's row. Only a row that is
+    /// still <c>Pending</c> is a job no runner started, so the row is failed with a conditional
+    /// write that matches only while it is still <c>Pending</c>. If that write matches nothing,
+    /// the job was delivered: the entry stays Dispatched and no attempt is counted. If it matches,
+    /// a runner that receives the job later loses its claim to the Failed row and does not run it,
+    /// so a requeued entry cannot run twice.
+    /// <para>
+    /// If <see cref="SchedulerConfiguration.MaxDispatchAttempts"/> is greater than 0 and the entry
+    /// has not exhausted its attempts, the entry is reset to Queued so a later cycle creates a new
+    /// Metadata and retries. The failed Metadata stays as an immutable audit record.
+    /// </para>
     /// </remarks>
     private async Task HandleDispatchFailureAsync(
         long workQueueId,
@@ -297,66 +376,106 @@ internal class DispatchJobsJunction(
         Exception exception
     )
     {
+        // Not the dispatcher's token: that is the host's stopping token, and a shutdown is exactly
+        // when a submit fails because it was cancelled. The claim is already committed, so this is
+        // the only write that records the attempt and frees the entry; on a cancelled token it
+        // never landed, and the entry held its subject until the stale-pending reaper ran. Bounded
+        // rather than uncancellable so an unreachable database cannot hold shutdown open
+        // (effect/0005 records the same rule for a train's outcome).
+        using var bounded = new CancellationTokenSource(FailureRecordingTimeout);
+        var token = bounded.Token;
+
         try
         {
             using var scope = serviceProvider.CreateScope();
             var dataContext = scope.ServiceProvider.GetRequiredService<IDataContext>();
 
-            // 1. Mark orphaned metadata as Failed
-            var metadata = await dataContext.Metadatas.FirstOrDefaultAsync(
-                m => m.Id == metadataId,
-                CancellationToken
+            using var transaction = await dataContext.BeginTransaction(token);
+
+            var workQueueEntry = await dataContext.WorkQueues.FirstOrDefaultAsync(
+                w => w.Id == workQueueId,
+                token
             );
 
-            if (metadata is not null && metadata.TrainState == TrainState.Pending)
-            {
-                metadata.TrainState = TrainState.Failed;
-                metadata.EndTime = DateTime.UtcNow;
-                metadata.AddException(exception);
-            }
-
-            // 2. Requeue the work queue entry if attempts remain
+            // An entry with attempts left is requeued, and its failed run is marked so it does
+            // not count as a failure of the manifest (see DispatchFailure).
             var maxAttempts = schedulerConfiguration.MaxDispatchAttempts;
+            var attempts = (workQueueEntry?.DispatchAttempts ?? 0) + 1;
+            var requeue = maxAttempts > 0 && workQueueEntry is not null && attempts < maxAttempts;
 
-            if (maxAttempts > 0)
-            {
-                var workQueueEntry = await dataContext.WorkQueues.FirstOrDefaultAsync(
-                    w => w.Id == workQueueId,
-                    CancellationToken
+            // 1. Fail the run only if no runner has started it.
+            var failure = DescribeFailure(exception);
+            var failureException = requeue ? DispatchFailure.Requeued : failure.FailureException;
+            var failureReason = requeue
+                ? $"Dispatch attempt {attempts} of {maxAttempts} failed and the job was requeued: "
+                    + $"{failure.FailureException}: {failure.FailureReason}"
+                : failure.FailureReason;
+
+            var now = DateTime.UtcNow;
+            var failed = await dataContext
+                .Metadatas.Where(m => m.Id == metadataId && m.TrainState == TrainState.Pending)
+                .ExecuteUpdateAsync(
+                    s =>
+                        s.SetProperty(m => m.TrainState, TrainState.Failed)
+                            .SetProperty(m => m.EndTime, now)
+                            .SetProperty(m => m.FailureException, failureException)
+                            .SetProperty(m => m.FailureReason, failureReason)
+                            .SetProperty(m => m.FailureJunction, nameof(DispatchJobsJunction))
+                            .SetProperty(m => m.StackTrace, failure.StackTrace)
+                            .SetProperty(m => m.FailureClass, failure.FailureClass),
+                    token
                 );
 
-                if (workQueueEntry is not null)
+            if (failed == 0)
+            {
+                await dataContext.RollbackTransaction();
+                logger.LogWarning(
+                    exception,
+                    "The submitter reported a failure for work queue entry {WorkQueueId}, but a runner "
+                        + "has already started Metadata {MetadataId}; the run's outcome is the runner's "
+                        + "to record, so the entry is not requeued",
+                    workQueueId,
+                    metadataId
+                );
+                return;
+            }
+
+            // 2. Requeue the work queue entry if attempts remain, after a backoff
+            if (maxAttempts > 0 && workQueueEntry is not null)
+            {
+                workQueueEntry.DispatchAttempts = attempts;
+
+                if (requeue)
                 {
-                    workQueueEntry.DispatchAttempts++;
+                    var backoff = DispatchFailure.Backoff(attempts);
+                    workQueueEntry.Status = WorkQueueStatus.Queued;
+                    workQueueEntry.MetadataId = null;
+                    workQueueEntry.DispatchedAt = null;
+                    workQueueEntry.ScheduledAt = now + backoff;
 
-                    if (workQueueEntry.DispatchAttempts < maxAttempts)
-                    {
-                        workQueueEntry.Status = WorkQueueStatus.Queued;
-                        workQueueEntry.MetadataId = null;
-                        workQueueEntry.DispatchedAt = null;
-
-                        logger.LogWarning(
-                            "Requeued work queue entry {WorkQueueId} after dispatch failure "
-                                + "(attempt {Attempt}/{MaxAttempts})",
-                            workQueueId,
-                            workQueueEntry.DispatchAttempts,
-                            maxAttempts
-                        );
-                    }
-                    else
-                    {
-                        logger.LogError(
-                            "Work queue entry {WorkQueueId} exhausted dispatch attempts "
-                                + "({Attempts}/{MaxAttempts}). Leaving as Dispatched for dead letter handling",
-                            workQueueId,
-                            workQueueEntry.DispatchAttempts,
-                            maxAttempts
-                        );
-                    }
+                    logger.LogWarning(
+                        "Requeued work queue entry {WorkQueueId} after dispatch failure "
+                            + "(attempt {Attempt}/{MaxAttempts}); next attempt in {Backoff}",
+                        workQueueId,
+                        attempts,
+                        maxAttempts,
+                        backoff
+                    );
+                }
+                else
+                {
+                    logger.LogError(
+                        "Work queue entry {WorkQueueId} exhausted dispatch attempts "
+                            + "({Attempts}/{MaxAttempts}). Leaving as Dispatched for dead letter handling",
+                        workQueueId,
+                        attempts,
+                        maxAttempts
+                    );
                 }
             }
 
-            await dataContext.SaveChanges(CancellationToken);
+            await dataContext.SaveChanges(token);
+            await dataContext.CommitTransaction();
         }
         catch (Exception ex)
         {
@@ -372,14 +491,28 @@ internal class DispatchJobsJunction(
     }
 
     /// <summary>
+    /// The failure fields <see cref="Trax.Effect.Models.Metadata.Metadata.AddException"/> would
+    /// record for <paramref name="exception"/>, for a write that sets them without loading the row.
+    /// </summary>
+    private static Trax.Effect.Models.Metadata.Metadata DescribeFailure(Exception exception)
+    {
+        var description = Trax.Effect.Models.Metadata.Metadata.Create(
+            new CreateMetadata
+            {
+                Name = nameof(DispatchJobsJunction),
+                ExternalId = string.Empty,
+                Input = null,
+            }
+        );
+        description.AddException(exception);
+        return description;
+    }
+
+    /// <summary>
     /// Resolves the appropriate job submitter for a train based on routing configuration.
     /// Falls back to the default IJobSubmitter if no routing is configured for this train.
     /// </summary>
-    private IJobSubmitter ResolveSubmitter(IServiceProvider provider, string trainName)
-    {
-        var concreteType = routingConfiguration.GetSubmitterType(trainName);
-        return concreteType is not null
-            ? (IJobSubmitter)provider.GetRequiredService(concreteType)
-            : provider.GetRequiredService<IJobSubmitter>();
-    }
+    private IJobSubmitter ResolveSubmitter(IServiceProvider provider, string trainName) =>
+        routingConfiguration.ResolveSubmitter(provider, trainName)
+        ?? provider.GetRequiredService<IJobSubmitter>();
 }

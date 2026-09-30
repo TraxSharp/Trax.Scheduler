@@ -5,6 +5,7 @@ using Trax.Effect.Enums;
 using Trax.Effect.Models.DeadLetter;
 using Trax.Effect.Services.EffectJunction;
 using Trax.Scheduler.Configuration;
+using Trax.Scheduler.Trains.JobDispatcher;
 using Trax.Scheduler.Trains.ManifestManager;
 
 namespace Trax.Scheduler.Trains.ManifestManager.Junctions;
@@ -41,6 +42,9 @@ internal class LoadManifestsJunction(IDataContext dataContext, SchedulerConfigur
                     md.TrainState == TrainState.Failed
                     // Started inside the failure count window.
                     && md.StartTime >= failureWindowStart
+                    // Not a dispatch attempt that was requeued: only one delivery failed, not
+                    // the job (see DispatchFailure).
+                    && md.FailureException != DispatchFailure.Requeued
                     // Started after the latest resolved (retried or acknowledged) dead letter.
                     && !m.DeadLetters.Any(dl =>
                         (

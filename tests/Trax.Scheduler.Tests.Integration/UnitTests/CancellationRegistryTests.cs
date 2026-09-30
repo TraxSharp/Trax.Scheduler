@@ -32,20 +32,45 @@ public class CancellationRegistryTests
     }
 
     [Test]
-    public void Register_SameIdTwice_OverwritesPreviousEntry()
+    public void Register_SameIdTwice_KeepsTheLiveRegistration()
     {
-        // Arrange
+        // Arrange - a second delivery of a running job registers the same id
         using var cts1 = new CancellationTokenSource();
         using var cts2 = new CancellationTokenSource();
         _registry.Register(1, cts1);
 
-        // Act — overwrite with cts2
+        // Act
         _registry.Register(1, cts2);
 
-        // Assert — TryCancel should cancel cts2, not cts1
+        // Assert - a cancel still reaches the job that is running
         _registry.TryCancel(1);
-        cts2.IsCancellationRequested.Should().BeTrue();
-        cts1.IsCancellationRequested.Should().BeFalse();
+        cts1.IsCancellationRequested.Should().BeTrue();
+        cts2.IsCancellationRequested.Should().BeFalse();
+    }
+
+    [Test]
+    public void Unregister_WithAnotherCallersSource_LeavesTheRegistration()
+    {
+        using var live = new CancellationTokenSource();
+        using var duplicate = new CancellationTokenSource();
+        _registry.Register(1, live);
+        _registry.Register(1, duplicate);
+
+        _registry.Unregister(1, duplicate);
+
+        _registry.TryCancel(1).Should().BeTrue();
+        live.IsCancellationRequested.Should().BeTrue();
+    }
+
+    [Test]
+    public void Unregister_WithItsOwnSource_RemovesTheRegistration()
+    {
+        using var live = new CancellationTokenSource();
+        _registry.Register(1, live);
+
+        _registry.Unregister(1, live);
+
+        _registry.TryCancel(1).Should().BeFalse();
     }
 
     #endregion
