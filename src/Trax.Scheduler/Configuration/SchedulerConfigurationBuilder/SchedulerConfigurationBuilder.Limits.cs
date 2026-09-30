@@ -22,6 +22,10 @@ public partial class SchedulerConfigurationBuilder
                 _configuration.JobDispatcherPollingInterval,
                 _jobDispatcherIntervalSetBy
             ),
+            SchedulerConfigLimits.NotNegative(
+                _configuration.DefaultMaxRetries,
+                nameof(DefaultMaxRetries)
+            ),
         }
             .OfType<string>()
             .ToList();

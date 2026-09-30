@@ -54,7 +54,9 @@ internal class ReapFailedJobsJunction(
                 continue;
             }
 
-            if (view.FailedCount > view.Manifest.MaxRetries)
+            // FailedCount > 0 first: a negative MaxRetries (a row written before the builder and
+            // the operator surface refused one) must not dead-letter a manifest that never failed.
+            if (view.FailedCount > 0 && view.FailedCount > view.Manifest.MaxRetries)
             {
                 logger.LogWarning(
                     "Manifest {ManifestId} (name: {ManifestName}) exceeds max retries ({FailedCount}/{MaxRetries}). Creating dead letter.",

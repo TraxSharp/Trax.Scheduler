@@ -322,6 +322,21 @@ public class SchedulerBuilderValidationTests
     }
 
     [Test]
+    public void A_negative_DefaultMaxRetries_is_refused_at_build()
+    {
+        Building(b => b.DefaultMaxRetries(-1))
+            .Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage("*DefaultMaxRetries must not be negative*");
+    }
+
+    [Test]
+    public void A_zero_DefaultMaxRetries_builds()
+    {
+        Building(b => b.DefaultMaxRetries(0)).Should().NotThrow();
+    }
+
+    [Test]
     public void Polling_intervals_at_their_limits_build()
     {
         Building(b =>

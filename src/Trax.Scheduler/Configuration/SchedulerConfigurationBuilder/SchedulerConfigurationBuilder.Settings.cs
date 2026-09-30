@@ -190,7 +190,10 @@ public partial class SchedulerConfigurationBuilder
     /// <summary>
     /// Sets the default number of retry attempts before a job is dead-lettered.
     /// </summary>
-    /// <param name="maxRetries">The maximum retry count (default: 3)</param>
+    /// <param name="maxRetries">
+    /// The maximum retry count (default: 3). Must not be negative; the scheduler refuses to build
+    /// otherwise.
+    /// </param>
     /// <returns>The builder for method chaining</returns>
     public SchedulerConfigurationBuilder DefaultMaxRetries(int maxRetries)
     {

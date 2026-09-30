@@ -154,6 +154,28 @@ public class ManifestManagerTrainTests : TestSetup
     }
 
     [Test]
+    public async Task Run_WhenMaxRetriesIsNegativeAndNothingHasFailed_DoesNotCreateDeadLetter()
+    {
+        // A negative retry count used to reach the stored row (from a builder default the build
+        // did not check), and zero failures exceeded it, so the manifest was dead-lettered before
+        // it had ever run.
+        var manifest = await CreateAndSaveManifest(
+            scheduleType: ScheduleType.Interval,
+            intervalSeconds: 60,
+            maxRetries: -1
+        );
+
+        await _train.Run(Unit.Default);
+
+        DataContext.Reset();
+        var deadLetters = await DataContext
+            .DeadLetters.Where(dl => dl.ManifestId == manifest.Id)
+            .ToListAsync();
+
+        deadLetters.Should().BeEmpty("a manifest with no counted failure is never dead-lettered");
+    }
+
+    [Test]
     public async Task Run_WhenManifestAlreadyHasAwaitingInterventionDeadLetter_DoesNotCreateDuplicateDeadLetter()
     {
         // Arrange - Create a manifest with an existing dead letter
