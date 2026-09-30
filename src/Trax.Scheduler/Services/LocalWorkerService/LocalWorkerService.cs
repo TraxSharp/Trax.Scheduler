@@ -27,8 +27,10 @@ namespace Trax.Scheduler.Services.LocalWorkerService;
 /// 2. Executes each train via <see cref="IJobRunnerTrain"/>
 /// 3. Deletes each job row on completion (success or failure)
 ///
-/// Crash recovery: if a worker dies mid-execution, the <c>fetched_at</c> timestamp becomes
-/// stale and the job is re-eligible for claim after <see cref="LocalWorkerOptions.VisibilityTimeout"/>.
+/// While a job runs, its worker refreshes <c>fetched_at</c> every third of
+/// <see cref="LocalWorkerOptions.VisibilityTimeout"/>, so a long job keeps its claim.
+/// Crash recovery: if a worker dies mid-execution, the <c>fetched_at</c> timestamp stops being
+/// refreshed and the job is re-eligible for claim after <see cref="LocalWorkerOptions.VisibilityTimeout"/>.
 /// </remarks>
 internal class LocalWorkerService(
     IServiceProvider serviceProvider,
@@ -244,6 +246,11 @@ internal class LocalWorkerService(
             // triggers CancelAfter(ShutdownTimeout) to provide a grace period.
             using var shutdownCts = new CancellationTokenSource();
             cancellationRegistry.Register(metadataId, shutdownCts);
+
+            // Keep the claim fresh while the job runs, so a job that outlasts VisibilityTimeout is
+            // not claimed again by another worker.
+            using var heartbeatStop = new CancellationTokenSource();
+            var heartbeat = HeartbeatAsync(workerId, jobId, heartbeatStop.Token);
             try
             {
                 await using var shutdownRegistration = stoppingToken.Register(() =>
@@ -261,7 +268,9 @@ internal class LocalWorkerService(
             }
             finally
             {
-                cancellationRegistry.Unregister(metadataId);
+                await heartbeatStop.CancelAsync();
+                await heartbeat;
+                cancellationRegistry.Unregister(metadataId, shutdownCts);
             }
         }
         catch (Exception ex)
@@ -304,6 +313,55 @@ internal class LocalWorkerService(
                 workerId,
                 jobId
             );
+        }
+    }
+
+    /// <summary>
+    /// Refreshes the job's <c>fetched_at</c> every third of <see cref="LocalWorkerOptions.VisibilityTimeout"/>
+    /// until <paramref name="stop"/> fires. A claim is only re-claimable once <c>fetched_at</c> is
+    /// older than the visibility timeout, so a job that is still running keeps its claim however
+    /// long it runs, and a worker that dies stops refreshing and its job is recovered as before.
+    /// </summary>
+    private async Task HeartbeatAsync(int workerId, long jobId, CancellationToken stop)
+    {
+        var interval = options.VisibilityTimeout / 3;
+        if (interval <= TimeSpan.Zero)
+            return;
+
+        try
+        {
+            using var timer = new PeriodicTimer(interval);
+            while (await timer.WaitForNextTickAsync(stop))
+            {
+                try
+                {
+                    using var heartbeatScope = serviceProvider.CreateScope();
+                    var heartbeatContext =
+                        heartbeatScope.ServiceProvider.GetRequiredService<IDataContext>();
+                    var now = DateTime.UtcNow;
+
+                    await heartbeatContext
+                        .BackgroundJobs.Where(j => j.Id == jobId)
+                        .ExecuteUpdateAsync(
+                            s => s.SetProperty(j => j.FetchedAt, (DateTime?)now),
+                            stop
+                        );
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogWarning(
+                        ex,
+                        "Worker {WorkerId} could not refresh its claim on job {JobId}; it becomes "
+                            + "claimable again once VisibilityTimeout passes without a refresh",
+                        workerId,
+                        jobId
+                    );
+                }
+            }
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested)
+        {
+            // The job finished.
         }
     }
 

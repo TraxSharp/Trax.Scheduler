@@ -292,6 +292,7 @@ namespace Trax.Scheduler.Services.CancellationRegistry
         void Register(long metadataId, System.Threading.CancellationTokenSource cts);
         bool TryCancel(long metadataId);
         void Unregister(long metadataId);
+        void Unregister(long metadataId, System.Threading.CancellationTokenSource cts);
     }
 }
 namespace Trax.Scheduler.Services.DormantDependentContext
