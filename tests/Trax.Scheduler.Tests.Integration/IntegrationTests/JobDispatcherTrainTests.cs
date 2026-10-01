@@ -146,6 +146,36 @@ public class JobDispatcherTrainTests : TestSetup
     }
 
     [Test]
+    public async Task Run_CarriesARequeuesReplayLinkOntoTheRunsMetadata()
+    {
+        // A requeue names the run it repeats on the entry. The run reads it from its metadata to
+        // replay that run's decisions, so dispatch must carry it across.
+        var entry = WorkQueue.Create(
+            new CreateWorkQueue
+            {
+                TrainName = typeof(SchedulerTestTrain).FullName!,
+                Input = JsonSerializer.Serialize(
+                    new SchedulerTestInput { Value = "requeued" },
+                    TraxJsonSerializationOptions.ManifestProperties
+                ),
+                InputTypeName = typeof(SchedulerTestInput).AssemblyQualifiedName,
+                ReplayDecisionsOf = 777,
+            }
+        );
+        await DataContext.Track(entry);
+        await DataContext.SaveChanges(CancellationToken.None);
+        DataContext.Reset();
+
+        await _train.Run(Unit.Default);
+
+        DataContext.Reset();
+        var dispatched = await DataContext
+            .WorkQueues.Include(q => q.Metadata)
+            .FirstAsync(q => q.Id == entry.Id);
+        dispatched.Metadata!.ReplayDecisionsOf.Should().Be(777);
+    }
+
+    [Test]
     public async Task Run_CreatesMetadataWithCorrectTrainName()
     {
         // Arrange

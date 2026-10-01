@@ -550,6 +550,7 @@ namespace Trax.Scheduler.Services.Operations
         public QueueTrainInput(string TrainName, string? InputJson = null, int Priority = 0, System.DateTime? ScheduledAt = default) { }
         public string? InputJson { get; init; }
         public int Priority { get; init; }
+        public long? ReplayDecisionsOf { get; init; }
         public System.DateTime? ScheduledAt { get; init; }
         public string TrainName { get; init; }
     }

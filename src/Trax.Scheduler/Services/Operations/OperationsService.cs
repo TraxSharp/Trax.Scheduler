@@ -151,13 +151,27 @@ public class OperationsService : IOperationsService
 
         try
         {
-            queued = await _trainExecution.QueueAsync(
-                registration.ServiceType.FullName!,
-                input.InputJson,
-                input.Priority,
-                input.ScheduledAt,
-                ct
-            );
+            // Only a replay needs the options overload; every other enqueue goes through the
+            // overload every implementation has.
+            queued = input.ReplayDecisionsOf is null
+                ? await _trainExecution.QueueAsync(
+                    registration.ServiceType.FullName!,
+                    input.InputJson,
+                    input.Priority,
+                    input.ScheduledAt,
+                    ct
+                )
+                : await _trainExecution.QueueAsync(
+                    registration.ServiceType.FullName!,
+                    input.InputJson,
+                    new QueueTrainOptions
+                    {
+                        Priority = input.Priority,
+                        ScheduledAt = input.ScheduledAt,
+                        ReplayDecisionsOf = input.ReplayDecisionsOf,
+                    },
+                    ct
+                );
         }
         catch (JsonException ex)
         {
