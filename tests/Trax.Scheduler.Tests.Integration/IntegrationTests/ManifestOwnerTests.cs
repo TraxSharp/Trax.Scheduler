@@ -17,8 +17,11 @@ namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 /// Every manifest a scheduler seeds records the application that declared it, and that
 /// application's startup prune considers only its own manifests: several applications can
 /// schedule against one database without deleting each other's.
+///
+/// <para>Enforces docs/adr/0015-a-startup-prune-deletes-only-its-own-applications-manifests.md.</para>
 /// </summary>
 [TestFixture]
+[Property("adr", "docs/adr/0015-a-startup-prune-deletes-only-its-own-applications-manifests.md")]
 [NonParallelizable]
 public class ManifestOwnerTests
 {
@@ -78,7 +81,12 @@ public class ManifestOwnerTests
         remaining
             .Should()
             .NotContain("billing-removed-from-code", "billing declared it and no longer does");
-        remaining.Should().Contain("reports-weekly", "another application owns it");
+        remaining
+            .Should()
+            .Contain(
+                "reports-weekly",
+                "another application owns it. See docs/adr/0015-a-startup-prune-deletes-only-its-own-applications-manifests.md."
+            );
         remaining
             .Should()
             .Contain(
