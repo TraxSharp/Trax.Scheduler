@@ -175,7 +175,7 @@
           "Cronos": "[0.13.0, )",
           "Trax.Effect": "[1.57.4, )",
           "Trax.Effect.Data": "[1.57.4, )",
-          "Trax.Mediator": "[1.23.2, )"
+          "Trax.Mediator": "[1.23.3, )"
         }
       },
       "Cronos": {
@@ -241,13 +241,13 @@
       },
       "Trax.Mediator": {
         "type": "CentralTransitive",
-        "requested": "[1.23.2, )",
-        "resolved": "1.23.2",
-        "contentHash": "yPwghCC0OA+S/x3ulFGc7eRNvU351XwykgGirAimv/qQj9NYfXOztxKYS8MVV673Ft84feyOd1Wgk5bwsjzxMg==",
+        "requested": "[1.23.3, )",
+        "resolved": "1.23.3",
+        "contentHash": "+GcjdUo5TKZtd/NHMG2l+IcK9Zf4zwxA8pB0Fyrwyx9iZDEZkgkA5zz6NzJUJNDf8ICq27/KbLNVS8vFOxs64w==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection": "10.0.12",
-          "Trax.Effect": "1.57.3",
-          "Trax.Effect.Data": "1.57.3"
+          "Trax.Effect": "1.57.4",
+          "Trax.Effect.Data": "1.57.4"
         }
       }
     }
