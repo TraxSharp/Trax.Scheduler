@@ -79,9 +79,15 @@ anyone who expected a replay.
 
 ## Consequences
 
-**There is no per-manifest opt-out yet.** A manifest that should always ask afresh on retry needs
-a stored flag, which is a manifest column in Trax.Effect's schema. Until it exists, every manifest
-retry that passes the checks above replays.
+**A manifest can opt out.** `ScheduleOptions.ReplayDecisionsOnRetry(false)` (or
+`ManifestOptions.ReplayDecisionsOnRetry` in a batch's `configureEach`) is stored on the manifest as
+`replay_decisions_on_retry`, default true, and every retry of that manifest, a dead-letter requeue
+included, asks afresh. Replaying is the default because a retry exists to repeat the run, and a
+manifest whose questions should be answered on current information (a model asked about data that
+changes between attempts) is the exception the flag is for. The flag is stored rather than held in
+the host's configuration so every scheduler host reads the same answer, including for a manifest
+scheduled at runtime. As with the other manifest settings (scheduler/0011), a re-seed writes it only
+when the code states it, so an explicit false is not reset by code that does not mention it.
 
 **The InMemory provider does not replay retries.** Its ManifestManager dispatches without work
 queue entries, so there is no queued input to compare, and it does not record the link.
@@ -89,11 +95,14 @@ queue entries, so there is no queued input to compare, and it does not record th
 ## Exemplars
 
 - `ManifestRetryReplaysDecisionsTests` pins that a retry takes the failed run's tracks without
-  asking, that three chained failures still replay the first run's answers, that a changed
+  asking, that a manifest that opted out asks afresh on both a retry and a dead-letter requeue, that three chained failures still replay the first run's answers, that a changed
   fingerprint re-asks, that both dead-letter requeues replay, that an occurrence after a success
   replays nothing, that a retry given a different input, one whose chain names a run that no
   longer exists, one of a run that did not record, a run of another manifest or of another train
   each ask afresh and complete, and that no public scheduler API accepts a run to replay.
+- `ReplayDecisionsOnRetrySeedingTests` pins that the opt-out reaches the manifest through a
+  single schedule, a batch item, a dependent and a one-off, and that a re-seed that does not state
+  it keeps an explicit false.
 
 **Enforced elsewhere:** `DecisionRecordingTests` in Trax.Effect pins the replay itself: the chain
 walk, the nearest answer winning, and the fingerprint check.
@@ -103,4 +112,5 @@ after a deploy that changed a junction replays the old answers into the new code
 
 ## Changelog
 
+- **2026-10-02**: A manifest can opt out of replaying decisions on retry.
 - **2026-10-02**: Recorded.

@@ -242,6 +242,60 @@ public class ManifestRetryReplaysDecisionsTests
         DecisionProbe.TracksOf("dead-letter").Should().Equal(["Slow", "Large", "Slow", "Large"]);
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task A_manifest_that_opted_out_asks_afresh_on_retry(bool deadLetter)
+    {
+        var manifest = await CreateManifestAsync(
+            "opted-out",
+            maxRetries: deadLetter ? 0 : 3,
+            replayDecisionsOnRetry: false
+        );
+        var before = _decider.Requests.Count;
+
+        DecisionProbe.FailAt = ProbeFailure.AfterQuestions;
+        var failed = await CycleAsync(manifest);
+        failed.TrainState.Should().Be(TrainState.Failed);
+
+        DecisionProbe.FailAt = ProbeFailure.None;
+        Answer(ProbeLane.Fast, ProbeSize.Small);
+
+        Metadata retry;
+        if (deadLetter)
+        {
+            await RunManifestManagerAsync();
+            var deadLetterId = await WithData(data =>
+                data.DeadLetters.AsNoTracking()
+                    .Where(d => d.ManifestId == manifest.Id)
+                    .Select(d => d.Id)
+                    .SingleAsync()
+            );
+            using (var scope = _provider.CreateScope())
+                (
+                    await scope
+                        .ServiceProvider.GetRequiredService<ITraxScheduler>()
+                        .RequeueDeadLetterAsync(deadLetterId)
+                )
+                    .Success.Should()
+                    .BeTrue();
+            retry = await DispatchQueuedAsync(manifest);
+        }
+        else
+            retry = await CycleAsync(manifest);
+
+        retry.TrainState.Should().Be(TrainState.Completed, retry.FailureReason);
+        retry
+            .ReplayDecisionsOf.Should()
+            .BeNull($"the manifest set ReplayDecisionsOnRetry(false). See {Adr}");
+        (_decider.Requests.Count - before)
+            .Should()
+            .Be(4, "the failed run and its retry each asked both questions");
+        DecisionProbe
+            .TracksOf("opted-out")
+            .Should()
+            .Equal(["Slow", "Large", "Fast", "Small"], "the retry took the fresh answers");
+    }
+
     [Test]
     public async Task A_retry_given_a_different_input_asks_afresh()
     {
@@ -376,8 +430,9 @@ public class ManifestRetryReplaysDecisionsTests
     public void No_public_scheduler_api_accepts_a_run_to_replay()
     {
         // The retry's source is read from the database by the scheduler. A public parameter or
-        // settable property naming a replay source would let a caller point a run at any other
-        // run's answers.
+        // settable property that names a replay and could carry a run (an id or an external id)
+        // would let a caller point a run at any other run's answers. The bool opt-out names no
+        // run, so it is not one.
         const BindingFlags members =
             BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static;
 
@@ -389,6 +444,7 @@ public class ManifestRetryReplaysDecisionsTests
                     .SelectMany(m => m.GetParameters())
                     .Where(p =>
                         p.Name?.Contains("Replay", StringComparison.OrdinalIgnoreCase) == true
+                        && CouldNameARun(p.ParameterType)
                     )
                     .Select(p => $"{type.FullName}.{p.Member.Name}({p.Name})")
                     .Concat(
@@ -396,6 +452,7 @@ public class ManifestRetryReplaysDecisionsTests
                             .Where(p =>
                                 p.CanWrite
                                 && p.Name.Contains("Replay", StringComparison.OrdinalIgnoreCase)
+                                && CouldNameARun(p.PropertyType)
                             )
                             .Select(p => $"{type.FullName}.{p.Name}")
                     )
@@ -405,6 +462,9 @@ public class ManifestRetryReplaysDecisionsTests
         offending
             .Should()
             .BeEmpty($"only the scheduler chooses the run a retry replays. See {Adr}");
+
+        static bool CouldNameARun(Type type) =>
+            (Nullable.GetUnderlyingType(type) ?? type) is var t && t != typeof(bool) && !t.IsEnum;
     }
 
     /// <summary>
@@ -438,7 +498,8 @@ public class ManifestRetryReplaysDecisionsTests
     private async Task<Manifest> CreateManifestAsync(
         string value,
         int maxRetries = 3,
-        string? owner = null
+        string? owner = null,
+        bool replayDecisionsOnRetry = true
     )
     {
         using var scope = _provider.CreateScope();
@@ -457,6 +518,7 @@ public class ManifestRetryReplaysDecisionsTests
                 IntervalSeconds = 3600,
                 MaxRetries = maxRetries,
                 Properties = new DecisionProbeInput { Value = value },
+                ReplayDecisionsOnRetry = replayDecisionsOnRetry,
             }
         );
         manifest.ManifestGroupId = group.Id;

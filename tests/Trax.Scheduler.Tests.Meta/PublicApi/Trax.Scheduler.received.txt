@@ -47,6 +47,7 @@ namespace Trax.Scheduler.Configuration
         public Trax.Effect.Enums.MisfirePolicy? MisfirePolicy { get; set; }
         public System.TimeSpan? MisfireThreshold { get; set; }
         public int Priority { get; set; }
+        public bool ReplayDecisionsOnRetry { get; set; }
         public System.TimeSpan? Timeout { get; set; }
         public System.TimeSpan? Variance { get; set; }
     }
@@ -104,6 +105,7 @@ namespace Trax.Scheduler.Configuration
         public Trax.Scheduler.Configuration.ScheduleOptions OnMisfire(Trax.Effect.Enums.MisfirePolicy policy) { }
         public Trax.Scheduler.Configuration.ScheduleOptions Priority(int priority) { }
         public Trax.Scheduler.Configuration.ScheduleOptions PrunePrefix(string prefix) { }
+        public Trax.Scheduler.Configuration.ScheduleOptions ReplayDecisionsOnRetry(bool replay) { }
         public Trax.Scheduler.Configuration.ScheduleOptions Timeout(System.TimeSpan timeout) { }
         public Trax.Scheduler.Configuration.ScheduleOptions Variance(System.TimeSpan variance) { }
     }

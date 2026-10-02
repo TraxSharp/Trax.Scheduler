@@ -138,6 +138,7 @@ internal static class DataContextExtensions
             ApplyMisfireOptions(existing, options);
             ApplyExclusions(existing, options);
             ApplyFailureWindow(existing, options);
+            ApplyReplayDecisionsOnRetry(existing, options);
 
             return existing;
         }
@@ -161,6 +162,7 @@ internal static class DataContextExtensions
         ApplyMisfireOptions(manifest, options);
         ApplyExclusions(manifest, options);
         ApplyFailureWindow(manifest, options);
+        ApplyReplayDecisionsOnRetry(manifest, options);
 
         context.Manifests.Add(manifest);
 
@@ -234,6 +236,7 @@ internal static class DataContextExtensions
             ApplyMisfireOptions(existing, options);
             ApplyExclusions(existing, options);
             ApplyFailureWindow(existing, options);
+            ApplyReplayDecisionsOnRetry(existing, options);
 
             return existing;
         }
@@ -256,6 +259,7 @@ internal static class DataContextExtensions
         ApplyMisfireOptions(manifest, options);
         ApplyExclusions(manifest, options);
         ApplyFailureWindow(manifest, options);
+        ApplyReplayDecisionsOnRetry(manifest, options);
 
         context.Manifests.Add(manifest);
 
@@ -325,6 +329,7 @@ internal static class DataContextExtensions
             ApplyMisfireOptions(existing, options);
             ApplyExclusions(existing, options);
             ApplyFailureWindow(existing, options);
+            ApplyReplayDecisionsOnRetry(existing, options);
 
             return existing;
         }
@@ -347,6 +352,7 @@ internal static class DataContextExtensions
         ApplyMisfireOptions(manifest, options);
         ApplyExclusions(manifest, options);
         ApplyFailureWindow(manifest, options);
+        ApplyReplayDecisionsOnRetry(manifest, options);
 
         context.Manifests.Add(manifest);
 
@@ -463,6 +469,16 @@ internal static class DataContextExtensions
     {
         if (options.FailureWindow is { } window)
             manifest.FailureWindowSeconds = (int)window.TotalSeconds;
+    }
+
+    /// <summary>
+    /// Writes whether retries replay decisions when the options state it. Unstated, a new manifest
+    /// keeps the model's default (replay) and an existing one keeps what it has (scheduler/0011).
+    /// </summary>
+    private static void ApplyReplayDecisionsOnRetry(Manifest manifest, ManifestOptions options)
+    {
+        if (options._replayDecisionsOnRetry is { } replay)
+            manifest.ReplayDecisionsOnRetry = replay;
     }
 
     /// <summary>

@@ -49,6 +49,17 @@ internal static class RetryDecisionReplay
         CancellationToken ct
     )
     {
+        // The manifest opted out: every retry asks afresh.
+        if (!manifest.ReplayDecisionsOnRetry)
+        {
+            logger.LogDebug(
+                "The retry of manifest {ManifestId} asks its deciders afresh: the manifest does not "
+                    + "replay decisions on retry",
+                manifest.Id
+            );
+            return null;
+        }
+
         // The latest run that finished, chosen as LoadManifestsJunction chooses it. Only a failure
         // is retried; a run after a success or a cancel is an ordinary occurrence.
         var latest = await context
