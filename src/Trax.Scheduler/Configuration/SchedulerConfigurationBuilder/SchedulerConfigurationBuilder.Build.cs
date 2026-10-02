@@ -71,7 +71,9 @@ public partial class SchedulerConfigurationBuilder
         // Chooses the run a manifest's retry replays the decisions of (docs/adr/0017).
         _parentBuilder.ServiceCollection.TryAddScoped(sp => new RetryDecisionReplay(
             sp.GetRequiredService<IDataContextProviderFactory>(),
-            sp.GetRequiredService<ILogger<RetryDecisionReplay>>()
+            sp.GetRequiredService<ILogger<RetryDecisionReplay>>(),
+            sp.GetService<SchedulerConfiguration>(),
+            sp.GetService<ITrainDiscoveryService>()
         ));
 
         // Register IOperationsService — shared between dashboard UI and GraphQL operations

@@ -1592,7 +1592,12 @@ public class TraxScheduler(
     /// injected, so the public constructors stay as they are.
     /// </summary>
     private RetryDecisionReplay RetryReplay =>
-        _retryReplay ??= new RetryDecisionReplay(dataContextFactory, logger);
+        _retryReplay ??= new RetryDecisionReplay(
+            dataContextFactory,
+            logger,
+            configuration,
+            trainDiscovery
+        );
 
     private RetryDecisionReplay? _retryReplay;
 

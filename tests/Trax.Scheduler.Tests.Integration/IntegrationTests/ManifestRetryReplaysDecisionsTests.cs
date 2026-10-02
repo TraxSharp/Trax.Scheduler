@@ -16,10 +16,13 @@ using Trax.Effect.Models.DeadLetter;
 using Trax.Effect.Models.Manifest;
 using Trax.Effect.Models.Manifest.DTOs;
 using Trax.Effect.Models.Metadata;
+using Trax.Effect.Models.Metadata.DTOs;
 using Trax.Effect.Models.WorkQueue;
+using Trax.Effect.Models.WorkQueue.DTOs;
 using Trax.Effect.Provider.Json.Extensions;
 using Trax.Effect.Provider.Parameter.Extensions;
 using Trax.Mediator.Extensions;
+using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Extensions;
 using Trax.Scheduler.Services.Operations;
 using Trax.Scheduler.Services.TraxScheduler;
@@ -29,6 +32,7 @@ using Trax.Scheduler.Trains.JobDispatcher;
 using Trax.Scheduler.Trains.JobRunner;
 using Trax.Scheduler.Trains.ManifestManager;
 using Trax.Scheduler.Trains.ManifestManager.Utilities;
+using Trax.Scheduler.Trains.MetadataCleanup;
 
 namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 
@@ -68,7 +72,8 @@ public class ManifestRetryReplaysDecisionsTests
 
     private static ServiceProvider BuildProvider(
         IDecider decider,
-        Action<IServiceCollection>? configure = null
+        Action<IServiceCollection>? configure = null,
+        Action<SchedulerConfigurationBuilder>? configureScheduler = null
     )
     {
         var services = new ServiceCollection()
@@ -85,8 +90,11 @@ public class ManifestRetryReplaysDecisionsTests
                     .AddMediator(typeof(AssemblyMarker).Assembly, typeof(JobRunnerTrain).Assembly)
                     // No backoff, so a retry is dispatched on the cycle that queues it.
                     .AddScheduler(scheduler =>
-                        scheduler.UseInMemoryWorkers().DefaultRetryDelay(TimeSpan.Zero)
-                    )
+                    {
+                        scheduler.UseInMemoryWorkers().DefaultRetryDelay(TimeSpan.Zero);
+                        configureScheduler?.Invoke(scheduler);
+                        return scheduler;
+                    })
             )
             .AddScoped<IDataContext>(sp =>
                 (IDataContext)sp.GetRequiredService<IDataContextProviderFactory>().Create()
@@ -230,6 +238,196 @@ public class ManifestRetryReplaysDecisionsTests
             .BeNull("a requeue through the operations service is no manifest's run");
 
         await AssertRetryAsksAfreshAsync(manifest, "requeued");
+    }
+
+    [Test]
+    public async Task An_occurrence_after_an_acknowledged_dead_letter_asks_afresh()
+    {
+        var manifest = await CreateManifestAsync("acknowledged", maxRetries: 0);
+
+        DecisionProbe.FailAt = ProbeFailure.AfterQuestions;
+        var failed = await CycleAsync(manifest);
+        failed.TrainState.Should().Be(TrainState.Failed);
+
+        // Dead-lettered, then acknowledged: the failure no longer counts, so the next run is an
+        // ordinary occurrence, not a retry of it.
+        await RunManifestManagerAsync();
+        using (var scope = Provider.CreateScope())
+        {
+            var scheduler = scope.ServiceProvider.GetRequiredService<ITraxScheduler>();
+            var deadLetterId = await WithData(data =>
+                data.DeadLetters.AsNoTracking()
+                    .Where(d => d.ManifestId == manifest.Id)
+                    .Select(d => d.Id)
+                    .SingleAsync()
+            );
+            (await scheduler.AcknowledgeDeadLetterAsync(deadLetterId, "handled"))
+                .Success.Should()
+                .BeTrue();
+        }
+
+        await AssertRetryAsksAfreshAsync(manifest, "acknowledged");
+    }
+
+    [Test]
+    public async Task A_dependent_retried_before_its_parent_succeeds_again_replays()
+    {
+        var parent = await CreateManifestAsync("parent");
+        var dependent = await CreateManifestAsync("dependent", dependsOn: parent);
+        (await CycleAsync(parent)).TrainState.Should().Be(TrainState.Completed);
+
+        DecisionProbe.FailAt = ProbeFailure.AfterQuestions;
+        var failed = await CycleAsync(dependent);
+        failed.TrainState.Should().Be(TrainState.Failed);
+
+        DecisionProbe.FailAt = ProbeFailure.None;
+        Answer(ProbeLane.Fast, ProbeSize.Small);
+        var retry = await CycleAsync(dependent);
+
+        retry.TrainState.Should().Be(TrainState.Completed, retry.FailureReason);
+        retry.ReplayDecisionsOf.Should().Be(failed.Id, "no new parent success: this is a retry");
+    }
+
+    [Test]
+    public async Task A_dependent_fired_by_a_new_parent_success_asks_afresh()
+    {
+        var parent = await CreateManifestAsync("parent-again");
+        var dependent = await CreateManifestAsync("fired", dependsOn: parent);
+        (await CycleAsync(parent)).TrainState.Should().Be(TrainState.Completed);
+
+        DecisionProbe.FailAt = ProbeFailure.AfterQuestions;
+        var failed = await CycleAsync(dependent);
+        failed.TrainState.Should().Be(TrainState.Failed);
+
+        // The parent succeeds again: the dependent's next run is fired by that success.
+        DecisionProbe.FailAt = ProbeFailure.None;
+        using (var scope = Provider.CreateScope())
+            await scope
+                .ServiceProvider.GetRequiredService<ITraxScheduler>()
+                .TriggerAsync(parent.ExternalId);
+        (await DispatchQueuedAsync(parent)).TrainState.Should().Be(TrainState.Completed);
+
+        await AssertRetryAsksAfreshAsync(dependent, "fired");
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task A_dead_letter_requeue_asks_afresh_while_something_already_replays_the_failed_run(
+        bool queuedEntry
+    )
+    {
+        var manifest = await CreateManifestAsync("in-flight", maxRetries: 0);
+
+        DecisionProbe.FailAt = ProbeFailure.AfterQuestions;
+        var failed = await CycleAsync(manifest);
+        await RunManifestManagerAsync();
+
+        // An operator's requeue of the failed run is queued, or already running.
+        await WithData(async data =>
+        {
+            if (queuedEntry)
+                data.WorkQueues.Add(
+                    WorkQueue.Create(
+                        new CreateWorkQueue
+                        {
+                            TrainName = manifest.Name,
+                            Input = manifest.Properties,
+                            InputTypeName = manifest.PropertyTypeName,
+                            ReplayDecisionsOf = failed.Id,
+                            ScheduledAt = DateTime.UtcNow.AddHours(1),
+                        }
+                    )
+                );
+            else
+            {
+                var running = Metadata.Create(
+                    new CreateMetadata
+                    {
+                        Name = manifest.Name,
+                        ExternalId = Guid.NewGuid().ToString("N"),
+                        Input = null,
+                        ReplayDecisionsOf = failed.Id,
+                    }
+                );
+                running.TrainState = TrainState.InProgress;
+                data.Metadatas.Add(running);
+            }
+            await data.SaveChanges(CancellationToken.None);
+            return true;
+        });
+
+        var deadLetterId = await WithData(data =>
+            data.DeadLetters.AsNoTracking()
+                .Where(d => d.ManifestId == manifest.Id)
+                .Select(d => d.Id)
+                .SingleAsync()
+        );
+        using (var scope = Provider.CreateScope())
+            (
+                await scope
+                    .ServiceProvider.GetRequiredService<ITraxScheduler>()
+                    .RequeueDeadLetterAsync(deadLetterId)
+            )
+                .Success.Should()
+                .BeTrue();
+
+        (await QueuedEntryOf(manifest))
+            .ReplayDecisionsOf.Should()
+            .BeNull($"the failed run's answers are already being replayed once. See {Adr}");
+    }
+
+    [Test]
+    public async Task A_retry_after_cleanup_deleted_the_failed_replay_asks_afresh()
+    {
+        await using var swept = BuildProvider(
+            _decider,
+            configureScheduler: scheduler =>
+                scheduler.AddMetadataCleanup(c =>
+                    c.AddTrainType<IDecisionProbeTrain>(TimeSpan.FromMinutes(5))
+                )
+        );
+        _override = swept;
+        try
+        {
+            var manifest = await CreateManifestAsync("swept", maxRetries: 3);
+
+            DecisionProbe.FailAt = ProbeFailure.AfterQuestions;
+            var first = await CycleAsync(manifest);
+            var replay = await CycleAsync(manifest);
+            replay.ReplayDecisionsOf.Should().Be(first.Id);
+
+            // Both runs are older than the retention; the sweep deletes the replay, and keeps the
+            // run it replayed until a later sweep, since the replay still named it.
+            await WithData(async data =>
+            {
+                await data
+                    .Metadatas.Where(m => m.Id == first.Id)
+                    .ExecuteUpdateAsync(s =>
+                        s.SetProperty(m => m.StartTime, DateTime.UtcNow.AddMinutes(-11))
+                    );
+                return await data
+                    .Metadatas.Where(m => m.Id == replay.Id)
+                    .ExecuteUpdateAsync(s =>
+                        s.SetProperty(m => m.StartTime, DateTime.UtcNow.AddMinutes(-10))
+                    );
+            });
+            using (var scope = Provider.CreateScope())
+                await scope
+                    .ServiceProvider.GetRequiredService<IMetadataCleanupTrain>()
+                    .Run(new MetadataCleanupRequest());
+            (await WithData(data => data.Metadatas.AnyAsync(m => m.Id == replay.Id)))
+                .Should()
+                .BeFalse();
+            (await WithData(data => data.Metadatas.AnyAsync(m => m.Id == first.Id)))
+                .Should()
+                .BeTrue();
+
+            await AssertRetryAsksAfreshAsync(manifest, "swept");
+        }
+        finally
+        {
+            _override = null;
+        }
     }
 
     [Test]
@@ -768,7 +966,8 @@ public class ManifestRetryReplaysDecisionsTests
         string value,
         int maxRetries = 3,
         string? owner = null,
-        bool replayDecisionsOnRetry = true
+        bool replayDecisionsOnRetry = true,
+        Manifest? dependsOn = null
     )
     {
         using var scope = Provider.CreateScope();
@@ -783,8 +982,9 @@ public class ManifestRetryReplaysDecisionsTests
             {
                 Name = typeof(IDecisionProbeTrain),
                 IsEnabled = true,
-                ScheduleType = ScheduleType.Interval,
-                IntervalSeconds = 3600,
+                ScheduleType = dependsOn is null ? ScheduleType.Interval : ScheduleType.Dependent,
+                IntervalSeconds = dependsOn is null ? 3600 : null,
+                DependsOnManifestId = dependsOn?.Id,
                 MaxRetries = maxRetries,
                 Properties = new DecisionProbeInput { Value = value },
                 ReplayDecisionsOnRetry = replayDecisionsOnRetry,

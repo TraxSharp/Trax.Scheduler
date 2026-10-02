@@ -54,7 +54,13 @@ internal class CreateWorkQueueEntriesJunction(
         // sources are read in one pass, from the database, never supplied; a failed lookup asks
         // afresh rather than holding up the cycle.
         var replaySources = await retryReplay.SourcesForRetriesAsync(
-            views.Where(v => v.LatestFinishedRunFailed).Select(v => v.Manifest).ToList(),
+            // Exactly the runs the backoff below treats as retries: the latest run failed and
+            // its failure still counts. A failure an acknowledged dead letter or the failure
+            // window has set aside is not retried, so the next occurrence asks afresh.
+            views
+                .Where(v => v.LatestFinishedRunFailed && v.FailedCount > 0)
+                .Select(v => v.Manifest)
+                .ToList(),
             CancellationToken
         );
 

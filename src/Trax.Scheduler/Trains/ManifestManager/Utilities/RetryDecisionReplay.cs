@@ -3,7 +3,11 @@ using Microsoft.Extensions.Logging;
 using Trax.Effect.Data.Services.IDataContextFactory;
 using Trax.Effect.Enums;
 using Trax.Effect.Models.Manifest;
+using Trax.Mediator.Services.TrainDiscovery;
+using Trax.Scheduler.Configuration;
+using Trax.Scheduler.Extensions;
 using Trax.Scheduler.Trains.JobDispatcher;
+using Trax.Scheduler.Utilities;
 
 namespace Trax.Scheduler.Trains.ManifestManager.Utilities;
 
@@ -18,11 +22,14 @@ namespace Trax.Scheduler.Trains.ManifestManager.Utilities;
 /// (the latest finished run succeeded or was cancelled) replays nothing.
 /// </para>
 /// <para>
-/// A retry replays at most once in a row. The source must be a run that asked its deciders
-/// itself: a failed run that was itself a replay, or a run whose answers another run already
-/// replayed and failed with, is retried afresh, so one bad answer cannot hold a manifest in a
-/// loop of retries, dead letters and requeues that all repeat it. Because the source never
-/// replays another run, the replay reads its answers alone and there is no chain to follow.
+/// A run's answers are replayed at most once. The source must be a run that asked its deciders
+/// itself and whose answers nothing else replays, in any state: a failed run that was itself a
+/// replay, or one another run or a queued entry already replays, is retried afresh, so one bad
+/// answer cannot hold a manifest in a loop of retries, dead letters and requeues that all repeat
+/// it. Because the source never replays another run, the replay reads its answers alone and there
+/// is no chain to follow. A source older than its train's metadata retention asks afresh too,
+/// since cleanup may have deleted a replay of it, and so does a dependent's run once its parent
+/// has succeeded again, which makes the next run a new firing rather than a retry.
 /// </para>
 /// <para>
 /// The source must be a failed run of the manifest's train that recorded its decisions and acted
@@ -37,7 +44,12 @@ namespace Trax.Scheduler.Trains.ManifestManager.Utilities;
 /// of queries.
 /// </para>
 /// </remarks>
-internal class RetryDecisionReplay(IDataContextProviderFactory contextFactory, ILogger logger)
+internal class RetryDecisionReplay(
+    IDataContextProviderFactory contextFactory,
+    ILogger logger,
+    SchedulerConfiguration? configuration = null,
+    ITrainDiscoveryService? discoveryService = null
+)
 {
     /// <summary>
     /// The run each manifest's retry replays, by manifest id. A manifest missing from the result
@@ -137,6 +149,7 @@ internal class RetryDecisionReplay(IDataContextProviderFactory contextFactory, I
                 m.Name,
                 m.DecisionsRecorded,
                 m.ReplayDecisionsOf,
+                m.StartTime,
             })
             .ToListAsync(ct);
 
@@ -157,21 +170,55 @@ internal class RetryDecisionReplay(IDataContextProviderFactory contextFactory, I
                 .ToListAsync(ct)
         ).GroupBy(q => q.MetadataId).ToDictionary(g => g.Key, g => g.First());
 
-        // Runs whose answers another run already replayed and failed with: a manifest retry, or
-        // a requeue through RequeueExecutionAsync, which belongs to no manifest.
+        // Runs whose answers something already replays, in any state: a run queued, running or
+        // finished with them (a manifest retry, or a requeue through RequeueExecutionAsync, which
+        // belongs to no manifest), or an entry still queued to. Each is the answers' one replay.
         var alreadyReplayed = (
             await context
                 .Metadatas.AsNoTracking()
                 .Where(r =>
-                    r.ReplayDecisionsOf != null
-                    && runIds.Contains(r.ReplayDecisionsOf.Value)
-                    && r.TrainState == TrainState.Failed
-                    && r.FailureException != DispatchFailure.Requeued
+                    r.ReplayDecisionsOf != null && runIds.Contains(r.ReplayDecisionsOf.Value)
                 )
                 .Select(r => r.ReplayDecisionsOf!.Value)
                 .Distinct()
                 .ToListAsync(ct)
         ).ToHashSet();
+        alreadyReplayed.UnionWith(
+            await context
+                .WorkQueues.AsNoTracking()
+                .Where(q =>
+                    q.ReplayDecisionsOf != null
+                    && runIds.Contains(q.ReplayDecisionsOf.Value)
+                    && q.Status == WorkQueueStatus.Queued
+                )
+                .Select(q => q.ReplayDecisionsOf!.Value)
+                .Distinct()
+                .ToListAsync(ct)
+        );
+
+        // A dependent is fired by its parent's success. Once the parent has succeeded again since
+        // the failed run started, the next run is a new firing, not a retry of that one.
+        var parentIds = manifests
+            .Where(m => m.DependsOnManifestId is not null)
+            .Select(m => (long)m.DependsOnManifestId!.Value)
+            .Distinct()
+            .ToList();
+        var parentSuccess =
+            parentIds.Count == 0
+                ? new Dictionary<long, DateTime?>()
+                : await context
+                    .Manifests.AsNoTracking()
+                    .Where(m => parentIds.Contains(m.Id))
+                    .ToDictionaryAsync(m => m.Id, m => m.LastSuccessfulRun, ct);
+
+        // Metadata cleanup deletes a run only once it is older than its train's retention, and a
+        // run after the failed one is younger than it. While the failed run is inside the
+        // retention, nothing after it can have been swept, so the replay-once test above saw every
+        // replay of it. Past it, a swept replay could hide, so the retry asks afresh.
+        var retention = configuration?.MetadataCleanup is { } cleanup
+            ? MetadataRetentionPlan.Build(cleanup, discoveryService, out _)
+            : null;
+        var now = DateTime.UtcNow;
 
         // A decision the run acted on: a refused answer is never replayed, so it does not count.
         var decided = (
@@ -203,7 +250,15 @@ internal class RetryDecisionReplay(IDataContextProviderFactory contextFactory, I
                 : run.ReplayDecisionsOf is not null
                     ? "it replayed another run's answers and failed, so they are not replayed again"
                 : alreadyReplayed.Contains(runId)
-                    ? "another run already replayed its answers and failed"
+                    ? "its answers are already being, or have been, replayed once"
+                : retention is not null
+                && retention.TryGetValue(run.Name, out var keep)
+                && run.StartTime < TimeCutoff.Before(now, keep)
+                    ? "it is old enough that metadata cleanup may have deleted a run that replayed it"
+                : manifest.DependsOnManifestId is { } parent
+                && parentSuccess.GetValueOrDefault(parent) is { } succeeded
+                && succeeded > run.StartTime
+                    ? "its parent succeeded again since, so this run is a new firing, not a retry"
                 : entry is null || entry.ManifestId != manifest.Id
                     ? "it has no work queue entry of this manifest to compare inputs with"
                 : entry.SubjectKey is not null ? "it was queued under a subject key"
