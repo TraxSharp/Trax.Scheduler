@@ -16,6 +16,7 @@ using Trax.Scheduler.Extensions;
 using Trax.Scheduler.Services.CancellationRegistry;
 using Trax.Scheduler.Services.ManifestPruning;
 using Trax.Scheduler.Services.Operations;
+using Trax.Scheduler.Trains.ManifestManager.Utilities;
 using Schedule = Trax.Scheduler.Services.Scheduling.Schedule;
 
 namespace Trax.Scheduler.Services.TraxScheduler;
@@ -1077,7 +1078,7 @@ public class TraxScheduler(
                     + "is left awaiting intervention."
             );
 
-        var entry = CreateWorkQueueFromDeadLetter(deadLetter);
+        var entry = await CreateWorkQueueFromDeadLetter(context, deadLetter, ct);
         context.WorkQueues.Add(entry);
 
         deadLetter.Requeue($"Re-queued (WorkQueue {entry.Id})");
@@ -1418,15 +1419,17 @@ public class TraxScheduler(
         ).ToHashSet();
 
         var skipped = deadLetters.Count(d => alreadyQueued.Contains(d.ManifestId));
-        var batches = deadLetters
-            .Where(d => !alreadyQueued.Contains(d.ManifestId))
-            .GroupBy(d => d.ManifestId)
-            .Select(g =>
-            {
-                var members = g.OrderByDescending(d => d.Id).ToList();
-                return (Entry: CreateWorkQueueFromDeadLetter(members[0]), Members: members);
-            })
-            .ToList();
+        var batches =
+            new List<(WorkQueue Entry, List<Effect.Models.DeadLetter.DeadLetter> Members)>();
+        foreach (
+            var group in deadLetters
+                .Where(d => !alreadyQueued.Contains(d.ManifestId))
+                .GroupBy(d => d.ManifestId)
+        )
+        {
+            var members = group.OrderByDescending(d => d.Id).ToList();
+            batches.Add((await CreateWorkQueueFromDeadLetter(context, members[0], ct), members));
+        }
 
         if (firstAttempt && BeforeRequeueInsert is { } hook)
             await hook(ct);
@@ -1470,11 +1473,25 @@ public class TraxScheduler(
         return new RequeueCounts(resolved, batches.Count, folded, skipped);
     }
 
-    private static WorkQueue CreateWorkQueueFromDeadLetter(
-        Effect.Models.DeadLetter.DeadLetter deadLetter
+    private async Task<WorkQueue> CreateWorkQueueFromDeadLetter(
+        IDataContext context,
+        Effect.Models.DeadLetter.DeadLetter deadLetter,
+        CancellationToken ct
     )
     {
         var manifest = deadLetter.Manifest!;
+
+        // A dead-letter requeue retries the manifest's failed run, so it replays that run's
+        // decisions as the ManifestManager's retry does, under the same checks (docs/adr/0017).
+        var replayDecisionsOf = await RetryDecisionReplay.SourceForRetryAsync(
+            context,
+            manifest,
+            manifest.Properties,
+            manifest.PropertyTypeName,
+            logger,
+            ct
+        );
+
         return WorkQueue.Create(
             new CreateWorkQueue
             {
@@ -1486,6 +1503,7 @@ public class TraxScheduler(
                 DeadLetterId = deadLetter.Id,
                 // An operator asked for this run by name, so it runs while the manifest is disabled.
                 ExplicitTrigger = true,
+                ReplayDecisionsOf = replayDecisionsOf,
             }
         );
     }
