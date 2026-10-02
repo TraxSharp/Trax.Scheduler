@@ -175,39 +175,62 @@ internal class DeleteExpiredMetadataJunction(
 
     private async Task DeleteMetadataByIds(IReadOnlyList<long> batchIds, CleanupTotals totals)
     {
-        var ids = batchIds.ToList();
+        var deleted = await DeleteUnreferencedAsync(dataContext, batchIds, CancellationToken);
+        totals.WorkQueues += deleted.WorkQueues;
+        totals.Logs += deleted.Logs;
+        totals.Metadata += deleted.Metadata;
+    }
+
+    /// <summary>
+    /// Deletes the runs among <paramref name="ids"/> that nothing still replays, with what they
+    /// own. Every statement repeats the keep-if-referenced test the batch was selected with, so a
+    /// run that a queued entry or another run came to name after the select is kept, with its
+    /// work queue entry and logs, rather than deleted from under the replay (docs/adr/0017).
+    /// </summary>
+    internal static async Task<(int Metadata, int WorkQueues, int Logs)> DeleteUnreferencedAsync(
+        IDataContext dataContext,
+        IReadOnlyList<long> ids,
+        CancellationToken ct
+    )
+    {
+        var idList = ids.ToList();
+        var deletable = dataContext.Metadatas.Where(m =>
+            idList.Contains(m.Id)
+            && !dataContext.WorkQueues.Any(q =>
+                q.ReplayDecisionsOf == m.Id && q.Status == WorkQueueStatus.Queued
+            )
+            && !dataContext.Metadatas.Any(r => r.ReplayDecisionsOf == m.Id)
+        );
 
         // Work queue entries and logs are owned by the metadata and deleted outright.
-        totals.WorkQueues += await dataContext
-            .WorkQueues.Where(wq => wq.MetadataId.HasValue && ids.Contains(wq.MetadataId.Value))
-            .ExecuteDeleteAsync(CancellationToken);
+        var workQueues = await dataContext
+            .WorkQueues.Where(wq =>
+                wq.MetadataId.HasValue && deletable.Any(m => m.Id == wq.MetadataId.Value)
+            )
+            .ExecuteDeleteAsync(ct);
 
-        totals.Logs += await dataContext
-            .Logs.Where(l => ids.Contains(l.MetadataId))
-            .ExecuteDeleteAsync(CancellationToken);
+        var logs = await dataContext
+            .Logs.Where(l => deletable.Any(m => m.Id == l.MetadataId))
+            .ExecuteDeleteAsync(ct);
 
         // Dead letters and child metadata reference the metadata but are not owned by it: a dead
         // letter is a meaningful record and a child train's metadata can outlive its parent. Null
         // the back-references so the FK does not block the delete, rather than cascading into them.
         await dataContext
             .DeadLetters.Where(d =>
-                d.RetryMetadataId.HasValue && ids.Contains(d.RetryMetadataId.Value)
+                d.RetryMetadataId.HasValue && deletable.Any(m => m.Id == d.RetryMetadataId.Value)
             )
-            .ExecuteUpdateAsync(
-                s => s.SetProperty(d => d.RetryMetadataId, (long?)null),
-                CancellationToken
-            );
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.RetryMetadataId, (long?)null), ct);
 
         await dataContext
-            .Metadatas.Where(m => m.ParentId.HasValue && ids.Contains(m.ParentId.Value))
-            .ExecuteUpdateAsync(
-                s => s.SetProperty(m => m.ParentId, (long?)null),
-                CancellationToken
-            );
+            .Metadatas.Where(c =>
+                c.ParentId.HasValue && deletable.Any(m => m.Id == c.ParentId.Value)
+            )
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.ParentId, (long?)null), ct);
 
-        totals.Metadata += await dataContext
-            .Metadatas.Where(m => ids.Contains(m.Id))
-            .ExecuteDeleteAsync(CancellationToken);
+        var metadata = await deletable.ExecuteDeleteAsync(ct);
+
+        return (metadata, workQueues, logs);
     }
 
     private sealed class CleanupTotals

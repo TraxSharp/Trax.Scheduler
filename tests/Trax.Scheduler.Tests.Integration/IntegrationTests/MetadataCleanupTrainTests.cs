@@ -701,6 +701,66 @@ public class MetadataCleanupTrainTests : TestSetup
             .BeFalse("with the run that replayed it gone, the source is expired like any other");
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task Delete_KeepsARunLinkedAfterItWasSelected(bool byQueuedEntry)
+    {
+        // Both runs were selected as expired and unreferenced. Between that select and the
+        // delete, a retry is queued to replay one, or a run is recorded replaying it. The delete
+        // statements repeat the test, so the linked run, its entry and its logs survive
+        // (docs/adr/0017-a-manifests-retry-replays-the-decisions-of-the-run-it-retries.md).
+        var linked = await CreateAndSaveMetadata(
+            name: typeof(ManifestManagerTrain).FullName!,
+            state: TrainState.Failed,
+            startTime: DateTime.UtcNow.AddHours(-2)
+        );
+        var unlinked = await CreateAndSaveMetadata(
+            name: typeof(ManifestManagerTrain).FullName!,
+            state: TrainState.Failed,
+            startTime: DateTime.UtcNow.AddHours(-2)
+        );
+        var ownEntry = WorkQueue.Create(
+            new CreateWorkQueue { TrainName = typeof(ManifestManagerTrain).FullName! }
+        );
+        ownEntry.Status = WorkQueueStatus.Dispatched;
+        ownEntry.MetadataId = linked.Id;
+        await DataContext.Track(ownEntry);
+        await DataContext.SaveChanges(CancellationToken.None);
+        DataContext.Reset();
+
+        if (byQueuedEntry)
+            await QueueReplayOf(linked.Id);
+        else
+        {
+            var replayer = await CreateAndSaveMetadata(
+                name: typeof(ManifestManagerTrain).FullName!,
+                state: TrainState.InProgress,
+                startTime: DateTime.UtcNow
+            );
+            await LinkReplay(replayer.Id, linked.Id);
+        }
+
+        var deleted =
+            await Trax.Scheduler.Trains.MetadataCleanup.Junctions.DeleteExpiredMetadataJunction.DeleteUnreferencedAsync(
+                DataContext,
+                [linked.Id, unlinked.Id],
+                CancellationToken.None
+            );
+
+        DataContext.Reset();
+        deleted.Metadata.Should().Be(1);
+        (await DataContext.Metadatas.AnyAsync(m => m.Id == linked.Id))
+            .Should()
+            .BeTrue(
+                "a run something came to replay after the select is kept. See "
+                    + "docs/adr/0017-a-manifests-retry-replays-the-decisions-of-the-run-it-retries.md"
+            );
+        (await DataContext.WorkQueues.AnyAsync(q => q.Id == ownEntry.Id))
+            .Should()
+            .BeTrue("the kept run keeps the entry a retry compares its input with");
+        (await DataContext.Metadatas.AnyAsync(m => m.Id == unlinked.Id)).Should().BeFalse();
+    }
+
     private async Task<WorkQueue> QueueReplayOf(long metadataId)
     {
         var entry = WorkQueue.Create(

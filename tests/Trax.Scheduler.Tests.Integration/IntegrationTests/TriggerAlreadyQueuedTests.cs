@@ -16,6 +16,7 @@ using Trax.Scheduler.Tests.Integration.Fakes.Trains;
 using Trax.Scheduler.Tests.Integration.Fixtures;
 using Trax.Scheduler.Trains.ManifestManager;
 using Trax.Scheduler.Trains.ManifestManager.Junctions;
+using Trax.Scheduler.Trains.ManifestManager.Utilities;
 
 namespace Trax.Scheduler.Tests.Integration.IntegrationTests;
 
@@ -143,7 +144,8 @@ public class TriggerAlreadyQueuedTests
             var junction = new CreateWorkQueueEntriesJunction(
                 context,
                 fx.Configuration,
-                NullLogger<CreateWorkQueueEntriesJunction>.Instance
+                NullLogger<CreateWorkQueueEntriesJunction>.Instance,
+                fx.Services.GetRequiredService<RetryDecisionReplay>()
             );
             await junction.Run(views);
 

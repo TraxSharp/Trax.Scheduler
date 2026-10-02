@@ -24,6 +24,7 @@ internal class CreateWorkQueueEntriesJunction(
     IDataContext dataContext,
     SchedulerConfiguration schedulerConfiguration,
     ILogger<CreateWorkQueueEntriesJunction> logger,
+    RetryDecisionReplay retryReplay,
     ITraxChangeSignal? changeSignal = null
 ) : EffectJunction<List<ManifestDispatchView>, Unit>
 {
@@ -47,6 +48,15 @@ internal class CreateWorkQueueEntriesJunction(
             );
             views = SelectGroupFair(views, limit.Value);
         }
+
+        // A retry replays the decisions its failed run recorded, when that is sound, so it takes
+        // the tracks the failed run took instead of asking the model again (docs/adr/0017). The
+        // sources are read in one pass, from the database, never supplied; a failed lookup asks
+        // afresh rather than holding up the cycle.
+        var replaySources = await retryReplay.SourcesForRetriesAsync(
+            views.Where(v => v.LatestFinishedRunFailed).Select(v => v.Manifest).ToList(),
+            CancellationToken
+        );
 
         foreach (var view in views)
         {
@@ -88,20 +98,6 @@ internal class CreateWorkQueueEntriesJunction(
                     );
                 }
 
-                // A retry replays the decisions the failed run recorded, when that is sound, so
-                // it takes the tracks the failed run took instead of asking the model again
-                // (docs/adr/0017). The source is read from the database, never supplied.
-                long? replayDecisionsOf = view.LatestFinishedRunFailed
-                    ? await RetryDecisionReplay.SourceForRetryAsync(
-                        dataContext,
-                        view.Manifest,
-                        view.Manifest.Properties,
-                        view.Manifest.PropertyTypeName,
-                        logger,
-                        CancellationToken
-                    )
-                    : null;
-
                 entry = Trax.Effect.Models.WorkQueue.WorkQueue.Create(
                     new CreateWorkQueue
                     {
@@ -111,7 +107,12 @@ internal class CreateWorkQueueEntriesJunction(
                         ManifestId = view.Manifest.Id,
                         Priority = effectivePriority,
                         ScheduledAt = scheduledAt,
-                        ReplayDecisionsOf = replayDecisionsOf,
+                        ReplayDecisionsOf = replaySources.TryGetValue(
+                            view.Manifest.Id,
+                            out var source
+                        )
+                            ? source
+                            : null,
                     }
                 );
 

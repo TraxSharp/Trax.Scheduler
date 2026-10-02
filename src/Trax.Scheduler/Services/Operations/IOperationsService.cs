@@ -228,6 +228,23 @@ public interface IOperationsService
     ) => throw NotImplementedBy(nameof(SetManifestsEnabledAsync));
 
     /// <summary>
+    /// Sets whether retries of the given manifests replay the decisions of the run they retry
+    /// (<c>ReplayDecisionsOnRetry</c>, scheduler/0017). Only manifests whose flag differs are
+    /// written, and <c>ChangeDomain.Manifest</c> is signalled when any did. Turning it off also
+    /// clears the replay link of each manifest's queued entry, so a retry waiting out its backoff
+    /// asks afresh.
+    /// </summary>
+    /// <returns>
+    /// <c>OperationResult(true, Count: N, ...)</c> where <c>N</c> is the number changed, zero
+    /// included; <c>OperationResult(false, ...)</c> for an empty list or too many ids.
+    /// </returns>
+    Task<OperationResult> SetManifestsReplayDecisionsOnRetryAsync(
+        IReadOnlyCollection<long> ids,
+        bool replay,
+        CancellationToken ct
+    ) => throw NotImplementedBy(nameof(SetManifestsReplayDecisionsOnRetryAsync));
+
+    /// <summary>
     /// Enables or disables the given manifest groups by id. Only groups whose flag differs are
     /// written, with <c>UpdatedAt</c> bumped, and <c>ChangeDomain.ManifestGroup</c> is signalled
     /// when any did.

@@ -60,4 +60,4 @@ The format is `.claude/skills/recording-decisions/ADR-FORMAT.md`.
 | [0014](./0014-a-manifests-retries-count-recent-failures-and-a-cancelled-run-consumes-its-occurrence.md) | A manifest's retries count recent failures, and a cancelled run consumes its occurrence | scheduling |
 | [0015](./0015-a-startup-prune-deletes-only-its-own-applications-manifests.md) | A startup prune deletes only its own application's manifests | scheduling |
 | [0016](./0016-a-traxremote-train-with-nowhere-to-go-fails-the-build.md) | A `[TraxRemote]` train with nowhere to go fails the build | scheduling, platform |
-| [0017](./0017-a-manifests-retry-replays-the-decisions-of-the-run-it-retries.md) | A manifest's retry replays the decisions of the run it retries | scheduling |
+| [0017](./0017-a-manifests-retry-replays-the-decisions-of-the-run-it-retries.md) | A manifest's retry replays the decisions of the run it retries, once | scheduling |

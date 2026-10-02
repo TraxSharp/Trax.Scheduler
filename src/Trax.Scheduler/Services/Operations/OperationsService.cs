@@ -27,6 +27,7 @@ using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Extensions;
 using Trax.Scheduler.Services.CancellationRegistry;
 using Trax.Scheduler.Services.JobSubmitter;
+using Trax.Scheduler.Trains.ManifestManager.Utilities;
 
 namespace Trax.Scheduler.Services.Operations;
 
@@ -961,6 +962,45 @@ public class OperationsService : IOperationsService
             true,
             Count: changed,
             Message: $"{changed} of {distinct.Count} manifest(s) {(enabled ? "enabled" : "disabled")}."
+        );
+    }
+
+    /// <inheritdoc />
+    public async Task<OperationResult> SetManifestsReplayDecisionsOnRetryAsync(
+        IReadOnlyCollection<long> ids,
+        bool replay,
+        CancellationToken ct
+    )
+    {
+        if (RefuseBatch(ids) is { } refused)
+            return refused;
+
+        var distinct = ids.Distinct().ToList();
+
+        using var db = await _dataContextFactory.CreateDbContextAsync(ct);
+        var differing = db.Manifests.Where(m =>
+            distinct.Contains(m.Id) && m.ReplayDecisionsOnRetry != replay
+        );
+        var changed = db.SupportsSetUpdates()
+            ? await differing.ExecuteUpdateAsync(
+                s => s.SetProperty(m => m.ReplayDecisionsOnRetry, replay),
+                ct
+            )
+            : await db.UpdateEachAsync(differing, m => m.ReplayDecisionsOnRetry = replay, ct);
+
+        // Turned off, a retry already queued to replay asks afresh too (docs/adr/0017). The
+        // dispatcher checks the flag again when it claims the entry, for one queued meanwhile.
+        if (!replay)
+            await RetryReplayLinks.ClearQueuedAsync(db, distinct, ct);
+
+        if (changed > 0)
+            _changeSignal?.Notify(ChangeDomain.Manifest);
+
+        return new OperationResult(
+            true,
+            Count: changed,
+            Message: $"{changed} of {distinct.Count} manifest(s) set to "
+                + $"{(replay ? "replay decisions" : "ask afresh")} on retry."
         );
     }
 

@@ -200,21 +200,16 @@ public class ManifestOptions
 
     /// <summary>
     /// Gets or sets whether a retry of this manifest's failed run replays the decisions that run
-    /// recorded, rather than asking its deciders afresh.
+    /// recorded, rather than asking its deciders afresh. Null means not stated.
     /// </summary>
     /// <remarks>
-    /// On by default: a retry takes the tracks the failed run's deciders chose, when the replay is
-    /// sound (scheduler/0017). Set false for a manifest whose retries should always ask again.
-    /// Applies to the ManifestManager's retries and to a dead-letter requeue. Written to an
-    /// existing manifest only when set: left unset, a re-seed keeps the manifest's current value.
+    /// Unstated, a new manifest replays (the default) and an existing one keeps the value it has,
+    /// so reading this in a <c>configureEach</c> callback and writing it back never turns an
+    /// unstated option into a stated one. Set false for a manifest whose retries should always
+    /// ask again; it applies to the ManifestManager's retries and to a dead-letter requeue
+    /// (scheduler/0017). Stated, it is written on every seed (scheduler/0011).
     /// </remarks>
-    public bool ReplayDecisionsOnRetry
-    {
-        get => _replayDecisionsOnRetry ?? true;
-        set => _replayDecisionsOnRetry = value;
-    }
-
-    internal bool? _replayDecisionsOnRetry;
+    public bool? ReplayDecisionsOnRetry { get; set; }
 
     /// <summary>
     /// A copy of these options with its own exclusion list, so a change to one item's options
@@ -235,6 +230,6 @@ public class ManifestOptions
             Exclusions = [.. Exclusions],
             Variance = Variance,
             FailureWindow = FailureWindow,
-            _replayDecisionsOnRetry = _replayDecisionsOnRetry,
+            ReplayDecisionsOnRetry = ReplayDecisionsOnRetry,
         };
 }

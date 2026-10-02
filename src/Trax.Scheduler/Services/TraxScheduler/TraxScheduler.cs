@@ -396,21 +396,13 @@ public class TraxScheduler(
     }
 
     /// <inheritdoc />
-    public async Task TriggerAsync(string externalId, CancellationToken ct = default)
-    {
-        await using var context = CreateContext();
-
-        var manifest = await GetManifestByExternalIdAsync(context, externalId, ct);
-
-        var outcome = await TriggerManifestAsync(context, manifest, runAt: DateTime.UtcNow, ct);
-        changeSignal?.Notify(ChangeDomain.WorkQueue);
-        LogTrigger(externalId, outcome);
-    }
+    public Task TriggerAsync(string externalId, CancellationToken ct = default) =>
+        TriggerAsync(externalId, askAfresh: false, ct);
 
     /// <inheritdoc />
     public async Task TriggerAsync(
         string externalId,
-        TimeSpan delay,
+        bool askAfresh,
         CancellationToken ct = default
     )
     {
@@ -418,7 +410,40 @@ public class TraxScheduler(
 
         var manifest = await GetManifestByExternalIdAsync(context, externalId, ct);
 
-        var outcome = await TriggerManifestAsync(context, manifest, DateTime.UtcNow + delay, ct);
+        var outcome = await TriggerManifestAsync(
+            context,
+            manifest,
+            runAt: DateTime.UtcNow,
+            askAfresh,
+            ct
+        );
+        changeSignal?.Notify(ChangeDomain.WorkQueue);
+        LogTrigger(externalId, outcome);
+    }
+
+    /// <inheritdoc />
+    public Task TriggerAsync(string externalId, TimeSpan delay, CancellationToken ct = default) =>
+        TriggerAsync(externalId, delay, askAfresh: false, ct);
+
+    /// <inheritdoc />
+    public async Task TriggerAsync(
+        string externalId,
+        TimeSpan delay,
+        bool askAfresh,
+        CancellationToken ct = default
+    )
+    {
+        await using var context = CreateContext();
+
+        var manifest = await GetManifestByExternalIdAsync(context, externalId, ct);
+
+        var outcome = await TriggerManifestAsync(
+            context,
+            manifest,
+            DateTime.UtcNow + delay,
+            askAfresh,
+            ct
+        );
         changeSignal?.Notify(ChangeDomain.WorkQueue);
         LogTrigger(externalId, outcome);
     }
@@ -475,10 +500,11 @@ public class TraxScheduler(
         IDataContext context,
         Manifest manifest,
         DateTime runAt,
+        bool askAfresh,
         CancellationToken ct
     )
     {
-        if (await ReleaseQueuedEntryAsync(context, manifest.Id, runAt, ct) is { } queued)
+        if (await ReleaseQueuedEntryAsync(context, manifest.Id, runAt, askAfresh, ct) is { } queued)
             return queued;
 
         // An immediate trigger stores no time, as it always has; a delayed one stores its time.
@@ -507,7 +533,10 @@ public class TraxScheduler(
             // Untracked either way, so a later save on this context does not retry it.
             context.Reset();
 
-            if (await ReleaseQueuedEntryAsync(context, manifest.Id, runAt, ct) is { } raced)
+            if (
+                await ReleaseQueuedEntryAsync(context, manifest.Id, runAt, askAfresh, ct) is
+                { } raced
+            )
                 return raced;
 
             throw;
@@ -528,6 +557,7 @@ public class TraxScheduler(
         IDataContext context,
         long manifestId,
         DateTime runAt,
+        bool askAfresh,
         CancellationToken ct
     )
     {
@@ -550,7 +580,12 @@ public class TraxScheduler(
             await entry.ExecuteUpdateAsync(
                 s =>
                     s.SetProperty(w => w.IsExplicitTrigger, true)
-                        .SetProperty(w => w.ScheduledAt, dueAt),
+                        .SetProperty(w => w.ScheduledAt, dueAt)
+                        // Asked to ask afresh, a queued retry no longer replays its failed run.
+                        .SetProperty(
+                            w => w.ReplayDecisionsOf,
+                            w => askAfresh ? (long?)null : w.ReplayDecisionsOf
+                        ),
                 ct
             );
         else
@@ -560,6 +595,8 @@ public class TraxScheduler(
                 {
                     w.IsExplicitTrigger = true;
                     w.ScheduledAt = dueAt;
+                    if (askAfresh)
+                        w.ReplayDecisionsOf = null;
                 },
                 ct
             );
@@ -645,7 +682,11 @@ public class TraxScheduler(
         var now = DateTime.UtcNow;
         var queued = 0;
         foreach (var manifest in manifests)
-            if ((await TriggerManifestAsync(context, manifest, runAt: now, ct)).Created)
+            if (
+                (
+                    await TriggerManifestAsync(context, manifest, runAt: now, askAfresh: false, ct)
+                ).Created
+            )
                 queued++;
 
         if (queued > 0)
@@ -1040,8 +1081,15 @@ public class TraxScheduler(
     internal Func<CancellationToken, Task>? BeforeRequeueInsert { get; set; }
 
     /// <inheritdoc />
+    public Task<DeadLetterOperationResult> RequeueDeadLetterAsync(
+        long deadLetterId,
+        CancellationToken ct = default
+    ) => RequeueDeadLetterAsync(deadLetterId, askAfresh: false, ct);
+
+    /// <inheritdoc />
     public async Task<DeadLetterOperationResult> RequeueDeadLetterAsync(
         long deadLetterId,
+        bool askAfresh,
         CancellationToken ct = default
     )
     {
@@ -1078,7 +1126,10 @@ public class TraxScheduler(
                     + "is left awaiting intervention."
             );
 
-        var entry = await CreateWorkQueueFromDeadLetter(context, deadLetter, ct);
+        var replayDecisionsOf = askAfresh
+            ? null
+            : await RetryReplay.SourceForRetryAsync(deadLetter.Manifest!, ct);
+        var entry = CreateWorkQueueFromDeadLetter(deadLetter, replayDecisionsOf);
         context.WorkQueues.Add(entry);
 
         deadLetter.Requeue($"Re-queued (WorkQueue {entry.Id})");
@@ -1150,8 +1201,15 @@ public class TraxScheduler(
     }
 
     /// <inheritdoc />
+    public Task<BatchDeadLetterResult> RequeueDeadLettersAsync(
+        long[] deadLetterIds,
+        CancellationToken ct = default
+    ) => RequeueDeadLettersAsync(deadLetterIds, askAfresh: false, ct);
+
+    /// <inheritdoc />
     public async Task<BatchDeadLetterResult> RequeueDeadLettersAsync(
         long[] deadLetterIds,
+        bool askAfresh,
         CancellationToken ct = default
     )
     {
@@ -1164,6 +1222,7 @@ public class TraxScheduler(
                     deadLetterIds.Contains(d.Id)
                     && d.Status == DeadLetterStatus.AwaitingIntervention
                 ),
+            askAfresh,
             ct
         );
 
@@ -1200,7 +1259,12 @@ public class TraxScheduler(
     }
 
     /// <inheritdoc />
+    public Task<BatchDeadLetterResult> RequeueAllDeadLettersAsync(CancellationToken ct = default) =>
+        RequeueAllDeadLettersAsync(askAfresh: false, ct);
+
+    /// <inheritdoc />
     public async Task<BatchDeadLetterResult> RequeueAllDeadLettersAsync(
+        bool askAfresh,
         CancellationToken ct = default
     )
     {
@@ -1234,6 +1298,7 @@ public class TraxScheduler(
                         manifestIds.Contains(d.ManifestId)
                         && d.Status == DeadLetterStatus.AwaitingIntervention
                     ),
+                askAfresh,
                 ct
             );
 
@@ -1244,7 +1309,7 @@ public class TraxScheduler(
     }
 
     /// <summary>
-    /// How many manifests <see cref="RequeueAllDeadLettersAsync"/> requeues per page. Test seam;
+    /// How many manifests <see cref="RequeueAllDeadLettersAsync(bool, CancellationToken)"/> requeues per page. Test seam;
     /// one page is one batch, so it matches the operations surface's batch limit.
     /// </summary>
     internal int RequeueAllPageSize { get; set; } = OperationsService.MaxBatchSize;
@@ -1358,6 +1423,7 @@ public class TraxScheduler(
     /// </remarks>
     private async Task<RequeueCounts> RequeueDeadLetterBatch(
         Func<IDataContext, IQueryable<Effect.Models.DeadLetter.DeadLetter>> select,
+        bool askAfresh,
         CancellationToken ct
     )
     {
@@ -1370,7 +1436,13 @@ public class TraxScheduler(
 
             try
             {
-                return await RequeueDeadLetterBatchOnce(context, deadLetters, attempt == 1, ct);
+                return await RequeueDeadLetterBatchOnce(
+                    context,
+                    deadLetters,
+                    attempt == 1,
+                    askAfresh,
+                    ct
+                );
             }
             catch (DbUpdateException ex) when (attempt < maxAttempts)
             {
@@ -1403,6 +1475,7 @@ public class TraxScheduler(
         IDataContext context,
         List<Effect.Models.DeadLetter.DeadLetter> deadLetters,
         bool firstAttempt,
+        bool askAfresh,
         CancellationToken ct
     )
     {
@@ -1419,17 +1492,35 @@ public class TraxScheduler(
         ).ToHashSet();
 
         var skipped = deadLetters.Count(d => alreadyQueued.Contains(d.ManifestId));
-        var batches =
-            new List<(WorkQueue Entry, List<Effect.Models.DeadLetter.DeadLetter> Members)>();
-        foreach (
-            var group in deadLetters
-                .Where(d => !alreadyQueued.Contains(d.ManifestId))
-                .GroupBy(d => d.ManifestId)
-        )
-        {
-            var members = group.OrderByDescending(d => d.Id).ToList();
-            batches.Add((await CreateWorkQueueFromDeadLetter(context, members[0], ct), members));
-        }
+        var groups = deadLetters
+            .Where(d => !alreadyQueued.Contains(d.ManifestId))
+            .GroupBy(d => d.ManifestId)
+            .Select(g => g.OrderByDescending(d => d.Id).ToList())
+            .ToList();
+
+        // A dead-letter requeue retries the manifest's failed run, so it replays that run's
+        // decisions as the ManifestManager's retry does, under the same checks, looked up for the
+        // whole page at once (docs/adr/0017). An operator who asks afresh gets no link.
+        var replaySources = askAfresh
+            ? new Dictionary<long, long>()
+            : await RetryReplay.SourcesForRetriesAsync(
+                groups.Select(g => g[0].Manifest!).ToList(),
+                ct
+            );
+
+        var batches = groups
+            .Select(members =>
+                (
+                    Entry: CreateWorkQueueFromDeadLetter(
+                        members[0],
+                        replaySources.TryGetValue(members[0].ManifestId, out var source)
+                            ? source
+                            : null
+                    ),
+                    Members: members
+                )
+            )
+            .ToList();
 
         if (firstAttempt && BeforeRequeueInsert is { } hook)
             await hook(ct);
@@ -1473,24 +1564,12 @@ public class TraxScheduler(
         return new RequeueCounts(resolved, batches.Count, folded, skipped);
     }
 
-    private async Task<WorkQueue> CreateWorkQueueFromDeadLetter(
-        IDataContext context,
+    private static WorkQueue CreateWorkQueueFromDeadLetter(
         Effect.Models.DeadLetter.DeadLetter deadLetter,
-        CancellationToken ct
+        long? replayDecisionsOf
     )
     {
         var manifest = deadLetter.Manifest!;
-
-        // A dead-letter requeue retries the manifest's failed run, so it replays that run's
-        // decisions as the ManifestManager's retry does, under the same checks (docs/adr/0017).
-        var replayDecisionsOf = await RetryDecisionReplay.SourceForRetryAsync(
-            context,
-            manifest,
-            manifest.Properties,
-            manifest.PropertyTypeName,
-            logger,
-            ct
-        );
 
         return WorkQueue.Create(
             new CreateWorkQueue
@@ -1507,6 +1586,15 @@ public class TraxScheduler(
             }
         );
     }
+
+    /// <summary>
+    /// Chooses the run a dead-letter requeue replays (docs/adr/0017). Built here rather than
+    /// injected, so the public constructors stay as they are.
+    /// </summary>
+    private RetryDecisionReplay RetryReplay =>
+        _retryReplay ??= new RetryDecisionReplay(dataContextFactory, logger);
+
+    private RetryDecisionReplay? _retryReplay;
 
     // ── Private helpers ──────────────────────────────────────────────────
 

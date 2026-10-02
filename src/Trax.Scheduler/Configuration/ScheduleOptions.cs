@@ -308,7 +308,7 @@ public class ScheduleOptions
             Exclusions = [.. _exclusions],
             Variance = _variance,
             FailureWindow = _failureWindow,
-            _replayDecisionsOnRetry = _replayDecisionsOnRetry,
+            ReplayDecisionsOnRetry = _replayDecisionsOnRetry,
         };
 
     /// <summary>

@@ -7,6 +7,7 @@ using Trax.Effect.Models.ManifestGroup;
 using Trax.Effect.Services.ServiceTrain;
 using Trax.Scheduler.Configuration;
 using Trax.Scheduler.Services.Scheduling;
+using Trax.Scheduler.Trains.ManifestManager.Utilities;
 using Schedule = Trax.Scheduler.Services.Scheduling.Schedule;
 
 namespace Trax.Scheduler.Extensions;
@@ -139,6 +140,8 @@ internal static class DataContextExtensions
             ApplyExclusions(existing, options);
             ApplyFailureWindow(existing, options);
             ApplyReplayDecisionsOnRetry(existing, options);
+            if (options.ReplayDecisionsOnRetry == false)
+                await RetryReplayLinks.ClearQueuedAsync(context, [existing.Id], ct, save: false);
 
             return existing;
         }
@@ -237,6 +240,8 @@ internal static class DataContextExtensions
             ApplyExclusions(existing, options);
             ApplyFailureWindow(existing, options);
             ApplyReplayDecisionsOnRetry(existing, options);
+            if (options.ReplayDecisionsOnRetry == false)
+                await RetryReplayLinks.ClearQueuedAsync(context, [existing.Id], ct, save: false);
 
             return existing;
         }
@@ -330,6 +335,8 @@ internal static class DataContextExtensions
             ApplyExclusions(existing, options);
             ApplyFailureWindow(existing, options);
             ApplyReplayDecisionsOnRetry(existing, options);
+            if (options.ReplayDecisionsOnRetry == false)
+                await RetryReplayLinks.ClearQueuedAsync(context, [existing.Id], ct, save: false);
 
             return existing;
         }
@@ -477,7 +484,7 @@ internal static class DataContextExtensions
     /// </summary>
     private static void ApplyReplayDecisionsOnRetry(Manifest manifest, ManifestOptions options)
     {
-        if (options._replayDecisionsOnRetry is { } replay)
+        if (options.ReplayDecisionsOnRetry is { } replay)
             manifest.ReplayDecisionsOnRetry = replay;
     }
 

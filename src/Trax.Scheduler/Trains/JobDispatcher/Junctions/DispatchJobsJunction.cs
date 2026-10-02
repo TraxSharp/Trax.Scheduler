@@ -225,6 +225,8 @@ internal class DispatchJobsJunction(
             }
         }
 
+        await DropReplayLinkIfManifestOptedOutAsync(dataContext, claimed);
+
         // Create a new Metadata record for this execution.
         // Propagate the WorkQueue's ExternalId so clients can correlate the queue
         // mutation response with subscription events (both use the same externalId).
@@ -309,6 +311,38 @@ internal class DispatchJobsJunction(
     }
 
     /// <summary>
+    /// Drops the replay link of a manifest's entry when the manifest no longer replays decisions
+    /// on retry. The link was set when the retry was queued; the flag may have been turned off
+    /// while it waited out its backoff, and the run then asks afresh (docs/adr/0017).
+    /// </summary>
+    private async Task DropReplayLinkIfManifestOptedOutAsync(
+        IDataContext dataContext,
+        WorkQueue claimed
+    )
+    {
+        if (claimed.ReplayDecisionsOf is null || claimed.ManifestId is not { } manifestId)
+            return;
+
+        var replays = await dataContext
+            .Manifests.AsNoTracking()
+            .Where(m => m.Id == manifestId)
+            .Select(m => (bool?)m.ReplayDecisionsOnRetry)
+            .FirstOrDefaultAsync(CancellationToken);
+
+        if (replays != false)
+            return;
+
+        logger.LogInformation(
+            "Work queue entry {WorkQueueId} no longer replays run {ReplayDecisionsOf}: manifest "
+                + "{ManifestId} stopped replaying decisions on retry after it was queued",
+            claimed.Id,
+            claimed.ReplayDecisionsOf,
+            manifestId
+        );
+        claimed.ReplayDecisionsOf = null;
+    }
+
+    /// <summary>
     /// Returns an entry whose input type this host does not register to the queue, inside the
     /// claim transaction: counts the attempt and pushes its <c>ScheduledAt</c> back by the
     /// dispatch backoff. No run is recorded, so nothing counts toward the manifest's retries.
@@ -354,6 +388,8 @@ internal class DispatchJobsJunction(
         Exception exception
     )
     {
+        await DropReplayLinkIfManifestOptedOutAsync(dataContext, claimed);
+
         var failure = new TrainException(
             $"The input of work queue entry {claimed.Id} could not be read as "
                 + $"'{claimed.InputTypeName}', so it was not dispatched: {exception.Message}"
