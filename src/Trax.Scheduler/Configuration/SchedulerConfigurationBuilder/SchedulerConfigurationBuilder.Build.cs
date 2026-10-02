@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Trax.Effect.Extensions;
 using Trax.Mediator.Services.TrainDiscovery;
 using Trax.Scheduler.Services.CancellationRegistry;
+using Trax.Scheduler.Services.DecisionRecording;
 using Trax.Scheduler.Services.DormantDependentContext;
 using Trax.Scheduler.Services.JobDispatcherPollingService;
 using Trax.Scheduler.Services.JobSubmitter;
@@ -136,6 +137,10 @@ public partial class SchedulerConfigurationBuilder
             _parentBuilder.ServiceCollection.AddScopedTraxRoute<IJobRunnerTrain, JobRunnerTrain>();
             _parentBuilder.ServiceCollection.AddScoped<IJobSubmitter, InMemoryJobSubmitter>();
         }
+
+        // This host runs trains, so it warns when the ones that ask a decider cannot replay a
+        // requeue's recorded decisions. AddHostedService adds it once however many paths ask.
+        _parentBuilder.ServiceCollection.AddHostedService<DecisionRecordingStartupCheck>();
 
         // Register routed submitters (UseRemoteWorkers, UseSqsWorkers with ForTrain routing)
         RegisterRoutedSubmitters();
