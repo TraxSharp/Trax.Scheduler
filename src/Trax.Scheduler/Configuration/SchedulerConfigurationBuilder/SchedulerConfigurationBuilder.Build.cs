@@ -85,11 +85,20 @@ public partial class SchedulerConfigurationBuilder
         // Register internal scheduler trains (AddScopedTraxRoute for property injection).
         // InMemory uses a simplified train that skips PostgreSQL-specific steps
         // (CancelTimedOutJobs, ReapStalePending) and dispatches jobs inline.
+        //
+        // The job dispatcher claims work with provider-specific SQL, so it is registered only with
+        // a database provider, the only place JobDispatcherPollingService runs it. Registered
+        // without one, it is a train the mediator's startup check can never build, and the host is
+        // refused.
         if (_parentBuilder.HasDatabaseProvider)
         {
             _parentBuilder.ServiceCollection.AddScopedTraxRoute<
                 IManifestManagerTrain,
                 ManifestManagerTrain
+            >();
+            _parentBuilder.ServiceCollection.AddScopedTraxRoute<
+                IJobDispatcherTrain,
+                JobDispatcherTrain
             >();
         }
         else
@@ -99,10 +108,6 @@ public partial class SchedulerConfigurationBuilder
                 InMemoryManifestManagerTrain
             >();
         }
-        _parentBuilder.ServiceCollection.AddScopedTraxRoute<
-            IJobDispatcherTrain,
-            JobDispatcherTrain
-        >();
         _parentBuilder.ServiceCollection.AddScopedTraxRoute<
             IMetadataCleanupTrain,
             MetadataCleanupTrain
