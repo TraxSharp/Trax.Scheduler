@@ -761,6 +761,81 @@ public class MetadataCleanupTrainTests : TestSetup
         (await DataContext.Metadatas.AnyAsync(m => m.Id == unlinked.Id)).Should().BeFalse();
     }
 
+    [Test]
+    public async Task Delete_LinkedMidBatch_KeepsTheRunWithEverythingItOwns()
+    {
+        // The batch passes its recheck, then a requeue links one run while its owned rows are
+        // being cleared. The whole batch rolls back and is retried without that run, so the run
+        // keeps its entry, logs, dead letter link and child
+        // (docs/adr/0017-a-manifests-retry-replays-the-decisions-of-the-run-it-retries.md).
+        var linked = await CreateAndSaveMetadata(
+            name: typeof(ManifestManagerTrain).FullName!,
+            state: TrainState.Failed,
+            startTime: DateTime.UtcNow.AddHours(-2)
+        );
+        var unlinked = await CreateAndSaveMetadata(
+            name: typeof(ManifestManagerTrain).FullName!,
+            state: TrainState.Failed,
+            startTime: DateTime.UtcNow.AddHours(-2)
+        );
+        var ownEntry = WorkQueue.Create(
+            new CreateWorkQueue { TrainName = typeof(ManifestManagerTrain).FullName! }
+        );
+        ownEntry.Status = WorkQueueStatus.Dispatched;
+        ownEntry.MetadataId = linked.Id;
+        await DataContext.Track(ownEntry);
+        await DataContext.SaveChanges(CancellationToken.None);
+        var child = await CreateAndSaveChildMetadata(
+            name: "Consumer.Trains.SomeChildTrain",
+            state: TrainState.InProgress,
+            parentId: linked.Id
+        );
+        var deadLetter = await CreateAndSaveDeadLetter(await CreateAndSaveManifest());
+        await DataContext
+            .DeadLetters.Where(d => d.Id == deadLetter.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.RetryMetadataId, linked.Id));
+        DataContext.Reset();
+
+        var deleted =
+            await Trax.Scheduler.Trains.MetadataCleanup.Junctions.DeleteExpiredMetadataJunction.DeleteUnreferencedAsync(
+                DataContext,
+                [linked.Id, unlinked.Id],
+                CancellationToken.None,
+                beforeMetadataDelete: async ct =>
+                {
+                    // Committed on another connection, as a concurrent requeue would be.
+                    using var other = Scope.ServiceProvider.CreateScope();
+                    var otherData =
+                        other.ServiceProvider.GetRequiredService<Trax.Effect.Data.Services.DataContext.IDataContext>();
+                    otherData.WorkQueues.Add(
+                        WorkQueue.Create(
+                            new CreateWorkQueue
+                            {
+                                TrainName = typeof(ManifestManagerTrain).FullName!,
+                                ReplayDecisionsOf = linked.Id,
+                            }
+                        )
+                    );
+                    await otherData.SaveChanges(ct);
+                }
+            );
+
+        DataContext.Reset();
+        const string because =
+            "a run linked mid-batch keeps everything it owns. See "
+            + "docs/adr/0017-a-manifests-retry-replays-the-decisions-of-the-run-it-retries.md";
+        deleted.Metadata.Should().Be(1);
+        (await DataContext.Metadatas.AnyAsync(m => m.Id == linked.Id)).Should().BeTrue(because);
+        (await DataContext.WorkQueues.AnyAsync(q => q.Id == ownEntry.Id)).Should().BeTrue(because);
+        (await DataContext.Metadatas.SingleAsync(m => m.Id == child.Id))
+            .ParentId.Should()
+            .Be(linked.Id, because);
+        (await DataContext.DeadLetters.SingleAsync(d => d.Id == deadLetter.Id))
+            .RetryMetadataId.Should()
+            .Be(linked.Id, because);
+        (await DataContext.Metadatas.AnyAsync(m => m.Id == unlinked.Id)).Should().BeFalse();
+    }
+
     private async Task<WorkQueue> QueueReplayOf(long metadataId)
     {
         var entry = WorkQueue.Create(

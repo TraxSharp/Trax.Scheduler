@@ -183,54 +183,147 @@ internal class DeleteExpiredMetadataJunction(
 
     /// <summary>
     /// Deletes the runs among <paramref name="ids"/> that nothing still replays, with what they
-    /// own. Every statement repeats the keep-if-referenced test the batch was selected with, so a
-    /// run that a queued entry or another run came to name after the select is kept, with its
-    /// work queue entry and logs, rather than deleted from under the replay (docs/adr/0017).
+    /// own, all or nothing. The batch is rechecked, then its owned rows and back-references are
+    /// cleared and its runs deleted in one transaction, the delete repeating the keep test. When a
+    /// queued entry or another run came to name one of the runs after the recheck, the delete
+    /// keeps that run and the transaction is rolled back, so no kept run loses its work queue
+    /// entry, logs, dead letter link or children's parent link; the batch is then rechecked and
+    /// tried again without it (docs/adr/0017).
     /// </summary>
+    /// <param name="dataContext">The context to delete through.</param>
+    /// <param name="ids">The runs selected for deletion.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <param name="beforeMetadataDelete">Test seam: awaited just before the runs are deleted.</param>
     internal static async Task<(int Metadata, int WorkQueues, int Logs)> DeleteUnreferencedAsync(
         IDataContext dataContext,
         IReadOnlyList<long> ids,
-        CancellationToken ct
+        CancellationToken ct,
+        Func<CancellationToken, Task>? beforeMetadataDelete = null
     )
     {
-        var idList = ids.ToList();
-        var deletable = dataContext.Metadatas.Where(m =>
-            idList.Contains(m.Id)
+        const int maxAttempts = 3;
+        var remaining = ids.ToList();
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            remaining = await Unreferenced(dataContext, remaining)
+                .Select(m => m.Id)
+                .ToListAsync(ct);
+
+            if (remaining.Count == 0)
+                break;
+
+            if (
+                await TryDeleteAllAsync(
+                    dataContext,
+                    remaining,
+                    attempt == 1 ? beforeMetadataDelete : null,
+                    ct
+                ) is
+                { } deleted
+            )
+                return deleted;
+        }
+
+        // Linked again on every attempt: left for a later sweep, which selects afresh.
+        return (0, 0, 0);
+    }
+
+    /// <summary>
+    /// The runs among <paramref name="ids"/> that no queued entry and no other run names in
+    /// <c>replay_decisions_of</c>.
+    /// </summary>
+    private static IQueryable<Effect.Models.Metadata.Metadata> Unreferenced(
+        IDataContext dataContext,
+        List<long> ids
+    ) =>
+        dataContext.Metadatas.Where(m =>
+            ids.Contains(m.Id)
             && !dataContext.WorkQueues.Any(q =>
                 q.ReplayDecisionsOf == m.Id && q.Status == WorkQueueStatus.Queued
             )
             && !dataContext.Metadatas.Any(r => r.ReplayDecisionsOf == m.Id)
         );
 
-        // Work queue entries and logs are owned by the metadata and deleted outright.
-        var workQueues = await dataContext
-            .WorkQueues.Where(wq =>
-                wq.MetadataId.HasValue && deletable.Any(m => m.Id == wq.MetadataId.Value)
-            )
-            .ExecuteDeleteAsync(ct);
+    /// <summary>
+    /// Deletes every run in <paramref name="ids"/> with what it owns, in one transaction, or
+    /// nothing when the keep test spares any of them. Null when it rolled back.
+    /// </summary>
+    private static async Task<(int Metadata, int WorkQueues, int Logs)?> TryDeleteAllAsync(
+        IDataContext dataContext,
+        List<long> ids,
+        Func<CancellationToken, Task>? beforeMetadataDelete,
+        CancellationToken ct
+    )
+    {
+        var database = ((DbContext)dataContext).Database;
 
-        var logs = await dataContext
-            .Logs.Where(l => deletable.Any(m => m.Id == l.MetadataId))
-            .ExecuteDeleteAsync(ct);
+        // Inside a caller's transaction the batch gets a savepoint instead of its own.
+        var outer = database.CurrentTransaction;
+        var own = outer is null ? await database.BeginTransactionAsync(ct) : null;
+        const string savepoint = "trax_metadata_cleanup_batch";
+        if (outer is not null)
+            await outer.CreateSavepointAsync(savepoint, ct);
 
-        // Dead letters and child metadata reference the metadata but are not owned by it: a dead
-        // letter is a meaningful record and a child train's metadata can outlive its parent. Null
-        // the back-references so the FK does not block the delete, rather than cascading into them.
-        await dataContext
-            .DeadLetters.Where(d =>
-                d.RetryMetadataId.HasValue && deletable.Any(m => m.Id == d.RetryMetadataId.Value)
-            )
-            .ExecuteUpdateAsync(s => s.SetProperty(d => d.RetryMetadataId, (long?)null), ct);
+        try
+        {
+            // Work queue entries and logs are owned by the metadata and deleted outright.
+            var workQueues = await dataContext
+                .WorkQueues.Where(wq => wq.MetadataId.HasValue && ids.Contains(wq.MetadataId.Value))
+                .ExecuteDeleteAsync(ct);
 
-        await dataContext
-            .Metadatas.Where(c =>
-                c.ParentId.HasValue && deletable.Any(m => m.Id == c.ParentId.Value)
-            )
-            .ExecuteUpdateAsync(s => s.SetProperty(c => c.ParentId, (long?)null), ct);
+            var logs = await dataContext
+                .Logs.Where(l => ids.Contains(l.MetadataId))
+                .ExecuteDeleteAsync(ct);
 
-        var metadata = await deletable.ExecuteDeleteAsync(ct);
+            // Dead letters and child metadata reference the metadata but are not owned by it: a
+            // dead letter is a meaningful record and a child train's metadata can outlive its
+            // parent. Null the back-references so the FK does not block the delete, rather than
+            // cascading into them.
+            await dataContext
+                .DeadLetters.Where(d =>
+                    d.RetryMetadataId.HasValue && ids.Contains(d.RetryMetadataId.Value)
+                )
+                .ExecuteUpdateAsync(s => s.SetProperty(d => d.RetryMetadataId, (long?)null), ct);
 
-        return (metadata, workQueues, logs);
+            await dataContext
+                .Metadatas.Where(c => c.ParentId.HasValue && ids.Contains(c.ParentId.Value))
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.ParentId, (long?)null), ct);
+
+            if (beforeMetadataDelete is not null)
+                await beforeMetadataDelete(ct);
+
+            var metadata = await Unreferenced(dataContext, ids).ExecuteDeleteAsync(ct);
+
+            if (metadata == ids.Count)
+            {
+                if (own is not null)
+                    await own.CommitAsync(ct);
+                else
+                    await outer!.ReleaseSavepointAsync(savepoint, ct);
+                return (metadata, workQueues, logs);
+            }
+
+            // A run was linked after the recheck: undo the batch so it keeps everything it owns.
+            if (own is not null)
+                await own.RollbackAsync(ct);
+            else
+                await outer!.RollbackToSavepointAsync(savepoint, ct);
+            return null;
+        }
+        catch
+        {
+            if (own is not null)
+                await own.RollbackAsync(CancellationToken.None);
+            else
+                await outer!.RollbackToSavepointAsync(savepoint, CancellationToken.None);
+            throw;
+        }
+        finally
+        {
+            if (own is not null)
+                await own.DisposeAsync();
+        }
     }
 
     private sealed class CleanupTotals
