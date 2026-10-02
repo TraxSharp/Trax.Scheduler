@@ -7,6 +7,8 @@ using Trax.Effect.Enums;
 using Trax.Effect.Models.Manifest;
 using Trax.Effect.Models.Manifest.DTOs;
 using Trax.Effect.Models.ManifestGroup;
+using Trax.Effect.Models.Metadata;
+using Trax.Effect.Models.Metadata.DTOs;
 using Trax.Effect.Models.WorkQueue;
 using Trax.Effect.Models.WorkQueue.DTOs;
 using Trax.Effect.Utils;
@@ -149,7 +151,20 @@ public class JobDispatcherTrainTests : TestSetup
     public async Task Run_CarriesARequeuesReplayLinkOntoTheRunsMetadata()
     {
         // A requeue names the run it repeats on the entry. The run reads it from its metadata to
-        // replay that run's decisions, so dispatch must carry it across.
+        // replay that run's decisions, so dispatch must carry it across. RequeueReplayEndToEndTests
+        // runs the whole path, through the replay itself.
+        var source = Metadata.Create(
+            new CreateMetadata
+            {
+                Name = typeof(SchedulerTestTrain).FullName!,
+                ExternalId = Guid.NewGuid().ToString("N"),
+                Input = null,
+            }
+        );
+        await DataContext.Track(source);
+        await DataContext.SaveChanges(CancellationToken.None);
+        DataContext.Reset();
+
         var entry = WorkQueue.Create(
             new CreateWorkQueue
             {
@@ -159,7 +174,7 @@ public class JobDispatcherTrainTests : TestSetup
                     TraxJsonSerializationOptions.ManifestProperties
                 ),
                 InputTypeName = typeof(SchedulerTestInput).AssemblyQualifiedName,
-                ReplayDecisionsOf = 777,
+                ReplayDecisionsOf = source.Id,
             }
         );
         await DataContext.Track(entry);
@@ -172,7 +187,7 @@ public class JobDispatcherTrainTests : TestSetup
         var dispatched = await DataContext
             .WorkQueues.Include(q => q.Metadata)
             .FirstAsync(q => q.Id == entry.Id);
-        dispatched.Metadata!.ReplayDecisionsOf.Should().Be(777);
+        dispatched.Metadata!.ReplayDecisionsOf.Should().Be(source.Id);
     }
 
     [Test]
