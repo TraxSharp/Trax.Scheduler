@@ -53,18 +53,6 @@ public class OperationsServiceTests : TestSetup
     }
 
     [Test]
-    public async Task QueueTrainAsync_ARequeue_NamesTheRunItRepeatsOnTheEntry()
-    {
-        var result = await _operations.QueueTrainAsync(
-            new QueueTrainInput(TrainName, """{"value":"again"}""") { ReplayDecisionsOf = 31 },
-            CancellationToken.None
-        );
-
-        result.Success.Should().BeTrue();
-        DataContext.WorkQueues.Single().ReplayDecisionsOf.Should().Be(31);
-    }
-
-    [Test]
     public async Task QueueTrainAsync_AnOrdinaryEnqueue_ReplaysNothing()
     {
         await _operations.QueueTrainAsync(

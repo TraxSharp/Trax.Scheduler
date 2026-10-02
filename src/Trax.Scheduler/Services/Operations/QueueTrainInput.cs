@@ -23,11 +23,4 @@ public record QueueTrainInput(
     string? InputJson = null,
     int Priority = 0,
     DateTime? ScheduledAt = null
-)
-{
-    /// <summary>
-    /// The metadata id of an earlier run whose recorded decisions the queued run replays, so it
-    /// takes the tracks that run took instead of asking its deciders again. A requeue sets it.
-    /// </summary>
-    public long? ReplayDecisionsOf { get; init; }
-}
+);

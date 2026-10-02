@@ -140,6 +140,89 @@ public class OperationsService : IOperationsService
                 Message: $"Unknown train: {input.TrainName}. Use operations.getTrains to list registered trains."
             );
 
+        return await EnqueueAsync(
+            registration,
+            input.InputJson,
+            input.Priority,
+            input.ScheduledAt,
+            replayDecisionsOf: null,
+            ct
+        );
+    }
+
+    /// <inheritdoc />
+    public async Task<OperationResult> RequeueExecutionAsync(long metadataId, CancellationToken ct)
+    {
+        string trainName;
+        string savedInput;
+        bool recordedDecisions;
+
+        using (var db = await _dataContextFactory.CreateDbContextAsync(ct))
+        {
+            var source = await db
+                .Metadatas.AsNoTracking()
+                .Where(m => m.Id == metadataId)
+                .Select(m => new { m.Name, m.Input })
+                .FirstOrDefaultAsync(ct);
+
+            if (source is null)
+                return new OperationResult(false, Message: $"Execution {metadataId} not found.");
+
+            // Re-queueing reads the saved input back as the train's input. Nothing saved, a
+            // placeholder saved in its place, or masked [TraxSensitive] members would all read
+            // back as defaults, and the train would run with values it never had.
+            var refusal = RequeueInputCheck.RefusalFor(metadataId, source.Input);
+            if (refusal is not null || source.Input is not { } input)
+                return new OperationResult(false, Message: refusal);
+
+            trainName = source.Name;
+            savedInput = input;
+
+            // Only a run that recorded decisions has anything to replay. A run of a train that
+            // never decides, or on a host that does not record decisions, is re-queued exactly as
+            // an ordinary enqueue, through the overload every ITrainExecutionService has.
+            recordedDecisions = await db
+                .RecordedDecisions.AsNoTracking()
+                .AnyAsync(d => d.MetadataId == metadataId, ct);
+        }
+
+        // The same lookup, and the same answer for a miss, as QueueTrainAsync.
+        var registration = _discoveryService
+            .DiscoverTrains()
+            .FirstOrDefault(r => r.ServiceType.FullName == trainName);
+
+        if (registration is null)
+            return new OperationResult(
+                false,
+                Message: $"Unknown train: {trainName}. Use operations.getTrains to list registered trains."
+            );
+
+        // The replay link is set here and nowhere a caller can reach, and only to the run being
+        // re-queued, so the new run replays decisions of a run of the same train (docs/0041).
+        return await EnqueueAsync(
+            registration,
+            savedInput,
+            priority: 0,
+            scheduledAt: null,
+            replayDecisionsOf: recordedDecisions ? metadataId : null,
+            ct
+        );
+    }
+
+    /// <summary>
+    /// The enqueue <see cref="QueueTrainAsync"/> and <see cref="RequeueExecutionAsync"/> share,
+    /// for a train already found by name: through the mediator, with refusals and failures split
+    /// as scheduler/0004 says.
+    /// </summary>
+    private async Task<OperationResult> EnqueueAsync(
+        TrainRegistration registration,
+        string? inputJson,
+        int priority,
+        DateTime? scheduledAt,
+        long? replayDecisionsOf,
+        CancellationToken ct
+    )
+    {
         // Enqueue through the mediator rather than writing the row here. That is what applies
         // the train's [TraxAuthorize] requirements, fires OnQueue, and stamps the subject key,
         // none of which a hand-built entry got. The input is handed over unparsed: the mediator
@@ -153,22 +236,22 @@ public class OperationsService : IOperationsService
         {
             // Only a replay needs the options overload; every other enqueue goes through the
             // overload every implementation has.
-            queued = input.ReplayDecisionsOf is null
+            queued = replayDecisionsOf is null
                 ? await _trainExecution.QueueAsync(
                     registration.ServiceType.FullName!,
-                    input.InputJson,
-                    input.Priority,
-                    input.ScheduledAt,
+                    inputJson,
+                    priority,
+                    scheduledAt,
                     ct
                 )
                 : await _trainExecution.QueueAsync(
                     registration.ServiceType.FullName!,
-                    input.InputJson,
+                    inputJson,
                     new QueueTrainOptions
                     {
-                        Priority = input.Priority,
-                        ScheduledAt = input.ScheduledAt,
-                        ReplayDecisionsOf = input.ReplayDecisionsOf,
+                        Priority = priority,
+                        ScheduledAt = scheduledAt,
+                        ReplayDecisionsOf = replayDecisionsOf,
                     },
                     ct
                 );
@@ -210,6 +293,21 @@ public class OperationsService : IOperationsService
                 ex,
                 "Queueing {TrainName} failed: the host has no ITrainAuthorizationService",
                 registration.ServiceType.FullName
+            );
+            throw;
+        }
+        catch (DecisionReplayNotSupportedException ex)
+        {
+            // A re-queue that replays decisions reached an ITrainExecutionService (a custom one,
+            // or a decorator) that does not implement the overload carrying the link. The host is
+            // misconfigured, as with a missing enforcer, so it is logged and thrown rather than
+            // reported as a refusal. See scheduler/0004.
+            _logger?.LogError(
+                ex,
+                "Re-queueing {TrainName} failed: {Implementation} cannot queue a run that replays "
+                    + "decisions",
+                registration.ServiceType.FullName,
+                ex.ImplementationType.FullName
             );
             throw;
         }
