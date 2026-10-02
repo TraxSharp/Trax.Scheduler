@@ -47,7 +47,11 @@ public class OperationsServiceRequeueTests : TestSetup
         _operations = Scope.ServiceProvider.GetRequiredService<IOperationsService>();
     }
 
-    private async Task<long> SeedRunAsync(string? input, string? trainName = null)
+    private async Task<long> SeedRunAsync(
+        string? input,
+        string? trainName = null,
+        long? replayDecisionsOf = null
+    )
     {
         var run = Metadata.Create(
             new CreateMetadata
@@ -55,6 +59,7 @@ public class OperationsServiceRequeueTests : TestSetup
                 Name = trainName ?? typeof(ISchedulerTestTrain).FullName!,
                 ExternalId = Guid.NewGuid().ToString("N"),
                 Input = null,
+                ReplayDecisionsOf = replayDecisionsOf,
             }
         );
         run.Input = input;
@@ -72,9 +77,11 @@ public class OperationsServiceRequeueTests : TestSetup
                 MetadataId = metadataId,
                 QuestionKey = "Route",
                 Occurrence = 0,
+                Fingerprint = new string('0', 64),
                 Kind = "choice",
                 Question = "{}",
                 Answer = "\"Express\"",
+                Routes = """[{"track": "Express", "fallback_reason": null}]""",
                 Decider = "TestDecider",
                 DecidedAt = DateTime.UtcNow,
             }
@@ -116,6 +123,121 @@ public class OperationsServiceRequeueTests : TestSetup
             .Single()
             .ReplayDecisionsOf.Should()
             .BeNull("there is nothing to replay, so the entry is the one a plain enqueue writes");
+    }
+
+    [Test]
+    public async Task A_requeue_that_recorded_nothing_is_requeued_to_replay_what_it_replayed()
+    {
+        // A requeue of a requeue: the second run failed before its first question, so it recorded
+        // nothing, but the answers of the run it replayed are still the ones to repeat. The new
+        // entry names the second run, and the replay follows its link back to the first.
+        var first = await SeedRunAsync("""{"Value":"again"}""");
+        await RecordDecisionAsync(first);
+        var second = await SeedRunAsync("""{"Value":"again"}""", replayDecisionsOf: first);
+
+        var result = await _operations.RequeueExecutionAsync(second, CancellationToken.None);
+
+        result.Success.Should().BeTrue(result.Message);
+        DataContext
+            .WorkQueues.AsNoTracking()
+            .Single()
+            .ReplayDecisionsOf.Should()
+            .Be(second, "the run being requeued replayed decisions, so it has some to replay");
+    }
+
+    [Test]
+    public async Task A_run_whose_train_is_no_longer_registered_is_refused_naming_the_train()
+    {
+        var source = await SeedRunAsync("""{"Value":"again"}""", "Some.Retired.ITrain");
+
+        var result = await _operations.RequeueExecutionAsync(source, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result
+            .Message.Should()
+            .Be(
+                $"Train Some.Retired.ITrain is no longer registered, so execution {source} "
+                    + "cannot be re-queued."
+            );
+        DataContext.WorkQueues.AsNoTracking().Should().BeEmpty();
+    }
+
+    [Test]
+    public async Task A_run_whose_saved_input_no_longer_reads_as_its_type_is_refused_as_the_runs_input()
+    {
+        // Saved when the input's Value was an object; the type now says it is a string. The
+        // caller of a requeue supplied no InputJson, so the refusal names the run's saved input.
+        var source = await SeedRunAsync("""{"Value":{"was":"an object"}}""");
+
+        var result = await _operations.RequeueExecutionAsync(source, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result
+            .Message.Should()
+            .StartWith(
+                $"The saved input of run {source} no longer reads as "
+                    + $"{typeof(SchedulerTestInput).FullName}: "
+            )
+            .And.NotContain("InputJson");
+        DataContext.WorkQueues.AsNoTracking().Should().BeEmpty();
+    }
+
+    [Test]
+    public async Task An_operations_service_that_predates_requeue_says_so_naming_itself()
+    {
+        // The GraphQL error filter masks this exception for the client, as it masks every
+        // exception it does not curate; the message is for the host's log.
+        IOperationsService predates = new PredatesRequeue();
+
+        var act = async () => await predates.RequeueExecutionAsync(1, CancellationToken.None);
+
+        await act.Should()
+            .ThrowAsync<NotSupportedException>()
+            .WithMessage("PredatesRequeue does not implement RequeueExecutionAsync*");
+    }
+
+    /// <summary>
+    /// An operations service written before RequeueExecutionAsync existed: it implements the
+    /// members the interface requires and inherits the default for the rest.
+    /// </summary>
+    private sealed class PredatesRequeue : IOperationsService
+    {
+        public Task<OperationResult> QueueTrainAsync(QueueTrainInput input, CancellationToken ct) =>
+            throw new InvalidOperationException();
+
+        public Task<OperationResult> CancelWorkQueueEntryAsync(long id, CancellationToken ct) =>
+            throw new InvalidOperationException();
+
+        public Task<OperationResult> UpdateManifestGroupAsync(
+            long id,
+            UpdateManifestGroupInput input,
+            CancellationToken ct
+        ) => throw new InvalidOperationException();
+
+        public Task<ManifestGroupDependencyGraph?> GetManifestGroupDependencyGraphAsync(
+            long groupId,
+            CancellationToken ct
+        ) => throw new InvalidOperationException();
+
+        public Task<ManifestGroupDependencyGraph> GetGlobalManifestGroupGraphAsync(
+            CancellationToken ct
+        ) => throw new InvalidOperationException();
+
+        public Task<DashboardMetrics> GetDashboardMetricsAsync(
+            MetricsRange range,
+            bool hideAdminTrains,
+            CancellationToken ct
+        ) => throw new InvalidOperationException();
+
+        public ServerMetrics GetServerMetrics() => throw new InvalidOperationException();
+
+        public SchedulerConfigSnapshot GetSchedulerConfig() =>
+            throw new InvalidOperationException();
+
+        public Task<OperationResult> UpdateSchedulerConfigAsync(
+            UpdateSchedulerConfigInput input,
+            CancellationToken ct
+        ) => throw new InvalidOperationException();
     }
 
     /// <summary>The input as SaveTrainParameters() saves it on a run, through the host's own effect.</summary>

@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Trax.Core.Exceptions;
+using Trax.Effect.Data.Decisions;
 using Trax.Effect.Data.Services.DataContext;
 using Trax.Effect.Data.Services.IDataContextFactory;
 using Trax.Effect.Data.Services.SqlDialect;
@@ -155,7 +156,7 @@ public class OperationsService : IOperationsService
     {
         string trainName;
         string savedInput;
-        bool recordedDecisions;
+        bool hasDecisionsToReplay;
 
         using (var db = await _dataContextFactory.CreateDbContextAsync(ct))
         {
@@ -178,15 +179,17 @@ public class OperationsService : IOperationsService
             trainName = source.Name;
             savedInput = input;
 
-            // Only a run that recorded decisions has anything to replay. A run of a train that
-            // never decides, or on a host that does not record decisions, is re-queued exactly as
-            // an ordinary enqueue, through the overload every ITrainExecutionService has.
-            recordedDecisions = await db
-                .RecordedDecisions.AsNoTracking()
-                .AnyAsync(d => d.MetadataId == metadataId, ct);
+            // Only a run with decisions to replay is linked: one that recorded a decision, or one
+            // that was itself queued to replay another's. The second is a requeue of a requeue
+            // that recorded nothing, or only some of its questions, before it ended; the replay
+            // follows the link back to the answers it did not record. A run of a train that never
+            // decides, or on a host that does not record decisions, is re-queued exactly as an
+            // ordinary enqueue, through the overload every ITrainExecutionService has.
+            hasDecisionsToReplay = await db.HasDecisionsToReplay(metadataId, ct);
         }
 
-        // The same lookup, and the same answer for a miss, as QueueTrainAsync.
+        // The same lookup as QueueTrainAsync. The caller named a run, not a train, so the miss is
+        // reported as the run's train having gone rather than as an unknown name to look up.
         var registration = _discoveryService
             .DiscoverTrains()
             .FirstOrDefault(r => r.ServiceType.FullName == trainName);
@@ -194,7 +197,7 @@ public class OperationsService : IOperationsService
         if (registration is null)
             return new OperationResult(
                 false,
-                Message: $"Unknown train: {trainName}. Use operations.getTrains to list registered trains."
+                Message: RequeueInputCheck.TrainNoLongerRegistered(metadataId, trainName)
             );
 
         // The saved input carries the reference metadata SaveTrainParameters() writes ($id,
@@ -233,8 +236,9 @@ public class OperationsService : IOperationsService
             requeuedInput,
             priority: 0,
             scheduledAt: null,
-            replayDecisionsOf: recordedDecisions ? metadataId : null,
-            ct
+            replayDecisionsOf: hasDecisionsToReplay ? metadataId : null,
+            ct,
+            requeueOf: metadataId
         );
     }
 
@@ -249,7 +253,8 @@ public class OperationsService : IOperationsService
         int priority,
         DateTime? scheduledAt,
         long? replayDecisionsOf,
-        CancellationToken ct
+        CancellationToken ct,
+        long? requeueOf = null
     )
     {
         // Enqueue through the mediator rather than writing the row here. That is what applies
@@ -287,7 +292,14 @@ public class OperationsService : IOperationsService
         }
         catch (JsonException ex)
         {
-            return new OperationResult(false, Message: $"Invalid InputJson: {ex.Message}");
+            // A re-queue's caller supplied no JSON: the input is the run's own, saved when the
+            // train took another shape, so the refusal names the run rather than an InputJson.
+            return new OperationResult(
+                false,
+                Message: requeueOf is { } run
+                    ? RequeueInputCheck.SavedInputNoLongerReads(run, registration, ex)
+                    : $"Invalid InputJson: {ex.Message}"
+            );
         }
         catch (TrainInputValidationException ex)
         {

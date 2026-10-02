@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Trax.Effect.Utils;
+using Trax.Mediator.Services.TrainDiscovery;
 
 namespace Trax.Scheduler.Services.Operations;
 
@@ -10,7 +11,8 @@ namespace Trax.Scheduler.Services.Operations;
 /// the train with defaults in place of the real values.
 /// <see cref="OperationsService.RequeueExecutionAsync"/> applies it for both the GraphQL
 /// <c>requeueExecution</c> mutation and the dashboard's Re-queue button, so the two refuse the
-/// same runs with the same messages.
+/// same runs with the same messages, and it holds the wording of every refusal particular to a
+/// re-queue.
 /// </summary>
 internal static class RequeueInputCheck
 {
@@ -53,6 +55,27 @@ internal static class RequeueInputCheck
 
         return null;
     }
+
+    /// <summary>
+    /// The refusal for a run whose train this host no longer registers. The caller named a run,
+    /// not a train, so it is not told to look the train's name up.
+    /// </summary>
+    public static string TrainNoLongerRegistered(long metadataId, string trainName) =>
+        $"Train {trainName} is no longer registered, so execution {metadataId} cannot be re-queued.";
+
+    /// <summary>
+    /// The refusal for a run whose saved input no longer reads as its train's input type, which
+    /// happens when the type changed shape after the run. The caller of a re-queue supplied no
+    /// JSON, so the message names the run's saved input rather than an <c>InputJson</c>. It is
+    /// given only once the mediator has authorized the caller, as an enqueue's parse error is.
+    /// </summary>
+    public static string SavedInputNoLongerReads(
+        long metadataId,
+        TrainRegistration registration,
+        JsonException exception
+    ) =>
+        $"The saved input of run {metadataId} no longer reads as "
+        + $"{registration.InputType.FullName}: {exception.Message}";
 
     /// <summary>
     /// The placeholder marker <paramref name="input"/> carries at its root with the value

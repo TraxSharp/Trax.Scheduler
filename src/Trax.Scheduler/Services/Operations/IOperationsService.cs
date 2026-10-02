@@ -142,9 +142,10 @@ public interface IOperationsService
     /// the dashboard calls this inside its <c>"dashboard"</c> scope, the API does not.
     /// </para>
     /// <para>
-    /// When the run recorded decisions, the new entry names it as the run whose decisions it
-    /// replays, so the new run takes the tracks the original took (central <c>docs/0041</c>). A run
-    /// that recorded none is re-queued exactly as an ordinary enqueue. The link is only ever set
+    /// When the run recorded decisions, or was itself queued to replay another run's, the new
+    /// entry names it as the run whose decisions it replays, so the new run takes the tracks the
+    /// original took (central <c>docs/0041</c>); a question the run never reached is answered from
+    /// the run it replayed in turn. A run with neither is re-queued exactly as an ordinary enqueue. The link is only ever set
     /// here, to the run being re-queued, so it always points at a run of the same train.
     /// </para>
     /// </remarks>
@@ -152,9 +153,11 @@ public interface IOperationsService
     /// <param name="ct">Cancellation token.</param>
     /// <returns>
     /// <c>OperationResult(true, Id: newEntryId, Count: 1, ...)</c> on success. A failed result,
-    /// with a message, when no run has the id (<c>"Execution {id} not found."</c>), its saved
-    /// input cannot be re-queued, or the enqueue is refused as <see cref="QueueTrainAsync"/>
-    /// describes.
+    /// with a message, when no run has the id (<c>"Execution {id} not found."</c>), its train is
+    /// no longer registered (<c>"Train {name} is no longer registered, ..."</c>), its saved input
+    /// cannot be re-queued or no longer reads as the train's input type (<c>"The saved input of
+    /// run {id} no longer reads as {type}: ..."</c>), or the enqueue is refused as
+    /// <see cref="QueueTrainAsync"/> describes.
     /// </returns>
     /// <exception cref="Trax.Mediator.Exceptions.DecisionReplayNotSupportedException">
     /// The run recorded decisions and the registered <c>ITrainExecutionService</c> does not
