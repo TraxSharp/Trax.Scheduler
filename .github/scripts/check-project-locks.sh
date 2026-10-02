@@ -17,6 +17,10 @@ solution="$1"
 allowlist=.github/unlocked-projects.txt
 failed=0
 
+# The solution with its XML comments removed, so a project commented out of it does
+# not count as being in it.
+projects_in_solution=$(perl -0777 -pe 's/<!--.*?-->//gs' "$solution")
+
 while IFS= read -r project; do
   if [ -f "$allowlist" ] && grep -qxF "$project" <(sed 's/[[:space:]]*#.*$//' "$allowlist"); then
     continue
@@ -27,7 +31,7 @@ while IFS= read -r project; do
     failed=1
   fi
 
-  if ! grep -qF "Path=\"$project\"" "$solution"; then
+  if ! grep -qF "Path=\"$project\"" <<<"$projects_in_solution"; then
     echo "::error file=$project::Not in $solution, so CI never restores it."
     failed=1
   fi
