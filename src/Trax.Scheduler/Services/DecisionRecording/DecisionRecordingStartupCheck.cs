@@ -1,6 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using Trax.Core.Decisions;
 using Trax.Core.Monad;
 using Trax.Mediator.Services.TrainDiscovery;
@@ -8,44 +7,70 @@ using Trax.Mediator.Services.TrainDiscovery;
 namespace Trax.Scheduler.Services.DecisionRecording;
 
 /// <summary>
-/// Warns at startup when a host that runs trains registers trains that ask a decider, but does not
-/// record decisions (<c>AddDecisionRecording</c>).
+/// Refuses to start a host that runs trains asking a decider when it does not record decisions
+/// (<c>AddDecisionRecording</c>), naming every such train.
 /// </summary>
 /// <remarks>
-/// Such a host runs those trains, and asks their deciders, without trouble. What it cannot do is
-/// run a requeue that replays a recorded run's decisions: it has no recorded answers to replay, so
-/// the run fails, classified permanent, rather than asking afresh and perhaps taking another track
+/// Such a host could run those trains and ask their deciders. What it cannot do is run a requeue
+/// that replays a recorded run's decisions: it has no recorded answers to replay, so the run
+/// fails, classified permanent, rather than asking afresh and perhaps taking another track
 /// (central <c>docs/0041</c>). A requeue links a run only when the run has decisions to replay, so
 /// this happens where the run was recorded by one host and the requeue is run by another that does
 /// not record: one worker of a fleet left without the call.
 ///
-/// <para>A warning rather than a refusal to start. The unsafe outcome, a replay that asks afresh,
-/// is already refused by the run itself, so nothing here fails open. Recording is a choice a host
-/// makes, and a host that runs decision trains without it, and never runs their requeues, is
-/// correctly configured; refusing to start it would break it to report a failure it may never
-/// have. The warning names the trains and the fix, so the host that does run requeues is
-/// found at startup rather than by the first replay that fails.</para>
+/// <para>A refusal rather than a warning, because Trax fails closed. A host that runs deciding
+/// trains without recording neither keeps the record a requeue replays nor can replay one it is
+/// handed, and that gap would otherwise surface only when a requeue fails in production, on
+/// whichever worker happened to claim it. A warning at startup is easy to miss across a fleet;
+/// a host that will not start is not.</para>
 ///
-/// <para>A train's chain is read the way the mediator's chain verification reads it. A train that
-/// cannot be built or read outside a request is left out silently: the mediator already reports
-/// it.</para>
+/// <para>A train's chain is read the way the mediator's chain verification reads it, the chain
+/// itself and every track it routes to. A train that cannot be built or read outside a request is
+/// left out: the mediator's chain verification already reports it. Every train is checked before
+/// the host is refused, so one start names all of them.</para>
+///
+/// <para>The check runs in <see cref="StartingAsync"/>, which the host finishes for every hosted
+/// service before it calls any <c>StartAsync</c>, so a refusal stops the host before a worker
+/// starts claiming work, even under <c>HostOptions.ServicesStartConcurrently</c>. It is also
+/// registered first, as the mediator's startup gates are, so a host that starts its services one
+/// after another reaches it before anyone else's lifecycle hook. Something that starts hosted
+/// services itself and calls only <c>StartAsync</c> gets the check from there instead.</para>
 /// </remarks>
 internal sealed class DecisionRecordingStartupCheck(
     IServiceScopeFactory scopeFactory,
     IServiceProviderIsService isService,
     // Optional: AddTraxJobRunner registers this check, and a host built without AddMediator has
     // no trains to check, which the mediator's own validation reports.
-    ITrainDiscoveryService? discoveryService = null,
-    ILogger<DecisionRecordingStartupCheck>? logger = null
-) : IHostedService
+    ITrainDiscoveryService? discoveryService = null
+) : IHostedLifecycleService
 {
-    public async Task StartAsync(CancellationToken cancellationToken)
+    private bool _checked;
+
+    /// <summary>
+    /// Registers the check first among the hosted services, once however many of
+    /// <c>AddScheduler</c>, <c>AddTraxJobRunner</c> and <c>AddTraxWorker</c> ask for it.
+    /// </summary>
+    internal static void Register(IServiceCollection services)
     {
         if (
-            logger is null
-            || discoveryService is null
-            || isService.IsService(typeof(IDecisionReplay))
+            services.Any(d =>
+                d.ServiceType == typeof(IHostedService)
+                && d.ImplementationType == typeof(DecisionRecordingStartupCheck)
+            )
         )
+            return;
+
+        services.Insert(
+            0,
+            ServiceDescriptor.Singleton<IHostedService, DecisionRecordingStartupCheck>()
+        );
+    }
+
+    public async Task StartingAsync(CancellationToken cancellationToken)
+    {
+        _checked = true;
+
+        if (discoveryService is null || isService.IsService(typeof(IDecisionReplay)))
             return;
 
         var deciding = await TrainsThatDecideAsync(cancellationToken);
@@ -53,14 +78,26 @@ internal sealed class DecisionRecordingStartupCheck(
         if (deciding.Count == 0)
             return;
 
-        logger.LogWarning(
-            "{Trains} ask a decider, but this host does not record decisions. It runs them, but a "
-                + "requeue of a run whose decisions were recorded fails here, permanently, rather "
-                + "than asking afresh. Call AddDecisionRecording() on the effects builder of every "
-                + "host that runs these trains.",
-            string.Join(", ", deciding)
+        throw new InvalidOperationException(
+            $"{deciding.Count} registered {(deciding.Count == 1 ? "train asks" : "trains ask")} a "
+                + "decider, but this host does not record decisions:"
+                + Environment.NewLine
+                + string.Join(Environment.NewLine, deciding.Select(train => "  - " + train))
+                + Environment.NewLine
+                + "Without the record, a requeue of a run whose decisions were recorded fails here, "
+                + "permanently, rather than replaying them. Call AddDecisionRecording() on the "
+                + "effects builder of every host that runs these trains."
         );
     }
+
+    public Task StartAsync(CancellationToken cancellationToken) =>
+        _checked ? Task.CompletedTask : StartingAsync(cancellationToken);
+
+    public Task StartedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StoppingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 

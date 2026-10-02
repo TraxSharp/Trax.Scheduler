@@ -1,7 +1,9 @@
+using System.Reflection;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
+using NSubstitute;
+using Trax.Core.Decisions;
 using Trax.Effect.Configuration.TraxBuilder;
 using Trax.Effect.Data.Extensions;
 using Trax.Effect.Data.Postgres.Extensions;
@@ -17,26 +19,37 @@ using Trax.Scheduler.Trains.JobRunner;
 namespace Trax.Scheduler.Tests.Integration.UnitTests;
 
 /// <summary>
-/// A host that runs trains which ask a decider, without AddDecisionRecording, runs them fine but
-/// fails every requeue that replays recorded decisions. It is told so at startup, by name, rather
-/// than by the first replay that fails.
+/// A host that runs trains which ask a decider, without AddDecisionRecording, could run them but
+/// would fail every requeue that replays recorded decisions. It refuses to start, naming every
+/// such train, rather than leaving the first replay to find out.
 /// </summary>
 [TestFixture]
 public class DecisionRecordingStartupCheckTests
 {
     [Test]
-    public async Task A_host_without_decision_recording_is_warned_naming_the_trains_that_decide()
+    public async Task A_host_without_decision_recording_refuses_to_start_naming_the_trains_that_decide()
     {
-        await using var provider = Build(recordDecisions: false);
-        var logger = new CapturingLogger();
+        using var host = new HostBuilder()
+            .ConfigureServices(services =>
+                Configure(
+                    services,
+                    recordDecisions: false,
+                    typeof(AssemblyMarker).Assembly,
+                    typeof(JobRunnerTrain).Assembly
+                )
+            )
+            .Build();
 
-        await CheckOver(provider, logger).StartAsync(CancellationToken.None);
+        var refusal = (
+            await host.Invoking(h => h.StartAsync())
+                .Should()
+                .ThrowAsync<InvalidOperationException>()
+        ).Which;
 
-        var warning = logger.Warnings.Should().ContainSingle().Subject;
-        warning.Should().Contain(typeof(IDecisionProbeTrain).FullName!);
-        warning.Should().Contain("AddDecisionRecording()");
-        warning
-            .Should()
+        refusal.Message.Should().Contain(typeof(IDecisionProbeTrain).FullName!);
+        refusal.Message.Should().Contain("AddDecisionRecording()");
+        refusal
+            .Message.Should()
             .NotContain(
                 typeof(ISchedulerTestTrain).FullName!,
                 "a train that asks no decider has nothing to replay"
@@ -44,85 +57,117 @@ public class DecisionRecordingStartupCheckTests
     }
 
     [Test]
-    public async Task A_host_that_records_decisions_is_not_warned()
+    public async Task A_host_that_records_decisions_passes_the_check()
     {
-        await using var provider = Build(recordDecisions: true);
-        var logger = new CapturingLogger();
+        await using var provider = Build(
+            recordDecisions: true,
+            typeof(AssemblyMarker).Assembly,
+            typeof(JobRunnerTrain).Assembly
+        );
 
-        await CheckOver(provider, logger).StartAsync(CancellationToken.None);
-
-        logger.Warnings.Should().BeEmpty();
+        await CheckOver(provider)
+            .Invoking(check => check.StartingAsync(CancellationToken.None))
+            .Should()
+            .NotThrowAsync();
     }
 
     [Test]
-    public void Every_host_that_runs_trains_has_the_check_once()
+    public async Task A_host_whose_trains_do_not_decide_passes_the_check_without_recording()
     {
-        var scheduler = Services(recordDecisions: false);
+        // Only the scheduler's own trains, none of which asks a decider.
+        await using var provider = Build(recordDecisions: false, typeof(JobRunnerTrain).Assembly);
+
+        await CheckOver(provider)
+            .Invoking(check => check.StartingAsync(CancellationToken.None))
+            .Should()
+            .NotThrowAsync();
+    }
+
+    [Test]
+    public async Task A_check_started_only_through_StartAsync_still_refuses()
+    {
+        await using var provider = Build(
+            recordDecisions: false,
+            typeof(AssemblyMarker).Assembly,
+            typeof(JobRunnerTrain).Assembly
+        );
+
+        await CheckOver(provider)
+            .Invoking(check => check.StartAsync(CancellationToken.None))
+            .Should()
+            .ThrowAsync<InvalidOperationException>()
+            .WithMessage($"*{typeof(IDecisionProbeTrain).FullName}*");
+    }
+
+    [Test]
+    public void Every_host_that_runs_trains_has_the_check_once_and_first()
+    {
+        var scheduler = Configure(
+            new ServiceCollection(),
+            recordDecisions: false,
+            typeof(AssemblyMarker).Assembly,
+            typeof(JobRunnerTrain).Assembly
+        );
         scheduler.AddTraxJobRunner();
+
+        var runner = new ServiceCollection().AddLogging();
+        runner.AddTrax(trax =>
+            trax.AddEffects(effects => effects).AddMediator(typeof(AssemblyMarker).Assembly)
+        );
+        runner.AddTraxJobRunner();
+
         var worker = new ServiceCollection().AddLogging();
         worker.AddTrax(trax =>
             trax.AddEffects(effects => effects).AddMediator(typeof(AssemblyMarker).Assembly)
         );
         worker.AddTraxWorker();
 
-        foreach (var services in new[] { scheduler, worker })
-            services
-                .Count(d =>
-                    d.ServiceType == typeof(IHostedService)
-                    && d.ImplementationType == typeof(DecisionRecordingStartupCheck)
-                )
+        foreach (var services in new[] { scheduler, runner, worker })
+        {
+            var hosted = services.Where(d => d.ServiceType == typeof(IHostedService)).ToList();
+
+            hosted.Count(IsCheck).Should().Be(1);
+            hosted
+                .TakeWhile(d => !IsCheck(d))
+                .Select(d => d.ImplementationType?.Assembly)
                 .Should()
-                .Be(1);
+                .NotContain(
+                    typeof(JobRunnerTrain).Assembly,
+                    "no scheduler service may start before the check refuses the host"
+                );
+        }
     }
 
-    private static DecisionRecordingStartupCheck CheckOver(
-        IServiceProvider provider,
-        ILogger<DecisionRecordingStartupCheck> logger
-    ) =>
+    private static bool IsCheck(ServiceDescriptor descriptor) =>
+        descriptor.ImplementationType == typeof(DecisionRecordingStartupCheck);
+
+    private static DecisionRecordingStartupCheck CheckOver(IServiceProvider provider) =>
         new(
             provider.GetRequiredService<IServiceScopeFactory>(),
             provider.GetRequiredService<IServiceProviderIsService>(),
-            provider.GetRequiredService<ITrainDiscoveryService>(),
-            logger
+            provider.GetRequiredService<ITrainDiscoveryService>()
         );
 
-    private static ServiceProvider Build(bool recordDecisions) =>
-        Services(recordDecisions).BuildServiceProvider();
+    private static ServiceProvider Build(bool recordDecisions, params Assembly[] trains) =>
+        Configure(new ServiceCollection(), recordDecisions, trains).BuildServiceProvider();
 
-    private static IServiceCollection Services(bool recordDecisions)
+    private static IServiceCollection Configure(
+        IServiceCollection services,
+        bool recordDecisions,
+        params Assembly[] trains
+    )
     {
-        var services = new ServiceCollection().AddLogging();
+        // The mediator's chain verification needs a decider for the probe train's chain.
+        services.AddLogging().AddSingleton(Substitute.For<IDecider>());
         services.AddTrax(trax =>
             trax.AddEffects(effects =>
                 {
                     var data = effects.UsePostgres(TestPostgres.ConnectionString);
                     return recordDecisions ? data.AddDecisionRecording() : data;
                 })
-                .AddMediator(typeof(AssemblyMarker).Assembly, typeof(JobRunnerTrain).Assembly)
+                .AddMediator(trains)
                 .AddScheduler(scheduler => scheduler.UseInMemoryWorkers())
         );
         return services;
-    }
-
-    private sealed class CapturingLogger : ILogger<DecisionRecordingStartupCheck>
-    {
-        public List<string> Warnings { get; } = [];
-
-        public IDisposable? BeginScope<TState>(TState state)
-            where TState : notnull => null;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(
-            LogLevel logLevel,
-            EventId eventId,
-            TState state,
-            Exception? exception,
-            Func<TState, Exception?, string> formatter
-        )
-        {
-            if (logLevel == LogLevel.Warning)
-                Warnings.Add(formatter(state, exception));
-        }
     }
 }

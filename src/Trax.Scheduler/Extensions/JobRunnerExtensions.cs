@@ -110,9 +110,9 @@ public static class JobRunnerExtensions
         // JobRunnerTrain (uses AddScopedTraxRoute for property injection)
         services.AddScopedTraxRoute<IJobRunnerTrain, JobRunnerTrain>();
 
-        // A runner runs trains, so it warns when the ones that ask a decider cannot replay a
-        // requeue's recorded decisions. Added once, whether AddScheduler added it too or not.
-        services.AddHostedService<DecisionRecordingStartupCheck>();
+        // A runner runs trains, so it refuses to start when the ones that ask a decider cannot
+        // replay a requeue's recorded decisions. Added once, whether AddScheduler added it too or not.
+        DecisionRecordingStartupCheck.Register(services);
 
         // Hosting-agnostic request handler
         services.AddScoped<ITraxRequestHandler, TraxRequestHandler>();

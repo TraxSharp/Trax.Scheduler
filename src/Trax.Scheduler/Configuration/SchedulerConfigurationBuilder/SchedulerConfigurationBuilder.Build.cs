@@ -138,9 +138,9 @@ public partial class SchedulerConfigurationBuilder
             _parentBuilder.ServiceCollection.AddScoped<IJobSubmitter, InMemoryJobSubmitter>();
         }
 
-        // This host runs trains, so it warns when the ones that ask a decider cannot replay a
-        // requeue's recorded decisions. AddHostedService adds it once however many paths ask.
-        _parentBuilder.ServiceCollection.AddHostedService<DecisionRecordingStartupCheck>();
+        // This host runs trains, so it refuses to start when the ones that ask a decider cannot
+        // replay a requeue's recorded decisions. Registered once however many paths ask.
+        DecisionRecordingStartupCheck.Register(_parentBuilder.ServiceCollection);
 
         // Register routed submitters (UseRemoteWorkers, UseSqsWorkers with ForTrain routing)
         RegisterRoutedSubmitters();
