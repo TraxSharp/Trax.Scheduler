@@ -323,7 +323,11 @@ public class OperationsServiceRunTests
 
         (await act.Should().ThrowAsync<InvalidOperationException>())
             .Which.Should()
-            .BeSameAs(failure, "a submit failure is the server's, not a refusal (scheduler/0004)");
+            .BeSameAs(
+                failure,
+                "a submit failure is the server's, not a refusal. See "
+                    + "docs/adr/0004-an-enqueue-refusal-is-a-result-an-infrastructure-failure-is-thrown.md"
+            );
 
         var run = (await Runs()).Should().ContainSingle().Subject;
         run.TrainState.Should()
