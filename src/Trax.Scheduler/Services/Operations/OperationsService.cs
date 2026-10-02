@@ -197,11 +197,40 @@ public class OperationsService : IOperationsService
                 Message: $"Unknown train: {trainName}. Use operations.getTrains to list registered trains."
             );
 
+        // The saved input carries the reference metadata SaveTrainParameters() writes ($id,
+        // $values, $ref), which the mediator does not honour in an input it is handed: a list
+        // would be refused and a repeated object read back at its defaults. Resolving it first
+        // hands over the plain tree the run was given. It does not depend on the input type, so
+        // doing it before the mediator authorizes the caller tells them nothing about the input.
+        string requeuedInput;
+
+        try
+        {
+            requeuedInput = TrainInputReader.ResolveSavedInput(
+                savedInput,
+                registration,
+                MaxInputJsonBytes()
+            );
+        }
+        catch (JsonException ex)
+        {
+            return new OperationResult(
+                false,
+                Message: $"Execution {metadataId}'s saved input cannot be read back as the input "
+                    + $"it ran with: {ex.Message}"
+            );
+        }
+        catch (TrainInputValidationException ex)
+        {
+            // Generic by design, as in EnqueueAsync.
+            return new OperationResult(false, Message: ex.Message);
+        }
+
         // The replay link is set here and nowhere a caller can reach, and only to the run being
         // re-queued, so the new run replays decisions of a run of the same train (docs/0041).
         return await EnqueueAsync(
             registration,
-            savedInput,
+            requeuedInput,
             priority: 0,
             scheduledAt: null,
             replayDecisionsOf: recordedDecisions ? metadataId : null,
@@ -547,9 +576,7 @@ public class OperationsService : IOperationsService
         object runInput
     )
     {
-        var maxBytes =
-            services.GetService<MediatorConfiguration>()?.MaxInputJsonBytes
-            ?? new MediatorConfiguration().MaxInputJsonBytes;
+        var maxBytes = MaxInputJsonBytes(services);
         var storedCap = (int)
             Math.Min((long)maxBytes * TrainInputReader.StoredInputGrowthFactor, int.MaxValue);
 
@@ -567,6 +594,16 @@ public class OperationsService : IOperationsService
                 storedCap
             );
     }
+
+    /// <summary>
+    /// The mediator's input size cap, or its default when the host registered no
+    /// <see cref="MediatorConfiguration"/> or this service was built without a provider.
+    /// </summary>
+    private int MaxInputJsonBytes() => MaxInputJsonBytes(_services);
+
+    private static int MaxInputJsonBytes(IServiceProvider? services) =>
+        services?.GetService<MediatorConfiguration>()?.MaxInputJsonBytes
+        ?? new MediatorConfiguration().MaxInputJsonBytes;
 
     /// <summary>
     /// The submitter the job dispatcher would use for this train: its builder or

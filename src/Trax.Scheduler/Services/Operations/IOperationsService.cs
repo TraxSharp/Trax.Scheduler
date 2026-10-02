@@ -129,6 +129,13 @@ public interface IOperationsService
     /// <c>_unserializable</c> or <c>_disposed</c> placeholder in its place, or
     /// <c>[TraxSensitive]</c> members were masked. Each of those would read back as defaults.
     /// <para>
+    /// The saved input carries the reference metadata <c>SaveTrainParameters()</c> writes
+    /// (<c>$id</c>, <c>$values</c>, <c>$ref</c>). It is rewritten as the plain tree it stands for
+    /// by <c>TrainInputReader.ResolveSavedInput</c> before it is queued, so a list, and an object
+    /// the input held twice, come back as they were; a saved input whose metadata has no plain
+    /// form, or whose plain form is over the input cap, is refused.
+    /// </para>
+    /// <para>
     /// The enqueue then goes through the same path as <see cref="QueueTrainAsync"/>, so the train's
     /// authorization, its <c>OnQueue</c> hook, its subject key and the input cap apply, and a
     /// refusal or failure is reported as it is there. The caller's trusted scope carries through:

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,6 +9,8 @@ using Trax.Effect.Extensions;
 using Trax.Effect.Models.Metadata;
 using Trax.Effect.Models.Metadata.DTOs;
 using Trax.Effect.Models.RecordedDecision;
+using Trax.Effect.Provider.Parameter.Services.ParameterEffectProviderFactory;
+using Trax.Effect.Utils;
 using Trax.Mediator.Exceptions;
 using Trax.Mediator.Services.TrainDiscovery;
 using Trax.Mediator.Services.TrainExecution;
@@ -44,12 +47,12 @@ public class OperationsServiceRequeueTests : TestSetup
         _operations = Scope.ServiceProvider.GetRequiredService<IOperationsService>();
     }
 
-    private async Task<long> SeedRunAsync(string? input)
+    private async Task<long> SeedRunAsync(string? input, string? trainName = null)
     {
         var run = Metadata.Create(
             new CreateMetadata
             {
-                Name = typeof(ISchedulerTestTrain).FullName!,
+                Name = trainName ?? typeof(ISchedulerTestTrain).FullName!,
                 ExternalId = Guid.NewGuid().ToString("N"),
                 Input = null,
             }
@@ -113,6 +116,74 @@ public class OperationsServiceRequeueTests : TestSetup
             .Single()
             .ReplayDecisionsOf.Should()
             .BeNull("there is nothing to replay, so the entry is the one a plain enqueue writes");
+    }
+
+    /// <summary>The input as SaveTrainParameters() saves it on a run, through the host's own effect.</summary>
+    private async Task<string> SavedFormOfAsync(object input)
+    {
+        using var effect = Scope
+            .ServiceProvider.GetRequiredService<ParameterEffectProviderFactory>()
+            .Create();
+        var metadata = new Metadata { Name = "saved-input" };
+        metadata.SetInputObject(input);
+        await effect.Track(metadata);
+        await effect.SaveChanges(CancellationToken.None);
+        return metadata.Input!;
+    }
+
+    [Test]
+    public async Task A_run_is_requeued_with_the_input_it_saved_lists_and_shared_objects_included()
+    {
+        var shared = new SavedInputPlace { City = "Lyon", Zip = 69001 };
+        var original = new SavedInputShapes
+        {
+            Counts = [3, 1, 4],
+            Tags = ["alpha", "beta"],
+            Home = shared,
+            Billing = shared,
+        };
+        var saved = await SavedFormOfAsync(original);
+        saved.Should().Contain("\"$values\"").And.Contain("\"$ref\"");
+        var source = await SeedRunAsync(saved, typeof(ISavedInputShapesTrain).FullName);
+
+        var result = await _operations.RequeueExecutionAsync(source, CancellationToken.None);
+
+        result.Success.Should().BeTrue(result.Message);
+        var entry = DataContext.WorkQueues.AsNoTracking().Single();
+        var queued = JsonSerializer.Deserialize<SavedInputShapes>(
+            entry.Input!,
+            TraxJsonSerializationOptions.ManifestProperties
+        )!;
+        queued.Counts.Should().Equal(3, 1, 4);
+        queued.Tags.Should().Equal("alpha", "beta");
+        queued.Home.Should().Be(shared);
+        queued
+            .Billing.Should()
+            .Be(shared, "the second copy of a shared object is saved as a $ref to the first");
+    }
+
+    [Test]
+    public async Task A_run_whose_saved_input_repeats_an_object_is_not_requeued_with_defaults()
+    {
+        // No list, so nothing refuses the saved form outright: read as a caller's input, the $ref
+        // standing in for the second copy reads back as an object at its defaults.
+        var shared = new SavedInputPlace { City = "Nice", Zip = 6000 };
+        var saved = await SavedFormOfAsync(
+            new SavedInputShapes { Home = shared, Billing = shared }
+        );
+        var source = await SeedRunAsync(saved, typeof(ISavedInputShapesTrain).FullName);
+
+        var result = await _operations.RequeueExecutionAsync(source, CancellationToken.None);
+
+        result.Success.Should().BeTrue(result.Message);
+        var entry = DataContext.WorkQueues.AsNoTracking().Single();
+        JsonSerializer
+            .Deserialize<SavedInputShapes>(
+                entry.Input!,
+                TraxJsonSerializationOptions.ManifestProperties
+            )!
+            .Billing.Should()
+            .Be(shared);
     }
 
     [Test]
