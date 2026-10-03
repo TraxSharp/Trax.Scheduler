@@ -151,7 +151,9 @@ queue entries, so there is no queued input to compare, and it does not record th
   acknowledged dead letter asks afresh, that a dependent's retry replays until its parent succeeds
   again and then asks afresh, that a dead-letter requeue asks afresh while a queued entry or a
   running run already replays the failed run, that a retry asks afresh once cleanup deleted the
-  replay that failed, and that no public scheduler API accepts a run to replay.
+  replay that failed, that a linked retry whose source is deleted before it runs, or that runs on a
+  host recording no decisions, asks afresh and completes, and that no public scheduler API accepts
+  a run to replay.
 - `ReplayDecisionsOnRetrySeedingTests` pins that the opt-out reaches the manifest through every
   way one is scheduled, that a re-seed that does not state it keeps an explicit false, that
   reading it back in `configureEach` does not state it, that a re-seed turning it off clears the

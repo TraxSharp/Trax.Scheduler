@@ -73,20 +73,30 @@ public class ManifestRetryReplaysDecisionsTests
     private static ServiceProvider BuildProvider(
         IDecider decider,
         Action<IServiceCollection>? configure = null,
-        Action<SchedulerConfigurationBuilder>? configureScheduler = null
+        Action<SchedulerConfigurationBuilder>? configureScheduler = null,
+        bool recordDecisions = true
     )
     {
         var services = new ServiceCollection()
             .AddLogging(x => x.SetMinimumLevel(LogLevel.Warning))
             .AddSingleton(decider)
             .AddTrax(trax =>
-                trax.AddEffects(effects =>
-                        effects
-                            .SaveTrainParameters()
-                            .UsePostgres(TestPostgres.ConnectionString)
-                            .AddDecisionRecording()
-                            .AddJson()
-                    )
+                (
+                    recordDecisions
+                        ? trax.AddEffects(effects =>
+                            effects
+                                .SaveTrainParameters()
+                                .UsePostgres(TestPostgres.ConnectionString)
+                                .AddDecisionRecording()
+                                .AddJson()
+                        )
+                        : trax.AddEffects(effects =>
+                            effects
+                                .SaveTrainParameters()
+                                .UsePostgres(TestPostgres.ConnectionString)
+                                .AddJson()
+                        )
+                )
                     .AddMediator(typeof(AssemblyMarker).Assembly, typeof(JobRunnerTrain).Assembly)
                     // No backoff, so a retry is dispatched on the cycle that queues it.
                     .AddScheduler(scheduler =>
@@ -423,6 +433,77 @@ public class ManifestRetryReplaysDecisionsTests
                 .BeTrue();
 
             await AssertRetryAsksAfreshAsync(manifest, "swept");
+        }
+        finally
+        {
+            _override = null;
+        }
+    }
+
+    [Test]
+    public async Task A_linked_retry_whose_source_is_deleted_before_it_runs_asks_afresh()
+    {
+        var manifest = await CreateManifestAsync("vanished");
+
+        DecisionProbe.FailAt = ProbeFailure.AfterQuestions;
+        var failed = await CycleAsync(manifest);
+        failed.TrainState.Should().Be(TrainState.Failed);
+
+        // The retry is queued with its link, then the run it names is deleted outside Trax.
+        await RunManifestManagerAsync();
+        (await QueuedEntryOf(manifest)).ReplayDecisionsOf.Should().Be(failed.Id);
+        await WithData(async data =>
+        {
+            await data.RecordedDecisions.Where(d => d.MetadataId == failed.Id).ExecuteDeleteAsync();
+            await data.WorkQueues.Where(q => q.MetadataId == failed.Id).ExecuteDeleteAsync();
+            return await data.Metadatas.Where(m => m.Id == failed.Id).ExecuteDeleteAsync();
+        });
+
+        DecisionProbe.FailAt = ProbeFailure.None;
+        Answer(ProbeLane.Fast, ProbeSize.Small);
+        var asked = _decider.Requests.Count;
+        var retry = await DispatchQueuedAsync(manifest);
+
+        retry
+            .TrainState.Should()
+            .Be(
+                TrainState.Completed,
+                $"a manifest's retry that cannot replay asks afresh rather than failing. See {Adr}"
+            );
+        retry.ReplayDecisionsOf.Should().Be(failed.Id, "the link reached the run");
+        (_decider.Requests.Count - asked).Should().Be(2, "both questions were asked afresh");
+        DecisionProbe.TracksOf("vanished").TakeLast(2).Should().Equal("Fast", "Small");
+    }
+
+    [Test]
+    public async Task A_linked_retry_on_a_host_that_records_no_decisions_asks_afresh()
+    {
+        var manifest = await CreateManifestAsync("unrecording-host");
+
+        DecisionProbe.FailAt = ProbeFailure.AfterQuestions;
+        var failed = await CycleAsync(manifest);
+        await RunManifestManagerAsync();
+        (await QueuedEntryOf(manifest)).ReplayDecisionsOf.Should().Be(failed.Id);
+
+        // The retry is claimed and run by a host without AddDecisionRecording.
+        await using var unrecording = BuildProvider(_decider, recordDecisions: false);
+        _override = unrecording;
+        try
+        {
+            DecisionProbe.FailAt = ProbeFailure.None;
+            Answer(ProbeLane.Fast, ProbeSize.Small);
+            var asked = _decider.Requests.Count;
+            var retry = await DispatchQueuedAsync(manifest);
+
+            retry
+                .TrainState.Should()
+                .Be(
+                    TrainState.Completed,
+                    $"a manifest's retry that cannot replay asks afresh rather than failing. See {Adr}"
+                );
+            retry.ReplayDecisionsOf.Should().Be(failed.Id, "the link reached the run");
+            (_decider.Requests.Count - asked).Should().Be(2);
+            DecisionProbe.TracksOf("unrecording-host").TakeLast(2).Should().Equal("Fast", "Small");
         }
         finally
         {
